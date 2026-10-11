@@ -91,14 +91,16 @@ async function signInViaMagicLink(page, email) {
   // The Supabase client persists the session via AsyncStorage (localStorage
   // on web) under sb-<ref>-auth-token. Confirm it is really there — the app
   // boot reads it via supabase.auth.getSession().
-  const diag = await page.evaluate(() => ({
-    href: window.location.href,
-    title: document.title,
-    keys: Object.keys(localStorage),
-  }));
-  // eslint-disable-next-line no-console
-  console.log('BROWSER_DIAG', JSON.stringify(diag));
-  const session = await browserSession(page);
+  //
+  // NOTE: persistence is ASYNC after the magic-link redirect (the client
+  // must exchange/detect the URL fragment, then write to storage). A
+  // single immediate read races that write and flakes. Poll instead.
+  let session = null;
+  const deadline = Date.now() + 30000;
+  while (!session?.access_token && Date.now() < deadline) {
+    session = await browserSession(page);
+    if (!session?.access_token) await page.waitForTimeout(1000);
+  }
   expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
   return { link, session };
 }
