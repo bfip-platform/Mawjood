@@ -91,6 +91,13 @@ async function signInViaMagicLink(page, email) {
   // The Supabase client persists the session via AsyncStorage (localStorage
   // on web) under sb-<ref>-auth-token. Confirm it is really there — the app
   // boot reads it via supabase.auth.getSession().
+  const diag = await page.evaluate(() => ({
+    href: window.location.href,
+    title: document.title,
+    keys: Object.keys(localStorage),
+  }));
+  // eslint-disable-next-line no-console
+  console.log('BROWSER_DIAG', JSON.stringify(diag));
   const session = await browserSession(page);
   expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
   return { link, session };
