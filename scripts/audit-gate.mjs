@@ -9,9 +9,10 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const baseline = new Set(
-  JSON.parse(readFileSync(new URL('../audit-baseline.json', import.meta.url), 'utf8')).advisories,
-);
+const baselineRaw = JSON.parse(readFileSync(new URL('../audit-baseline.json', import.meta.url), 'utf8')).advisories;
+// Baseline entries are {id, package, reason, review-by, severity} objects
+// (or legacy bare strings).
+const baseline = new Set(baselineRaw.map((e) => (typeof e === 'string' ? e : e.id)));
 
 let audit;
 try {
@@ -31,6 +32,18 @@ try {
     console.error(stdout.slice(0, 500));
     process.exit(2);
   }
+}
+
+const isAuditError =
+  audit == null ||
+  typeof audit !== 'object' ||
+  ('message' in audit && 'method' in audit) || // npm error envelope, not audit data
+  (!('vulnerabilities' in audit) && !('advisories' in audit) && !('metadata' in audit));
+if (isAuditError) {
+  console.error('audit-gate: `npm audit --json` did not return audit data (registry blocked or failed).');
+  console.error('Refusing to evaluate baselines against an empty/error result (fail-closed).');
+  try { console.error(JSON.stringify(audit).slice(0, 300)); } catch { /* ignore */ }
+  process.exit(2);
 }
 
 const SEV_RANK = { critical: 4, high: 3, moderate: 2, low: 1, info: 0 };
@@ -66,4 +79,14 @@ if (fresh.length > 0) {
   console.error('\nFix the dependency, then add the advisory ID to audit-baseline.json with justification.');
   process.exit(1);
 }
-console.log(`✅ audit gate: ${found.size} high/critical advisories, all in baseline, 0 new.`);
+
+// Stale-entry detection: a baseline ID with zero live findings means the
+// advisory was fixed upstream — prune it instead of carrying it forever.
+const stale = [...baseline].filter((id) => !found.has(id));
+if (stale.length > 0) {
+  console.error('⚠️  STALE baseline entries (no live findings — likely fixed upstream):');
+  for (const id of stale) console.error(`   - ${id}`);
+  console.error('\nRemove stale IDs from audit-baseline.json (after verifying the fix).');
+  process.exit(1);
+}
+console.log(`✅ audit gate: ${found.size} high/critical advisories, all in baseline, 0 new, 0 stale.`);

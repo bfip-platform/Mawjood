@@ -64,7 +64,23 @@ platform APIs. UI never imports server-only modules.
   a failure there blocks the PR.
 - No `CREATE INDEX CONCURRENTLY` inside transaction-wrapped migrations
   (it cannot run in a transaction); large backfills use batched updates.
+- **Migration discipline (adopted D-1.1, from WS1 audit):**
+  1. Historical migrations are immutable once deployed to production.
+     Never edit a migration file after it has run on any production
+     database. Corrective changes go in a NEW migration file (append-only).
+  2. All new migrations must be idempotent (`IF NOT EXISTS` /
+     `DROP … IF EXISTS` / `CREATE OR REPLACE` / seed-if-empty).
+  3. Pre-production exception (used once, D-1, 2026-10-10): historical
+     files 0001/0002/0004/0006/0007/0008/0012/0028 were edited in place
+     to satisfy rule 2, because append-only migrations cannot retroactively
+     make historical files re-runnable. Each edit is a provable no-op on
+     first application (verified: WS1 audit, all SAFE). This exception is
+     CLOSED — rule 1 now applies.
+  4. Seed data is seed-if-empty (`WHERE NOT EXISTS`); later seed changes
+     require a new migration.
 - **Check:** CI migrate-check (idempotency re-run) — executable, blocking.
+  Known gate limitation: it asserts zero errors, not schema convergence
+  between runs (tracked improvement).
 
 ## 6. Logging, telemetry, and privacy-safe observability
 

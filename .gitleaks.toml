@@ -24,13 +24,14 @@
 useDefault = true
 
 [[allowlists]]
-description = "Historical Expo web bundles (_expo/static/**) committed Sep 2026 and later removed. They inline the public-by-design Supabase ANON key only."
+description = "Historical Expo web bundles (_expo/static/**) committed Sep 2026 and later removed. They inline the public-by-design Supabase ANON key only. Narrowed 2026-10-11 (D-1.1 WS6): JWT-shape regex required, not path-only. Residual risk: a service_role JWT (also JWT-shaped) under this path would be suppressed — accepted because only EXPO_PUBLIC_* vars are inlined in Expo bundles (build-time behavior) and dist/ is gitignored. Review by 2027-01-10."
 paths = ['''_expo/static/.*''']
+regexes = ['''eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}''']
 
 [[allowlists]]
-description = "admin.html revisions from Sep 2026 that inlined the ANON key. Current file uses __SUPABASE_ANON_KEY__ placeholder injected at deploy."
+description = "admin.html revisions from Sep 2026 that inlined the ANON key. Current file uses __SUPABASE_ANON_KEY__ placeholder injected at deploy. Narrowed 2026-10-11 (D-1.1 WS6): requires 'anon' in proximity to the JWT. Residual risk: a service_role JWT explicitly labeled 'anon' would be suppressed — accepted as implausible; file is placeholder-based since Sep 2026. Review by 2027-01-10."
 paths = ['''admin\.html''']
-regexes = ['''(?i)supabase.*anon|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}''']
+regexes = ['''(?i)anon[^\\n]{0,80}eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}[^\\n]{0,80}anon''']
 
 [[allowlists]]
 description = "Apple App Store Connect Issuer ID (ascApiKeyIssuerId) in eas.json is a public identifier, not a secret. Required for EAS submit; the P8 secret is in GitHub Secrets."
