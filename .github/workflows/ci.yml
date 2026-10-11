@@ -162,6 +162,14 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
+      - name: Behavioral authorization tests — real RLS enforcement as simulated users
+        # NOT a static audit: creates users/spaces/notes/items/files, then
+        # queries AS those users (JWT-claims auth.uid()) and asserts actual
+        # row visibility. See the file header for honest scope/limits.
+        run: node supabase/tests/authz-behavioral.mjs
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
   auth-gates:
     # Static audit of edge-function auth wiring (401/403/404 gating,
     # ownership proofs). No database needed — pure source analysis.
@@ -214,6 +222,99 @@ jobs:
 
       - name: Smoke test
         run: npx playwright test tests/e2e/smoke.spec.mjs --config=tests/e2e/playwright.config.mjs
+
+  e2e-auth:
+    # Authenticated user-journey tests against an ISOLATED local Supabase
+    # stack (not production, not the dev project). Covers: magic-link
+    # sign-in via Inbucket, authenticated app boot, note creation through
+    # the data API, UI retrieval, two-user isolation, and navigation.
+    #
+    # SCOPE (honest): the AI chat/extract/memory journeys are NOT covered —
+    # they need the `chat`/`extract` edge functions + OPENAI_API_KEY, which
+    # CI does not have. Documented as an explicit gap, not a PASS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Init + start local Supabase
+        # supabase/ has no config.toml (only functions/migrations/tests);
+        # init scaffolds the default config, then we point auth redirects
+        # at the Playwright webServer port. Minimal stack: db + auth + rest
+        # + inbucket (mail catcher for magic links) + kong gateway.
+        run: |
+          supabase init
+          python3 - <<'EOF'
+          import re
+          p = 'supabase/config.toml'
+          t = open(p).read()
+          t = t.replace('localhost:3000', 'localhost:8901')
+          # ensure the app URL is an allowed auth redirect (idempotent)
+          if 'additional_redirect_urls' not in t:
+              t = t.replace('[auth]', '[auth]\nadditional_redirect_urls = ["http://localhost:8901/**"]', 1)
+          elif 'localhost:8901' not in t.split('additional_redirect_urls')[1].split('\n')[0]:
+              t = re.sub(r'(additional_redirect_urls\s*=\s*\[)',
+                          r'\1"http://localhost:8901/**", ', t, count=1)
+          open(p, 'w').write(t)
+          print('config patched')
+          EOF
+          supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor,studio
+
+      - name: Apply migrations to local Supabase
+        run: supabase db push
+
+      - name: Capture local Supabase credentials
+        id: sb
+        run: |
+          STATUS_JSON="$(supabase status -o json)"
+          echo "url=$(echo "$STATUS_JSON" | jq -r '.API_URL')" >> "$GITHUB_OUTPUT"
+          echo "anon=$(echo "$STATUS_JSON" | jq -r '.ANON_KEY')" >> "$GITHUB_OUTPUT"
+
+      - name: Install (locked deps)
+        run: npm ci
+
+      - name: Web build (pointed at local Supabase)
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ steps.sb.outputs.url }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.sb.outputs.anon }}
+        run: npx expo export --platform web
+        working-directory: apps/mobile
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Authenticated journey tests
+        env:
+          MAWJOOD_TEST_SUPABASE_URL: ${{ steps.sb.outputs.url }}
+          MAWJOOD_TEST_SUPABASE_ANON_KEY: ${{ steps.sb.outputs.anon }}
+        run: npx playwright test tests/e2e/auth-journey.spec.mjs --config=tests/e2e/playwright.config.mjs
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
+
+  standards:
+    # Heuristic engineering-standards checks (module boundaries, error
+    # envelopes, privacy-safe logging). See
+    # docs/autonomous/ENGINEERING_STANDARDS.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Standards check
+        run: node scripts/standards-check.mjs
 
   provenance:
     # Exact-commit verification: the CI result must be attributable to ONE
