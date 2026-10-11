@@ -203,6 +203,16 @@ test('memory creation via data API appears in the space notes browser', async ({
   // SPACE_SHORT labels come from i18n; match by partial text is fragile,
   // so tap the second tab (index 1 = first space tab).
   const tabs = page.locator('div[role="button"]');
+  // DEBUG: dump state if tabs are missing
+  if ((await tabs.count()) === 0) {
+    const dbg = await page.evaluate(() => ({
+      href: window.location.href,
+      keys: Object.keys(localStorage),
+      bodyText: document.body?.innerText?.slice(0, 500),
+    }));
+    // eslint-disable-next-line no-console
+    console.log('TABS_DEBUG', JSON.stringify(dbg));
+  }
   await expect(tabs.first()).toBeVisible({ timeout: 15000 });
   const tabCount = await tabs.count();
   expect(tabCount).toBeGreaterThan(1);
