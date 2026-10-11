@@ -80,9 +80,20 @@ async function signInViaMagicLink(page, email) {
   const link = await waitForMagicLink(email);
   expect(link, `magic-link email for ${email} arrived in Inbucket`).toBeTruthy();
   await page.goto(link);
+  // The magic-link verify must redirect BACK to the app origin. If we are
+  // still on GoTrue (supabase.co / localhost:54321), the session exchange
+  // never ran in the app context — fail here, not three steps later.
+  // (Note: toBeHidden() passes for non-existent elements, so assert the URL
+  // explicitly instead of relying on the AuthScreen placeholder alone.)
+  await expect(page).toHaveURL(/localhost:8901|127\.0\.0\.1:8901/, { timeout: 30000 });
   // back on the app, signed in: AuthScreen gone, chat home visible
   await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 30000 });
-  return link;
+  // The Supabase client persists the session via AsyncStorage (localStorage
+  // on web) under sb-<ref>-auth-token. Confirm it is really there — the app
+  // boot reads it via supabase.auth.getSession().
+  const session = await browserSession(page);
+  expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
+  return { link, session };
 }
 
 async function browserSession(page) {
@@ -103,9 +114,7 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   const email = `e2e-a-${Date.now()}@example.com`;
-  await signInViaMagicLink(page, email);
-  const session = await browserSession(page);
-  expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
+  const { session } = await signInViaMagicLink(page, email);
   expect(session.user.email).toBe(email);
   // chat home renders (placeholder from i18n, English default in test env)
   await expect(
@@ -116,8 +125,7 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
 
 test('memory creation via data API appears in the space notes browser', async ({ page }) => {
   const email = `e2e-b-${Date.now()}@example.com`;
-  await signInViaMagicLink(page, email);
-  const session = await browserSession(page);
+  const { session } = await signInViaMagicLink(page, email);
   const user = sb();
   const token = session.access_token;
   const authed = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -158,8 +166,7 @@ test('user B cannot see user A’s note (UI + data API isolation)', async ({ bro
   const ctxA = await browser.newContext();
   const pageA = await ctxA.newPage();
   const emailA = `e2e-cA-${Date.now()}@example.com`;
-  await signInViaMagicLink(pageA, emailA);
-  const sessionA = await browserSession(pageA);
+  const { session: sessionA } = await signInViaMagicLink(pageA, emailA);
   const authedA = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${sessionA.access_token}` } },
   });
@@ -180,8 +187,7 @@ test('user B cannot see user A’s note (UI + data API isolation)', async ({ bro
   const ctxB = await browser.newContext();
   const pageB = await ctxB.newPage();
   const emailB = `e2e-cB-${Date.now()}@example.com`;
-  await signInViaMagicLink(pageB, emailB);
-  const sessionB = await browserSession(pageB);
+  const { session: sessionB } = await signInViaMagicLink(pageB, emailB);
   const authedB = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${sessionB.access_token}` } },
   });
