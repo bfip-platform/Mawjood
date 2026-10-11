@@ -269,7 +269,9 @@ jobs:
           supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor,studio
 
       - name: Apply migrations to local Supabase
-        run: supabase db push
+        # `migration up` (not `db push`): applies supabase/migrations/ to the
+        # LOCAL database. `db push` targets hosted projects and needs a token.
+        run: supabase migration up
 
       - name: Capture local Supabase credentials
         id: sb

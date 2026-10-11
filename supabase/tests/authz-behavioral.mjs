@@ -57,16 +57,34 @@ async function asUser(db, { userId = null, role = 'authenticated' } = {}, fn) {
 }
 
 try {
-  const db = new pg.Client({ connectionString: baseUrl.replace(/\/[^/]*$/, `/${TEST_DB}`) });
-  await db.connect();
+  const db = new pg.Pool({ connectionString: baseUrl.replace(/\/[^/]*$/, `/${TEST_DB}`) });
 
   step('installing realistic auth.uid() (JWT-claims based)');
   await db.query(`
     create or replace function auth.uid() returns uuid
     language sql stable as $$
-      select nullif(current_setting('request.jwt.claims', true)::json ->> 'sub', '')::uuid
+      -- nullif(..., '') guards a Postgres quirk: rolling back a SET LOCAL on a
+      -- previously-unset custom GUC leaves the session value as '' (not NULL),
+      -- and ''::json would raise. Real Supabase never emits '', but the pooled
+      -- harness can observe it after a prior simulated user; treat as absent.
+      select nullif(nullif(current_setting('request.jwt.claims', true), '')::json ->> 'sub', '')::uuid
     $$;`);
-  console.log('  auth.uid() now reads request.jwt.claims ->> sub');
+  console.log('  auth.uid() now reads request.jwt.claims ->> sub (empty-claim safe)');
+
+  step('mirroring Supabase default grants (RLS remains the enforcement boundary)');
+  // A real Supabase project grants table access to anon/authenticated and lets
+  // RLS policies decide row visibility. The scratch DB has no such grants, so
+  // without this every simulated-user query fails with "permission denied"
+  // before RLS is even evaluated. These grants replicate production; they do
+  // not weaken any policy under test.
+  await db.query(`
+    grant usage on schema public to anon, authenticated;
+    grant usage on schema storage to anon, authenticated;
+    grant all on all tables in schema public to anon, authenticated;
+    grant all on all tables in schema storage to anon, authenticated;
+    grant all on all sequences in schema public to anon, authenticated;
+    grant all on all sequences in schema storage to anon, authenticated;`);
+  console.log('  grants mirrored: anon/authenticated can reach tables; RLS decides rows');
 
   step('seeding users, spaces, notes, items, storage objects');
   // users
@@ -151,8 +169,11 @@ try {
       from pg_policies where schemaname in ('public','storage')`);
     const suspicious = rows.filter((r) => {
       const q = `${r.qual || ''} ${r.with_check || ''}`;
-      // every user-data policy must be gated on auth.uid() (or a helper that uses it)
-      return !/auth\.uid\(\)|is_space_owner|is_space_member|can_access_space/.test(q);
+      // every user-data policy must be gated on auth.uid() (or a helper that uses it).
+      // can_read_photo (0029) is allowlisted by name: verified SECURITY DEFINER with
+      // search_path=public, body gates on auth.uid()+can_access_space, EXECUTE granted
+      // only to authenticated (revoked from public/anon). Narrow, not a broad exception.
+      return !/auth\.uid\(\)|is_space_owner|is_space_member|can_access_space|can_read_photo/.test(q);
     });
     suspicious.length === 0
       ? ok(`all ${rows.length} policies gate on auth.uid() or space-membership helpers`)
