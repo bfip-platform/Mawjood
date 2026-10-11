@@ -22,6 +22,95 @@ Each entry records:
 
 ---
 
+---
+
+## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: CI failure diagnosis + fixes (IN-PROGRESS)
+
+- **Date:** 2026-10-11 ~02:00–06:10 EDT
+- **Mission / task ID:** MAWJOOD D-1.1 continuation (owner-authorized 2026-10-11 ~01:50 EDT)
+- **Branch:** `d1/governance-foundation`
+- **Base SHA:** `240ea83f687b6dccef1012f114275f6541a2231f` (PR #2 verified HEAD)
+- **Scope:** Diagnose CI run 38115164580 (7/9 pass; FAIL = `rls-audit` "Behavioral authorization
+  tests" + `e2e-auth` "Apply migrations to local Supabase"); reproduce locally; classify each
+  root cause (test-harness / migration / real security defect); fix without weakening security;
+  finish D-1.1 assessments. Bans: PR #2 stays Draft; no merge/deploy/prod-data/D0/D0.5.
+- **CI failure under diagnosis:** run 38115164580, completed/failure. Job-logs API returns 401
+  for the connector token — logs could not be downloaded; both failures reproduced locally
+  instead (PostgreSQL 18.4 via embedded binaries; supabase CLI 2.120.0).
+- **Root-cause classification:**
+  - `rls-audit` / behavioral — **TEST-HARNESS bugs (4), NOT security defects, NOT migration
+    issues.** The RLS policies were never exercised (harness crashed first); policies
+    themselves are sound (proven by the now-green behavioral suite: 37 policies, all
+    cross-user/cross-family/removal/anon/billing scenarios pass).
+    1. `supabase/tests/authz-behavioral.mjs`: `asUser()` used the Pool API
+       (`connect()`→client, `.release()`) on a `pg.Client`. Second `connect()` rejects:
+       "Client has already been connected. You cannot reuse a client." → HARNESS ERROR,
+       exit 2. Reproduced exactly. Fix: `new pg.Pool()` (per-scenario connections;
+       `SET LOCAL` is transaction-scoped + rolled back, no cross-user leakage).
+    2. Scratch DB lacked Supabase default GRANTs → every simulated-user query died with
+       "permission denied for table" before RLS evaluation. Fix: mirror Supabase's
+       default grants (anon/authenticated) in the test setup; RLS remains the
+       enforcement boundary. Replicates production; does not weaken any policy.
+    3. `auth.uid()` stub not empty-claim safe: Postgres leaves a rolled-back `SET LOCAL`
+       custom GUC as `''` (not NULL); `''::json` raises "invalid input syntax for type
+       json". Fix: `nullif(..., '')` guard — treats absent claim as absent, matching
+       real Supabase behavior.
+    4. Step-5 policy-gating heuristic false-positive on
+       `storage.objects.item_photos_owner_read`: its qual delegates to the verified
+       `can_read_photo` helper (0029; SECURITY DEFINER, search_path=public, gates on
+       auth.uid()+can_access_space, EXECUTE only to authenticated). Fix: narrow,
+       evidence-backed addition to the test allowlist regex (not a broad exception).
+  - `e2e-auth` / migrations — **CI-WORKFLOW bug, NOT migration incompatibility, NOT a
+    security defect.** `supabase db push` targets the LINKED hosted project and fails
+    with "Cannot find project ref. Have you run supabase link?" when nothing is linked
+    (reproduced locally with CLI 2.120.0). The job starts a local stack and never
+    links — `db push` could never succeed there. Migrations themselves apply cleanly
+    (migrate-check green). Fix: `supabase migration up` ("Apply pending migrations to
+    local database" per `supabase migration up --help`).
+- **Changes (local, committed):**
+  - `supabase/tests/authz-behavioral.mjs` — Pool fix + grants mirroring + auth.uid()
+    empty-claim guard + can_read_photo allowlist (4 harness-fidelity fixes)
+  - `.github/workflows/ci.yml` — e2e-auth: `supabase db push` → `supabase migration up`
+  - `docs/autonomous/SQL_MIGRATIONS_ASSESSMENT.md` — NEW: D-1.1 historical migrations
+    assessment (34 migrations; per-migration table; 8 findings F-1..F-8 with file:line
+    evidence; verdict: safe to apply fresh + re-run; remediation list)
+  - Local commit: `ec8ecc3` (on top of `240ea83f`)
+- **Local verification (all green):** migrate-check ✅, rls-audit (static) ✅,
+  authz-behavioral ✅ (37 policies, all scenarios), standards-check ✅,
+  auth-gates-check ✅, unit tests 33/33 ✅, ci.yml YAML valid (9 jobs).
+  Not runnable locally: vuln-scan audit-gate (npm registry audit endpoint blocked by
+  sandbox policy — fail-closed by design; passed in CI 38115164580, unaffected by
+  these changes), e2e-auth full stack (needs Docker; fix verified via CLI docs +
+  direct `db push` failure reproduction), e2e-smoke (was passing; untouched).
+- **Assessments completed (3/3):** App Factory reusable cores
+  (`APP_FACTORY_CORE_ASSESSMENT.md`, pre-existing WS5) ✅; engineering standards
+  (`ENGINEERING_STANDARDS.md` + `standards-check.mjs`, pre-existing WS4) ✅;
+  historical SQL migrations (`SQL_MIGRATIONS_ASSESSMENT.md`, NEW this entry) ✅ —
+  all evidence-backed, assessment-only, no integration changes.
+- **Remaining blockers:**
+  1. **PUSH BLOCKED — genuine credential blocker.** `custom.github-mawjood` connector
+     PAT is read-only in practice: `git push` → 401, `POST /git/blobs` → 403,
+     `PUT /repos/.../contents` → 403 ("Resource not accessible by personal access
+     token"). Same 403 was recorded in the D-1 ledger 2026-10-10 ("writes blocked
+     post-transfer"). Fixes are committed locally (`ec8ecc3`) and verified; CI
+     rerun is pending a working write credential (user-provided PAT as in D-1, or
+     connector remediation). Did NOT use `custom.github` for Mawjood writes —
+     outside the authorized credential scope for this task.
+  2. CI rerun pending blocker 1 (cannot push → cannot trigger CI on the fix HEAD).
+- **Review verdict:** pending (independent review + CI green on exact HEAD still required).
+- **CI evidence:** run 38115164580 (pre-fix baseline: 7/9 pass, rls-audit + e2e-auth FAIL);
+  post-fix CI: BLOCKED on push credential (see blockers). Local reproduction +
+  verification evidence above stands in for CI until the rerun.
+- **Decisions:**
+  - All four rls-audit fixes are test-harness fidelity corrections, classified as
+    non-security-weakening with per-fix justification recorded here and in code comments.
+  - `can_read_photo` allowlist is narrow (single verified helper) — explicitly NOT a
+    broad allowlist; the alternative (rewriting the 0029 migration) was rejected as
+    higher-risk.
+  - Did not attempt credential-scope expansion to unblock the push; escalated instead.
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/2 (Draft; description update
+  pending push — will record D-1.1 status once the branch is pushed).
+
 ## 2026-10-10 — Mission MAWJOOD D-1: engineering governance & CI foundation (COMPLETE)
 
 - **Mission / task ID:** MAWJOOD D-1
