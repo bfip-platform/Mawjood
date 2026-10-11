@@ -30,18 +30,29 @@ test.beforeAll(() => {
 
 const sb = () => createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-async function waitForMagicLink(email) {
-  for (let i = 0; i < 45; i++) {
-    const res = await fetch(`${INBUCKET}/api/v1/messages`);
-    if (res.ok) {
-      const msgs = await res.json();
-      const hit = msgs.find((m) => JSON.stringify(m).includes(email));
-      if (hit) {
-        const detail = await (await fetch(`${INBUCKET}/api/v1/message/${hit.ID}`)).json();
-        const html = detail?.Body?.html || detail?.Body?.text || '';
-        const m = html.match(/https?:\/\/[^"'<>\s]*\/auth\/v1\/verify[^"'<>\s]*/);
-        if (m) return m[0].replace(/&amp;/g, '&');
+async function waitForMagicLink(email, timeoutMs = 45000) {
+  // Mailpit (Inbucket) API: GET /api/v1/messages -> { total, unread, messages: [...] }
+  // and GET /api/v1/message/{id} -> { ID, From, To, Subject, HTML, Text, ... }.
+  // Bounded: returns null on timeout so the caller fails with a clear message
+  // instead of burning the whole test timeout on an email that never arrives.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${INBUCKET}/api/v1/messages`);
+      if (res.ok) {
+        const data = await res.json();
+        const msgs = Array.isArray(data) ? data : data.messages || [];
+        const hit = msgs.find((m) => JSON.stringify(m).includes(email));
+        if (hit) {
+          const msgId = hit.ID || hit.id;
+          const detail = await (await fetch(`${INBUCKET}/api/v1/message/${msgId}`)).json();
+          const html = detail?.HTML || detail?.Text || detail?.Body?.html || detail?.Body?.text || '';
+          const m = html.match(/https?:\/\/[^"'<>\s]*\/auth\/v1\/verify[^"'<>\s]*/);
+          if (m) return m[0].replace(/&amp;/g, '&');
+        }
       }
+    } catch {
+      // Mailpit not ready yet or transient failure — retry until the deadline.
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -54,12 +65,18 @@ async function signInViaMagicLink(page, email) {
   const emailInput = page.getByPlaceholder('you@example.com');
   await expect(emailInput).toBeVisible({ timeout: 30000 });
   await emailInput.fill(email);
-  // submit button: first enabled button after the input
-  await page.locator('div[role="button"], button').last().click().catch(() => {});
-  // fallback: press Enter in the input
-  await emailInput.press('Enter').catch(() => {});
-  // wait for the "check your email" state (sent=true) — input disappears or hint appears
-  await page.waitForTimeout(3000);
+  // Explicit submit button — matches in either UI language (fresh CI
+  // browsers default to Arabic; the placeholder above is language-invariant).
+  // Not a positional .last() click, which breaks silently if the screen ever
+  // gains another button.
+  const submitBtn = page.getByText(/Send login link|أرسل رابط الدخول/);
+  await expect(submitBtn).toBeVisible({ timeout: 10000 });
+  await submitBtn.click();
+  // FAIL FAST: the app must confirm the magic link was requested. Without
+  // this gate, a silent submit failure would send the test into Inbucket
+  // polling for an email that will never arrive, burning the whole test
+  // timeout with a useless "Target closed" error.
+  await expect(page.getByText(/Check your email|تفقد بريدك/)).toBeVisible({ timeout: 25000 });
   const link = await waitForMagicLink(email);
   expect(link, `magic-link email for ${email} arrived in Inbucket`).toBeTruthy();
   await page.goto(link);
