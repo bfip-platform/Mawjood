@@ -24,6 +24,55 @@ Each entry records:
 
 ---
 
+## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (IN-PROGRESS)
+
+- **Date:** 2026-10-11 ~16:30–17:00 EDT
+- **Mission / task ID:** MAWJOOD D-1.1 continuation (owner-authorized 2026-10-11 16:32 EDT)
+- **Branch:** `d1/governance-foundation`
+- **Base SHA:** `4f676e441ee28a9dc314b3061718b7e836ded949` (pushed 2026-10-11 ~02:15 EDT)
+- **Scope:** Investigate the last failing job (`e2e-auth` "Authenticated journey tests") from CI
+  run 38117585282 (8/9 pass; `rls-audit` behavioral now PASS); reproduce, fix root cause
+  without weakening tests/security; push; rerun full CI on the exact final commit; update
+  ledger + recovery checkpoint. Bans: PR #2 Draft; no merge/deploy/prod-data/D0/D0.5.
+- **CI failure under diagnosis:** run 38117585282, completed/failure. All 4 Playwright tests
+  in `tests/e2e/auth-journey.spec.mjs` failed with 60s timeouts; primary error
+  "page.waitForTimeout: Target page, context or browser has been closed" at
+  `signInViaMagicLink` (spec line 62), i.e. right after the email-submit step. Supabase
+  stack, migrations, Mailpit (54324), and web build all succeeded — infra was fine.
+- **Root-cause classification:** **TEST-HARNESS bugs (4), NOT app/backend defects.**
+  1. Fragile submit: `.last().click()` + `press('Enter')`, both with swallowed errors
+     (`.catch(() => {})`). Each burned its 30s actionability timeout on a
+     non-actionable target → 60s test timeout hit before Inbucket was ever polled.
+     The magic-link email was never requested.
+  2. No sent-state confirmation gate: without it, a silent submit failure funnels
+     into Inbucket polling for an email that will never arrive (useless timeouts).
+  3. Mailpit API shape: `GET /api/v1/messages` returns `{total,unread,messages:[...]}`,
+     not a bare array; message detail uses `.HTML`/`.Text`, not `.Body.html`. The old
+     code would have thrown TypeError on the first poll.
+  4. UI default language is Arabic in fresh CI browsers (`i18n.ts:937`); any
+     English-only text selector would never match.
+- **Fix (commit `18b5857`, NOT weakening):** explicit bilingual submit-button match
+  (`/Send login link|أرسل رابط الدخول/`) + `expect().toBeVisible()` gate; fail-fast
+  sent-state gate (`/Check your email|تفقد بريدك/`); bounded 45s Inbucket poll
+  handling both Mailpit response shapes; bilingual regexes throughout. The journey
+  itself is unchanged — real magic-link via Mailpit, real session, real
+  RLS-enforced reads. Failures are now explicit, not mysterious timeouts.
+- **Push:** verified local == remote before push (local exactly 1 commit ahead,
+  `18b5857`; remote `4f676e44`). Pushed via Git Data API replay (blobs→trees→
+  commits→PATCH ref); remote verified at `d70404380f141ad6a25a0cc6fae9e5f08d017c34`.
+  NOTE: `/tmp/d1_push_pat.py` is ephemeral (wiped between turns); recreated from
+  the recorded pattern when needed. The D-1.1 push credential is the user's
+  transient PAT (never stored); revoke reminder still owed at D-1.1 close.
+- **CI rerun:** run 38172967289 triggered on exact HEAD `d7040438` — status at ledger
+  write time: IN-PROGRESS (see final report for outcome).
+- **Review verdict:** pending (CI green on exact HEAD still required).
+- **Decisions:**
+  - No fallback to direct `signInWithOtp` API call on UI-submit failure — a silent
+    fallback would weaken the test (it must exercise the real UI journey); the
+    fail-fast gate makes a broken submit visible instead.
+  - Did not touch app/backend code: the failure was entirely in the test harness.
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/2 (Draft; untouched).
+
 ## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: CI failure diagnosis + fixes (IN-PROGRESS)
 
 - **Date:** 2026-10-11 ~02:00–06:10 EDT
