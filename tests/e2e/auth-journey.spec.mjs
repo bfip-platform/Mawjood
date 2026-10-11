@@ -19,6 +19,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.MAWJOOD_TEST_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.MAWJOOD_TEST_SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_KEY = process.env.MAWJOOD_TEST_SUPABASE_SERVICE_KEY;
 const INBUCKET = 'http://localhost:54324';
 
 test.beforeAll(() => {
@@ -29,6 +30,16 @@ test.beforeAll(() => {
 });
 
 const sb = () => createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sbAdmin = () => {
+  test.skip(!SUPABASE_SERVICE_KEY, 'needs MAWJOOD_TEST_SUPABASE_SERVICE_KEY');
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+};
+
+// Storage key supabase-js v2 uses: sb-<hostname>-auth-token.
+function storageKey() {
+  const host = new URL(SUPABASE_URL).hostname.split('.')[0];
+  return `sb-${host}-auth-token`;
+}
 
 async function waitForMagicLink(email, timeoutMs = 45000) {
   // Mailpit (Inbucket) API: GET /api/v1/messages -> { total, unread, messages: [...] }
@@ -119,6 +130,33 @@ async function browserSession(page) {
   });
 }
 
+// Sign in WITHOUT email: create (or reuse) a user via the Auth Admin API,
+// sign in with password via the JS client, then inject the session into the
+// browser's storage and reload. Used by tests that need AN authenticated
+// user but are not testing the magic-link flow itself (test 1 owns that).
+// This avoids GoTrue's per-IP email rate limits, which throttled the 2nd+
+// magic-link emails when every test did its own UI login.
+async function signInWithPassword(page, email, password = 'e2e-test-pass-123') {
+  const admin = sbAdmin();
+  // idempotent: ignore "already exists"
+  await admin.auth.admin
+    .createUser({ email, password, email_confirm: true })
+    .catch(() => {});
+  const { data, error } = await sb().auth.signInWithPassword({ email, password });
+  if (error) throw new Error(`signInWithPassword: ${error.message}`);
+  const session = data.session;
+  const key = storageKey();
+  await page.goto('/');
+  await page.evaluate(
+    ({ k, sess }) => localStorage.setItem(k, JSON.stringify(sess)),
+    { k: key, sess: session },
+  );
+  await page.reload();
+  // signed in: AuthScreen gone
+  await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 15000 });
+  return session;
+}
+
 test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -134,7 +172,9 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
 
 test('memory creation via data API appears in the space notes browser', async ({ page }) => {
   const email = `e2e-b-${Date.now()}@example.com`;
-  const { session } = await signInViaMagicLink(page, email);
+  // Auth is covered by test 1; here we need an authenticated user without
+  // burning a magic-link email (GoTrue rate-limits per IP).
+  const session = await signInWithPassword(page, email);
   const user = sb();
   const token = session.access_token;
   const authed = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -175,7 +215,7 @@ test('user B cannot see user A’s note (UI + data API isolation)', async ({ bro
   const ctxA = await browser.newContext();
   const pageA = await ctxA.newPage();
   const emailA = `e2e-cA-${Date.now()}@example.com`;
-  const { session: sessionA } = await signInViaMagicLink(pageA, emailA);
+  const sessionA = await signInWithPassword(pageA, emailA);
   const authedA = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${sessionA.access_token}` } },
   });
@@ -196,7 +236,7 @@ test('user B cannot see user A’s note (UI + data API isolation)', async ({ bro
   const ctxB = await browser.newContext();
   const pageB = await ctxB.newPage();
   const emailB = `e2e-cB-${Date.now()}@example.com`;
-  const { session: sessionB } = await signInViaMagicLink(pageB, emailB);
+  const sessionB = await signInWithPassword(pageB, emailB);
   const authedB = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${sessionB.access_token}` } },
   });
@@ -211,7 +251,7 @@ test('navigation: tabs switch views without errors', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   const email = `e2e-d-${Date.now()}@example.com`;
-  await signInViaMagicLink(page, email);
+  await signInWithPassword(page, email);
   await page.goto('/');
   const tabs = page.locator('div[role="button"]');
   await expect(tabs.first()).toBeVisible({ timeout: 15000 });

@@ -279,6 +279,7 @@ jobs:
           STATUS_JSON="$(supabase status -o json)"
           echo "url=$(echo "$STATUS_JSON" | jq -r '.API_URL')" >> "$GITHUB_OUTPUT"
           echo "anon=$(echo "$STATUS_JSON" | jq -r '.ANON_KEY')" >> "$GITHUB_OUTPUT"
+          echo "service=$(echo "$STATUS_JSON" | jq -r '.SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
 
       - name: Install (locked deps)
         run: npm ci
@@ -297,6 +298,7 @@ jobs:
         env:
           MAWJOOD_TEST_SUPABASE_URL: ${{ steps.sb.outputs.url }}
           MAWJOOD_TEST_SUPABASE_ANON_KEY: ${{ steps.sb.outputs.anon }}
+          MAWJOOD_TEST_SUPABASE_SERVICE_KEY: ${{ steps.sb.outputs.service }}
         run: npx playwright test tests/e2e/auth-journey.spec.mjs --config=tests/e2e/playwright.config.mjs
 
       - name: Stop local Supabase
