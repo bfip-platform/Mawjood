@@ -241,7 +241,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
           # Pinned (not "latest"): resolving "latest" calls the GitHub API
           # unauthenticated and failed on rate limit (run 38263560994,
