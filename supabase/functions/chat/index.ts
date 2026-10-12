@@ -1,6 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget, findDuplicateCandidates, createMergePreview, executeConfirmedMerge } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
@@ -413,6 +413,65 @@ async function toolListMemories(supa: Supa, spaceByType: Record<string, string>,
   return { facts: facts.slice(0, 50).map(factLine) };
 }
 
+// D2 (spec §6.1): surface duplicate candidates for the USER to decide.
+// Read-only — merging is a separate, explicit step (merge_memories).
+async function toolListDuplicates(supa: Supa, spaceByType: Record<string, string>, vctx?: VaultCtx | null) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { duplicates: [] };
+  const facts = await loadFacts(supa, pid);
+  const pairs = findDuplicateCandidates(facts).slice(0, 10);
+  return {
+    duplicates: pairs.map((p) => ({
+      keep_id: p.a.id, other_id: p.b.id,
+      text: factLine(p.a), reason: p.reason,
+    })),
+    next: pairs.length
+      ? 'Show each pair to the user and ask: keep the first, keep the second, keep both, or merge into one. Only call merge_memories after the user picks merge for a specific pair.'
+      : 'No duplicate memories found.',
+  };
+}
+
+// D2 (spec §6.1) + review fix F1: merging is PREVIEW-ONLY, exactly like
+// forget_fact — it moves a saved memory to trash, so under the owner's
+// delete-safety ruling the model can never execute it. The tool verifies
+// the pair is a genuine duplicate of the caller's OWN facts, issues a
+// confirmation code, and the merge runs only when the user sends
+// «نفّذ <code>» as their own message (deterministic fast path below).
+async function toolMergeMemories(
+  supa: Supa,
+  admin: any,
+  userId: string,
+  spaceByType: Record<string, string>,
+  args: { keep_id?: string; other_id?: string },
+  vctx?: VaultCtx | null,
+) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { error: 'no private space' };
+  const keepId = String(args.keep_id ?? '');
+  const otherId = String(args.other_id ?? '');
+  if (!keepId || !otherId || keepId === otherId) return { error: 'keep_id and other_id (different) required' };
+  const facts = await loadFacts(supa, pid);
+  const keep = facts.find((f) => f.id === keepId);
+  const loser = facts.find((f) => f.id === otherId);
+  if (!keep || !loser) return { error: 'memory not found in your private space' };
+  const pair = findDuplicateCandidates([keep, loser]);
+  if (pair.length === 0) {
+    return { error: 'not_duplicates', detail: 'Those two memories are not identical-text duplicates (or they are retry duplicates the nightly job handles). Nothing was merged.' };
+  }
+  const preview = await createMergePreview(admin, userId, pid, keep, loser);
+  if (!preview) return { error: 'preview failed' };
+  return {
+    needs_confirmation: true,
+    confirm_code: preview.confirm_code,
+    kept: factLine(keep),
+    merging_away: factLine(loser),
+    expires_in_minutes: 30,
+    next: 'Read the pair back to the user and ask THEM to send «نفّذ ' + preview.confirm_code + '» as their own message to confirm the merge. Nothing is merged until they do — you can never confirm on their behalf.',
+  };
+}
+
 async function toolReturnBorrow(supa: Supa, args: { borrow_id?: string }, vctx?: VaultCtx | null, hasVaultCols?: boolean) {
   if (!args.borrow_id) return { error: 'borrow_id required' };
   if (hasVaultCols) {
@@ -780,6 +839,8 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
     case 'forget_fact': return await toolForgetFact(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'restore_fact': return await toolRestoreFact(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_memories': return await toolListMemories(supa, spaceByType, vctx ?? null);
+    case 'list_memory_duplicates': return await toolListDuplicates(supa, spaceByType, vctx ?? null);
+    case 'merge_memories': return await toolMergeMemories(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'list_tabs': return await toolListTabs(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'read_tab': return await toolReadTab(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'propose_tab': return await toolProposeTab(admin, userId, spaceByType, args ?? {}, vctx ?? null);
@@ -990,12 +1051,12 @@ Deno.serve(async (req) => {
       if (confirmCode) {
         const { data: pendingRows } = await admin.from('pending_actions')
           .select('id')
-          .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+          .eq('user_id', userId).in('action_type', ['forget_memory', 'merge_memory']).eq('status', 'pending')
           .limit(1);
         if ((pendingRows ?? []).length > 0) {
           const { data: row } = await admin.from('pending_actions')
             .select('*')
-            .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+            .eq('user_id', userId).in('action_type', ['forget_memory', 'merge_memory']).eq('status', 'pending')
             .eq('payload->>confirm_code', confirmCode)
             .maybeSingle();
           const verdict = validateForgetConfirmation(row ?? null, userId, confirmCode, new Date());
@@ -1005,13 +1066,26 @@ Deno.serve(async (req) => {
             const claimed = await claimForgetPreview(admin, row.id);
             if (!claimed) {
               const answer = uiAr
-                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنساه.'
-                : 'That code was already used or is being processed — nothing new to forget.';
-              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation already claimed)'] }), {
+                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنفّذه.'
+                : 'That code was already used or is being processed — nothing new to execute.';
+              return new Response(JSON.stringify({ answer, actions: ['confirmation (already claimed)'] }), {
                 headers: { ...cors, 'Content-Type': 'application/json' },
               });
             }
             try {
+              if (claimed.action_type === 'merge_memory') {
+                const res = await executeConfirmedMerge(admin, claimed);
+                const answer = res.merged
+                  ? (uiAr
+                    ? `دمجتها ✓ صارت ذكرى وحدة: ${res.kept} — النسخة المدموجة راحت للمهملات وبتقدر ترجعها خلال 30 يوم (قلّي «رجّعها»).`
+                    : `Merged ✓ into one memory: ${res.kept} — the merged-away copy is in trash and restorable for 30 days (say "restore it").`)
+                  : (uiAr
+                    ? 'ما صار الدمج — الذكريات تغيّرت من وقت المعاينة أو ما عادت موجودة. اطلب الدمج من جديد.'
+                    : 'The merge did not happen — the memories changed since the preview or no longer exist. Ask for the merge again.');
+                return new Response(JSON.stringify({ answer, actions: ['merge_memories (confirmed)'] }), {
+                  headers: { ...cors, 'Content-Type': 'application/json' },
+                });
+              }
               const { trashed } = await executeConfirmedForget(admin, claimed);
               const answer = trashed.length > 0
                 ? (uiAr
@@ -1028,17 +1102,17 @@ Deno.serve(async (req) => {
               // stays consistent and the user can retry with the same code.
               await releaseForgetClaim(admin, row.id);
               const answer = uiAr
-                ? 'صار خطأ أثناء التنفيذ — الذكرى ما انحذفت. جرّب تبعت الكود مرة تانية.'
-                : 'Something went wrong while executing — nothing was forgotten. Try sending the code again.';
-              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation error)'] }), {
+                ? 'صار خطأ أثناء التنفيذ — ما تغيّر شي. جرّب تبعت الكود مرة تانية.'
+                : 'Something went wrong while executing — nothing was changed. Try sending the code again.';
+              return new Response(JSON.stringify({ answer, actions: ['confirmation (error)'] }), {
                 headers: { ...cors, 'Content-Type': 'application/json' },
               });
             }
           }
           const answer = uiAr
-            ? 'كود التأكيد هاد مش صالح أو منتهي — الذكرى ما انحذفت. اطلب مني أنساها من جديد وبعطيك كود جديد.'
-            : 'That confirmation code is invalid or expired — nothing was forgotten. Ask me to forget it again for a fresh code.';
-          return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation rejected)'] }), {
+            ? 'كود التأكيد هاد مش صالح أو منتهي — ما تغيّر شي. اطلب العملية من جديد وبعطيك كود جديد.'
+            : 'That confirmation code is invalid or expired — nothing was changed. Ask again for a fresh code.';
+          return new Response(JSON.stringify({ answer, actions: ['confirmation (rejected)'] }), {
             headers: { ...cors, 'Content-Type': 'application/json' },
           });
         }

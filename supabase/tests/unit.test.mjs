@@ -838,3 +838,205 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D2 durable memory — dedup auditability, retention separation (spec §6/§10/§11)', async () => {
+  const { findDuplicateCandidates, mergeFacts, planMemoryMaintenance } = await import('../functions/_shared/memory.ts');
+  const row = (over) => ({
+    id: 'x', title: 'k', details: 'نفس النص', meta: { mkey: 'a', importance: 3 },
+    created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', ...over,
+  });
+
+  it('candidates: identical text with different keys is surfaced for the user', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', meta: { mkey: 'a', importance: 3 } }),
+      row({ id: '2', meta: { mkey: 'b', importance: 3 } }),
+    ]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].reason, 'same_text_diff_key');
+  });
+
+  it('candidates: retry duplicates (same key, created within 24h) are EXCLUDED — the job auto-merges those', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', created_at: '2026-10-01T00:00:00Z' }),
+      row({ id: '2', created_at: '2026-10-01T12:00:00Z' }),
+    ]);
+    assert.equal(pairs.length, 0);
+  });
+
+  it('candidates: same key but days apart is a stale duplicate for review', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', created_at: '2026-10-01T00:00:00Z' }),
+      row({ id: '2', created_at: '2026-10-05T00:00:00Z' }),
+    ]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].reason, 'same_text_stale_dup');
+  });
+
+  it('candidates: episodes never appear; different text neither', () => {
+    assert.equal(findDuplicateCandidates([
+      row({ id: '1', meta: { mkey: 'a', mcat: 'episode' } }),
+      row({ id: '2', meta: { mkey: 'b', mcat: 'episode' } }),
+    ]).length, 0);
+    assert.equal(findDuplicateCandidates([
+      row({ id: '1' }), row({ id: '2', details: 'نص مختلف تماما', meta: { mkey: 'b' } }),
+    ]).length, 0);
+  });
+
+  it('mergeFacts: provenance preserved, importance bumped+capped, loser trashed (never deleted)', async () => {
+    const writes = [];
+    const fake = {
+      from() {
+        const chain = {
+          _op: null, _payload: null,
+          update(p) { chain._op = 'update'; chain._payload = p; return chain; },
+          eq() { return chain; },
+          async then(res) { writes.push(chain); res({ data: null, error: null }); },
+        };
+        return chain;
+      },
+    };
+    const keep = row({ id: 'k', meta: { mkey: 'a', importance: 5 } });
+    const loser = row({ id: 'l', details: 'النص القديم', meta: { mkey: 'b', importance: 2 } });
+    assert.equal(await mergeFacts(fake, keep, loser), true);
+    const keeperWrite = writes.find((w) => w._payload?.meta?.previous_versions);
+    assert.ok(keeperWrite, 'keeper write carries previous_versions');
+    assert.equal(keeperWrite._payload.meta.importance, 5, 'importance capped at 5');
+    assert.equal(keeperWrite._payload.meta.previous_versions.length, 1);
+    assert.equal(keeperWrite._payload.meta.previous_versions[0].from_id, 'l');
+    const loserWrite = writes.find((w) => w._payload?.status === 'trashed');
+    assert.ok(loserWrite, 'loser is trashed');
+    assert.equal(loserWrite._payload.meta.trash_reason, 'merged_duplicate');
+    assert.ok(!writes.some((w) => w._op === 'delete'), 'merge NEVER hard-deletes');
+  });
+
+  it('mergeFacts: merged_text overrides the keeper text; same-id is a no-op', async () => {
+    const writes = [];
+    const fake = {
+      from() {
+        const chain = {
+          _op: null, _payload: null,
+          update(p) { chain._op = 'update'; chain._payload = p; return chain; },
+          eq() { return chain; },
+          async then(res) { writes.push(chain); res({ data: null, error: null }); },
+        };
+        return chain;
+      },
+    };
+    const keep = row({ id: 'k' });
+    assert.equal(await mergeFacts(fake, keep, row({ id: 'l' }), 'النص المدمج'), true);
+    assert.equal(writes[0]._payload.details, 'النص المدمج');
+    assert.equal(await mergeFacts(fake, keep, keep), false);
+  });
+
+  it('GUARD: chat exposes the duplicate tools; MERGE IS PREVIEW-ONLY (owner delete-safety ruling)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("case 'list_memory_duplicates'"), 'list_memory_duplicates dispatched');
+    assert.ok(chat.includes("case 'merge_memories'"), 'merge_memories dispatched');
+    assert.ok(chat.includes('memory not found in your private space'), 'ids are validated against the caller\u2019s own facts');
+    // F1: the model tool may ONLY create a preview — the merge itself
+    // runs in the deterministic fast path after the user sends the code.
+    const toolStart = chat.indexOf('async function toolMergeMemories');
+    const toolRegion = chat.slice(toolStart, toolStart + 2400);
+    assert.ok(toolRegion.includes('createMergePreview'), 'the tool creates a preview');
+    assert.ok(toolRegion.includes('needs_confirmation: true'), 'the tool returns a confirmation code');
+    assert.ok(!toolRegion.includes('mergeFacts('), 'the tool must NEVER execute the merge itself');
+    assert.ok(!toolRegion.includes('trashFact'), 'the tool must never trash anything');
+    assert.ok(chat.includes(".in('action_type', ['forget_memory', 'merge_memory'])"), 'the fast path serves both rails');
+    assert.ok(chat.includes('executeConfirmedMerge(admin, claimed)'), 'merge executes only after validate + atomic claim');
+    const brain = readFileSync(new URL('../functions/_shared/app-brain.ts', import.meta.url), 'utf8');
+    assert.ok(brain.includes('PREVIEW-ONLY like forget_fact'), 'the model contract states preview-only');
+    assert.ok(brain.includes('NEVER confirm on the user'), 'no model-side confirmation');
+  });
+
+  it('GUARD: consolidate dry-run writes nothing and every run reports to ops_events (§6.3)', () => {
+    const job = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(job.includes("searchParams.get('dry_run') === '1'"), 'dry_run parsed');
+    assert.ok(job.includes('if (dryRun) report.merged++;'), 'dry-run counts merges without trashing');
+    assert.ok(job.includes('planMemoryMaintenance(facts, new Date())'), 'dry-run uses the pure planner');
+    assert.ok(job.includes("kind: dryRun ? 'memory.consolidate.dry_run' : 'memory.consolidate'"), 'runs are reported to ops_events');
+  });
+
+  it('GUARD (§10): the transcript sweep touches ONLY chat_sessions — never items', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const start = app.indexOf('const loadHistory');
+    assert.ok(start > 0, 'loadHistory located');
+    const region = app.slice(start, start + 1600);
+    assert.ok(region.includes("from('chat_sessions')") && region.includes(".lt('expires_at'"),
+      'expired sessions are swept on history load');
+    const sweepLine = region.split('\n').find((l) => l.includes("from('chat_sessions')") && l.includes('delete'));
+    assert.ok(sweepLine, 'the sweep is a chat_sessions delete');
+    assert.ok(!/from\('items'\)[^;]*\.delete\(\)/.test(region), 'the sweep region contains no items delete');
+  });
+
+  it('GUARD (§1 contract): the client memory delete goes through TRASH, not a hard delete', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const at = app.indexOf('deleteMemoryItem');
+    const region = app.slice(at, at + 1400);
+    assert.ok(region.includes("status: 'trashed'"), 'replaced facts are trashed');
+    assert.ok(region.includes("trash_reason: 'replaced_by_restatement'"), 'the trash reason is recorded');
+    assert.ok(!region.includes(".from('items').delete()"), 'no hard delete of a memory row remains in the client memory path');
+  });
+});
+
+describe('D2 merge rail — preview-only merge on the forget confirmation machinery (review F1)', async () => {
+  const { createMergePreview, executeConfirmedMerge, validateForgetConfirmation, claimForgetPreview, loadFacts } =
+    await import('../functions/_shared/memory.ts');
+  const UID = 'user-1';
+  const dupA = () => ({ id: 'a', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:a', importance: 2 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' });
+  const dupB = () => ({ id: 'b', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:b', importance: 4 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z' });
+
+  it('preview issues a code and trashes NOTHING; non-duplicate pairs are refused', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    assert.ok(p && /^\d{6}$/.test(p.confirm_code), 'a 6-digit code is issued');
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'preview alone changes no memory');
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(row.action_type, 'merge_memory');
+    const notDup = await createMergePreview(supa, UID, 'S1', facts[0], { ...facts[1], id: 'z', details: 'نص مختلف' });
+    assert.equal(notDup, null, 'a pair that is not an identical-text duplicate gets no code');
+  });
+
+  it('full rail: validate + claim + execute merges with provenance and trashes the loser', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, true);
+    // loadFacts is newest-first: facts[0] (id 'b', the keeper) survives;
+    // facts[1] (id 'a', the loser) is trashed with provenance on 'b'.
+    const a = supa._db.items.find((i) => i.id === 'a');
+    const b = supa._db.items.find((i) => i.id === 'b');
+    assert.equal(a.status, 'trashed');
+    assert.equal(a.meta.trash_reason, 'merged_duplicate');
+    assert.equal(b.meta.previous_versions.length, 1);
+    assert.equal(b.meta.previous_versions[0].from_id, 'a');
+    assert.equal(b.meta.importance, 5, 'max(4,2)+1 capped at 5');
+    assert.equal(supa._db.pending_actions.find((r) => r.id === p.action_id).status, 'executed');
+  });
+
+  it('execution refuses when a fact changed since the preview (no longer duplicates)', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    supa._db.items.find((i) => i.id === 'b').details = 'اتعدلت بعد المعاينة';
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'nothing was trashed');
+  });
+
+  it('execution refuses an UNCLAIMED row — validation alone never merges', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const res = await executeConfirmedMerge(supa, row); // still 'pending'
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'));
+  });
+});
