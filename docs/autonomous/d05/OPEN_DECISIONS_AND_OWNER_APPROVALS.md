@@ -238,6 +238,11 @@
 - **Rule:** accessibility wins on any conflict.
 - **Decider:** Owner.
 
+### OD-41 — UX architecture: chat-first preserved ✅ RESOLVED (Decision #12)
+- **Resolved (owner, 2026-10-12):** the existing chat-first architecture is the baseline — chat home, header + space-tabs row, drawer/sidebar destinations per `UX_ARCHITECTURE_CORRECTION.md` §2.2. v1.2 modernizes styling only. Dashboard-style mockups were exploration only.
+- **Rule:** no navigation destination invented, removed, or renamed without a documented proposal + owner approval.
+- **Decider:** Owner.
+
 ### OD-40 — Arabic numerals: Eastern vs Western (WS2 O-2)
 - **Open:** default Western EN / optional Eastern AR.
 - **Recommendation:** Western default; Eastern as user setting.

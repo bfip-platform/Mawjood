@@ -68,6 +68,26 @@ Each entry records:
 - **CI evidence:** pending (Draft PR + CI on PR HEAD after documents written).
 - **PR URL:** TBD (to be opened after specification documents are complete).
 
+## 2026-10-12 — Owner Decision #12: UX architecture correction — chat-first PRESERVED (RECORDED)
+
+- **Context:** PR #13 merged into `main` @ `9e2e407` (owner: "docs: approve Mawjood D0.5
+  product specification and visual baseline"). Owner then clarified: the D0.5
+  dashboard-style homepage mockups must NOT replace the existing chat-first architecture.
+- **Decision:** Preserve the existing application structure/interaction model; modernize
+  visual styling (v1.2) only. Default home = AI Agent chat; sidebar/drawer concept +
+  destinations preserved; modules via navigation, not a dashboard.
+- **Verified current behavior (from code):** `apps/mobile/src/app/index.tsx` —
+  default `view='chat'`; header ☰ + tabs row (Home + 🔒/👨‍👩‍👧/💼); drawer with 14
+  destinations incl. ChatGPT-style history + New chat; space tabs (notes/things/papers,
+  family built-ins, custom tabs); WhatsApp-style composer; vault discreet via Profile code.
+  Full inventory: `docs/autonomous/d05/UX_ARCHITECTURE_CORRECTION.md` §2.
+- **Divergence found:** D0.5 spec TEXT (SCREEN_MAP S-9) already said chat-first; the
+  review-package MOCKUPS diverged (dashboard home). Mockups rebuilt chat-first in this PR.
+- **PR:** `d05/ux-architecture-correction` against main — docs/design only. No app code,
+  no deploy, no billing, no D1.
+- **Rule going forward:** no navigation destination invented/removed/renamed without a
+  documented proposal + owner approval (OD-41).
+
 ## 2026-10-12 — D0.5 FINAL VERIFICATION: e2e-auth CI failure root-caused + fixed; v1.2 accepted as baseline (RECORDED)
 
 - **Owner acceptance:** v1.2 "Modern Minimal AI + Human Memories" accepted as the design baseline.
