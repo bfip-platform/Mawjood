@@ -838,3 +838,103 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D3 PR-B — offline outbox/cache + createItem idempotency (T-D3-4/5/6)', async () => {
+  const { OfflineSync } = await import('../../packages/voice-engine/src/offline.ts');
+  const memKv = () => {
+    const m = new Map();
+    return {
+      get: async (k) => m.get(k) ?? null,
+      set: async (k, v) => { m.set(k, v); },
+      delete: async (k) => { m.delete(k); },
+      _map: m,
+    };
+  };
+  let seq = 0;
+  const ids = () => `id-${++seq}`;
+
+  it('list cache: round-trips rows with a timestamp; corrupt entries read as null', async () => {
+    const off = new OfflineSync(memKv(), { newId: ids, now: () => new Date('2026-10-12T00:00:00Z') });
+    assert.equal(await off.readList('items:S1'), null);
+    await off.cacheList('items:S1', [{ id: 'a' }, { id: 'b' }]);
+    const got = await off.readList('items:S1');
+    assert.equal(got.rows.length, 2);
+    assert.equal(got.cachedAt, '2026-10-12T00:00:00.000Z');
+  });
+
+  it('outbox: FIFO flush, stop-at-first-failure, attempts counted, order preserved', async () => {
+    seq = 0;
+    const off = new OfflineSync(memKv(), { newId: ids });
+    await off.enqueueCreate({ id: 'item-1', title: 'one' });
+    await off.enqueueCreate({ id: 'item-2', title: 'two' });
+    await off.enqueueCreate({ id: 'item-3', title: 'three' });
+    const seen = [];
+    const r1 = await off.flush(async (op) => {
+      seen.push(op.payload.id);
+      return op.payload.id === 'item-2' ? 'retry' : 'ok';
+    });
+    assert.deepEqual(seen, ['item-1', 'item-2'], 'flush stops at the first failure — item-3 never attempted');
+    assert.deepEqual(r1, { sent: 1, remaining: 2, deadLettered: 0 });
+    const pending = await off.pending();
+    assert.deepEqual(pending.map((p) => p.payload.id), ['item-2', 'item-3'], 'order preserved');
+    assert.equal(pending[0].attempts, 1);
+    const r2 = await off.flush(async () => 'ok');
+    assert.deepEqual(r2, { sent: 2, remaining: 0, deadLettered: 0 });
+  });
+
+  it('outbox: a throwing sender is a retry, not a lost op; queued payload carries its stable id', async () => {
+    const off = new OfflineSync(memKv(), { newId: ids });
+    const op = await off.enqueueCreate({ id: 'stable-1', title: 'x' });
+    assert.equal(op.payload.id, 'stable-1');
+    const r = await off.flush(async () => { throw new Error('network down'); });
+    assert.deepEqual(r, { sent: 0, remaining: 1, deadLettered: 0 });
+    assert.equal((await off.pending())[0].attempts, 1);
+  });
+
+  it('dead-letter: a permanently failing op stops blocking the queue after MAX attempts (review N1)', async () => {
+    const { MAX_FLUSH_ATTEMPTS } = await import('../../packages/voice-engine/src/offline.ts');
+    const off = new OfflineSync(memKv(), { newId: ids });
+    await off.enqueueCreate({ id: 'poison', title: 'bad' });
+    await off.enqueueCreate({ id: 'behind', title: 'good' });
+    const send = async (op) => (op.payload.id === 'poison' ? 'retry' : 'ok');
+    for (let i = 0; i < MAX_FLUSH_ATTEMPTS; i++) await off.flush(send);
+    const r = await off.flush(send);
+    assert.equal(r.deadLettered, 1, 'the poison op was dead-lettered');
+    assert.equal(r.sent, 1, 'the op behind it finally flowed');
+    assert.equal(r.remaining, 0);
+    const dead = await off.deadLettered();
+    assert.equal(dead.length, 1);
+    assert.equal(dead[0].payload.id, 'poison');
+  });
+
+  it('error classification (review N1): coded server errors are NOT queueable; transport errors are', async () => {
+    const { isQueueableError } = await import('../../packages/voice-engine/src/offline.ts');
+    assert.equal(isQueueableError({ code: '23514' }), false, 'CHECK violation is permanent');
+    assert.equal(isQueueableError({ code: '42501' }), false, 'RLS denial is permanent');
+    assert.equal(isQueueableError({ code: 'PGRST301' }), false, 'PostgREST errors are permanent');
+    assert.equal(isQueueableError(new TypeError('Failed to fetch')), true, 'fetch failure is transport');
+    assert.equal(isQueueableError(new Error('socket hangup')), true, 'uncoded errors are transport');
+  });
+
+  it('cache keys separate pages (review N2); corrupt outbox is preserved, not discarded (review N4)', async () => {
+    const { listCacheKey } = await import('../../packages/voice-engine/src/offline.ts');
+    assert.notEqual(listCacheKey('items:S1', 60, 0), listCacheKey('items:S1', 100, 0));
+    assert.notEqual(listCacheKey('items:S1', 100, 0), listCacheKey('items:S1', 100, 100));
+    const kv = memKv();
+    await kv.set('offline:outbox:v1', '{corrupt json');
+    const off = new OfflineSync(kv, { newId: ids });
+    assert.deepEqual(await off.pending(), [], 'corrupt outbox reads as empty');
+    const sideKeys = [...kv._map.keys()].filter((k) => k.includes(':corrupt:'));
+    assert.equal(sideKeys.length, 1, 'the corrupt payload was preserved under a side key');
+  });
+
+  it('GUARD (T-D3-6): createItem assigns a client id and resolves 23505 to the existing row', () => {
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('const id = input.id ?? uuid4();'), 'id is client-assigned and stable across retries');
+    assert.ok(client.includes("code === '23505'"), 'PK conflict is detected');
+    assert.ok(client.includes("eq('id', id)"), 'conflict resolves by fetching the existing row');
+    assert.ok(client.includes('createItemOfflineFirst'), 'offline-first create exists');
+    assert.ok(client.includes('listItemsCached'), 'cached list read exists');
+    assert.ok(client.includes('flushOutbox'), 'outbox flush is wired to createItem');
+  });
+});
