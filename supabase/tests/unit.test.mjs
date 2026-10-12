@@ -12,7 +12,7 @@ import {
   SCENARIO_TABS,
 } from '../functions/_shared/routing.scenarios.ts';
 import { routeText } from '../functions/_shared/routing.ts';
-import { resolveTabName } from '../functions/_shared/tabs.ts';
+import { resolveTabName, listTabs, getTabNotes } from '../functions/_shared/tabs.ts';
 import {
   normAr,
   scoreFact,
@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -836,5 +836,94 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('Post-D1 bugfix — notes.deleted_at stale filters (dropped in 0019)', () => {
+  it('GUARD: no function filters any query on deleted_at (the column is gone)', () => {
+    const root = new URL('../functions/', import.meta.url);
+    const files = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.ts')) files.push(p);
+      }
+    };
+    walk(root);
+    assert.ok(files.length > 10, 'guard must actually scan the functions tree');
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      assert.ok(!/\.(is|eq|filter|not|or)\(\s*['"][^'"]*deleted_at/.test(src),
+        `${f.pathname} filters on deleted_at — dropped by 0019; PostgREST errors 42703 and the read silently returns nothing`);
+    }
+  });
+
+  // Fake PostgREST over the CANONICAL schema: notes has no deleted_at, so a
+  // query filtering on it errors exactly like the real API (data: null,
+  // 42703). Before the fix, listTabs/getTabNotes hit that error and
+  // silently returned zeros/empties; the assertions below prove the reads
+  // now return real data through the same paths.
+  function fakeTabsSupa({ tabs = [], notes = [] }) {
+    function builder(table) {
+      const filters = [];
+      let countMode = false;
+      let limitN = null;
+      let orderCol = null;
+      const rows = table === 'notes' ? notes : tabs;
+      const b = {
+        select(_c, opts) { if (opts?.count) countMode = true; return b; },
+        eq(c, v) { filters.push(['eq', c, v]); return b; },
+        is(c, v) { filters.push(['is', c, v]); return b; },
+        neq(c, v) { filters.push(['neq', c, v]); return b; },
+        or() { return b; },
+        order(c) { orderCol = c; return b; },
+        limit(n) { limitN = n; return b; },
+        then: (resolve) => {
+          if (table === 'notes' && filters.some(([, c]) => c === 'deleted_at')) {
+            return resolve({ data: null, count: null, error: { code: '42703', message: 'column notes.deleted_at does not exist' } });
+          }
+          let out = rows.filter((r) => filters.every(([op, c, v]) =>
+            op === 'eq' ? r[c] === v : op === 'is' ? (v === null ? r[c] == null : r[c] === v) : r[c] !== v));
+          if (orderCol) out = [...out].sort((a, z) => (String(a[orderCol]) < String(z[orderCol]) ? 1 : -1));
+          if (countMode) return resolve({ data: null, count: out.length, error: null });
+          if (limitN) out = out.slice(0, limitN);
+          return resolve({ data: out, count: null, error: null });
+        },
+      };
+      return b;
+    }
+    return { from: (t) => builder(t) };
+  }
+
+  const seedNotes = [
+    { id: 'n1', space_id: 'S1', tab_id: null, transcript: 'passport is in the drawer', created_at: '2026-10-01T10:00:00Z' },
+    { id: 'n2', space_id: 'S1', tab_id: null, transcript: 'buy milk tomorrow', created_at: '2026-10-02T10:00:00Z' },
+    { id: 'n3', space_id: 'S1', tab_id: 'papers', transcript: 'passport renewal appointment', created_at: '2026-10-03T10:00:00Z' },
+    { id: 'n4', space_id: 'S1', tab_id: 'secret', transcript: 'vault note — must stay excluded', created_at: '2026-10-04T10:00:00Z' },
+  ];
+
+  it('listTabs returns REAL note counts (pre-fix: silently zeroed by the 42703 error)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const tabs = await listTabs(supa, 'S1', 'private');
+    assert.equal(tabs.find((t) => t.id === 'main').noteCount, 2);
+    assert.equal(tabs.find((t) => t.id === 'papers').noteCount, 1);
+  });
+
+  it('getTabNotes returns the tab notes + total (pre-fix: always empty)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const main = await getTabNotes(supa, 'S1', 'main');
+    assert.equal(main.totalCount, 2);
+    assert.deepEqual(main.notes.map((n) => n.id), ['n2', 'n1']); // newest first
+    const papers = await getTabNotes(supa, 'S1', 'papers');
+    assert.equal(papers.totalCount, 1);
+    assert.equal(papers.notes[0].id, 'n3');
+  });
+
+  it('the secret tab stays excluded from counts and reads (vault boundary preserved)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const tabs = await listTabs(supa, 'S1', 'private');
+    const total = tabs.reduce((a, t) => a + t.noteCount, 0);
+    assert.equal(total, 3, 'the secret note (n4) must never be counted');
   });
 });
