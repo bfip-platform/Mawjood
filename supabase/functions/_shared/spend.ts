@@ -35,8 +35,10 @@ export function estimateCostUsd(
   completionTokens: number | null | undefined,
 ): number {
   const rate = MODEL_RATES_USD_PER_1M[model] ?? FALLBACK_RATE;
-  const pin = Math.max(0, promptTokens ?? 0);
-  const pout = Math.max(0, completionTokens ?? 0);
+  // Non-numeric garbage prices as 0 here; checkSpendCap additionally
+  // treats a non-finite total as a failed check (fail-closed).
+  const pin = Math.max(0, Number(promptTokens) || 0);
+  const pout = Math.max(0, Number(completionTokens) || 0);
   return (pin * rate.input + pout * rate.output) / 1_000_000;
 }
 
@@ -97,6 +99,9 @@ export async function checkSpendCap(supa: any, userId: string, capOverride?: num
     for (const row of data) {
       spent += estimateCostUsd(row.model, row.prompt_tokens, row.completion_tokens);
     }
+    // Fail-closed by construction: a non-finite total means the telemetry
+    // was malformed — deny rather than compare against NaN (always false).
+    if (!Number.isFinite(spent)) return { allowed: false, capUsd, reason: 'check_failed' };
     if (spent >= capUsd) return { allowed: false, spentUsd: spent, capUsd, reason: 'cap_reached' };
     return { allowed: true, spentUsd: spent, capUsd };
   } catch {

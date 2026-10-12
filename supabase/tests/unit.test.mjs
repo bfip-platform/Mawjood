@@ -867,6 +867,7 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     assert.equal(estimateCostUsd('some-future-model', 1_000_000, 0), FALLBACK_RATE.input);
     assert.equal(estimateCostUsd('gpt-5-mini', null, undefined), 0);
     assert.equal(estimateCostUsd('gpt-5-mini', -5, -5), 0);
+    assert.ok(Number.isFinite(estimateCostUsd('gpt-5-mini', 'abc', {})), 'garbage token values never yield NaN');
   });
 
   it('parses cap config: default $2, env override, kill-switch disables', async () => {
