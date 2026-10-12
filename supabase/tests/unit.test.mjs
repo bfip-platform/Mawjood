@@ -18,7 +18,15 @@ import {
   scoreFact,
   parseLearned,
   factLine,
+  planMemoryMaintenance,
+  applyMemoryMaintenance,
+  quotaGate,
+  countFactsForQuota,
+  oldestWeakestForReview,
+  upsertFacts,
 } from '../functions/_shared/memory.ts';
+import * as memoryEngine from '../functions/_shared/memory.ts';
+import { readFileSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -317,5 +325,180 @@ describe('governance — prompt building', () => {
     assert.ok(line.includes('2'));
     assert.ok(!line.includes('حذف تبويبات'));
     assert.equal(gov.capabilitiesLine({ ...base, capabilities: { ...base.capabilities, can_add_tabs: false } }, true), '');
+  });
+});
+
+// ── D1 data protection (failing-first suites for B1/B2) ─────────────────────
+// In-memory PostgREST fake: just enough of the supabase-js builder surface
+// for the memory engine (select/eq/order/limit/maybeSingle/insert/update/delete).
+function fakeSupa(rows) {
+  const db = { items: rows.map((r) => ({ ...r, meta: { ...(r.meta ?? {}) } })) };
+  function builder(table) {
+    const filters = [];
+    let op = { type: 'select' };
+    let sortSpec = null;
+    const match = () => {
+      const out = db[table].filter((r) => filters.every(([col, val]) => {
+        if (col === 'meta->>mkey') return r.meta?.mkey === val;
+        return r[col] === val;
+      }));
+      if (sortSpec) {
+        const [col, dir] = sortSpec;
+        out.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (dir === 'desc' ? -1 : 1));
+      }
+      return out;
+    };
+    const b = {
+      select(_cols, opts) { op = { type: 'select', count: opts?.count, head: opts?.head }; return b; },
+      eq(col, val) { filters.push([col, val]); return b; },
+      order(col, o) { sortSpec = [col, o?.ascending === false ? 'desc' : 'asc']; return b; },
+      limit() { return b; },
+      maybeSingle: async () => ({ data: match()[0] ?? null, error: null }),
+      single: async () => ({ data: match()[0] ?? null, error: null }),
+      insert: async (row) => {
+        const nowIso = new Date().toISOString();
+        db[table].push({ id: `id-${db[table].length + 1}-${Math.random().toString(36).slice(2, 7)}`, created_at: nowIso, updated_at: nowIso, ...row });
+        return { error: null };
+      },
+      update(patch) { op = { type: 'update', patch }; return b; },
+      delete() { op = { type: 'delete' }; return b; },
+      then: (resolve) => {
+        if (op.type === 'select') {
+          const m = match();
+          if (op.head) return resolve({ data: null, count: m.length, error: null });
+          return resolve({ data: m, error: null });
+        }
+        if (op.type === 'update') {
+          const m = match();
+          for (const r of m) Object.assign(r, op.patch);
+          return resolve({ data: m, error: null });
+        }
+        if (op.type === 'delete') {
+          const m = match();
+          db[table] = db[table].filter((r) => !m.includes(r));
+          return resolve({ error: null });
+        }
+        return resolve({ data: null, error: null });
+      },
+    };
+    return b;
+  }
+  return { from: (t) => builder(t), _db: db };
+}
+
+const NOW = new Date('2026-10-12T00:00:00.000Z');
+const daysAgo = (n) => new Date(NOW.getTime() - n * 86400000).toISOString();
+const mkFact = (id, importance, ageDays, extraMeta = {}) => ({
+  id, space_id: 'S1', kind: 'memory', status: 'open',
+  title: `fact ${id}`, details: `details ${id}`,
+  meta: { mkey: `k:${id}`, mcat: 'preference', importance, ...extraMeta },
+  created_at: daysAgo(ageDays), updated_at: daysAgo(ageDays),
+});
+
+describe('D1/B1 — non-destructive maintenance planning (spec §3)', () => {
+  it('rescores stale importance-1 facts (90d+), never deletes', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 100)], NOW);
+    assert.deepEqual(plan.rescore, ['a']);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('flags 180d+ low-importance facts for the review queue', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 200), mkFact('b', 2, 200)], NOW);
+    assert.deepEqual(plan.rescore, ['a']); // only importance<=1 rescores
+    assert.deepEqual([...plan.flagReview].sort(), ['a', 'b']);
+  });
+
+  it('leaves fresh and important facts alone', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 10), mkFact('b', 5, 400), mkFact('c', 3, 200)], NOW);
+    assert.deepEqual(plan.rescore, []);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('is idempotent: already-rescored / already-flagged facts are skipped', () => {
+    const plan = planMemoryMaintenance([
+      mkFact('a', 1, 200, { retrieval_boost: 0.5, review_candidate: true }),
+    ], NOW);
+    assert.deepEqual(plan.rescore, []);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('applyMemoryMaintenance updates metadata only — row count unchanged, second run is a no-op', async () => {
+    const supa = fakeSupa([mkFact('a', 1, 100), mkFact('b', 2, 200, { retrieval_boost: 0.5 }), mkFact('c', 4, 5)]);
+    const r1 = await applyMemoryMaintenance(supa, 'S1', NOW);
+    assert.equal(r1.rescored, 1);
+    assert.equal(r1.review_flagged, 1);
+    assert.equal(supa._db.items.length, 3, 'no row may be deleted');
+    assert.equal(supa._db.items.find((r) => r.id === 'a').meta.retrieval_boost, 0.5);
+    assert.equal(supa._db.items.find((r) => r.id === 'b').meta.review_candidate, true);
+    const r2 = await applyMemoryMaintenance(supa, 'S1', NOW);
+    assert.deepEqual(r2, { rescored: 0, review_flagged: 0 });
+  });
+
+  it('scoreFact applies the retrieval_boost visibility penalty', () => {
+    const nowIso = new Date().toISOString();
+    const base = { title: 'مفتاح السيارة', details: 'في درج المطبخ', created_at: nowIso, updated_at: nowIso };
+    const normal = scoreFact({ ...base, meta: { importance: 3 } }, ['مفتاح']);
+    const decayed = scoreFact({ ...base, meta: { importance: 3, retrieval_boost: 0.5 } }, ['مفتاح']);
+    assert.ok(decayed < normal, `decayed=${decayed} should rank below normal=${normal}`);
+  });
+});
+
+describe('D1/B2 — quota mechanics: block-on-overflow, never prune (spec §4)', () => {
+  it('pruneFacts is gone from the engine (no caller can invoke deletion)', () => {
+    assert.equal('pruneFacts' in memoryEngine, false);
+  });
+
+  it('quotaGate blocks only at/over an explicit cap', () => {
+    assert.equal(quotaGate(0, undefined), false);
+    assert.equal(quotaGate(9999, undefined), false);
+    assert.equal(quotaGate(199, 200), false);
+    assert.equal(quotaGate(200, 200), true);
+    assert.equal(quotaGate(250, 200), true);
+  });
+
+  it('upsertFacts at cap: new facts blocked, nothing deleted, same-mkey updates still save', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1, { mkey: 'k:a' }), mkFact('b', 3, 1, { mkey: 'k:b' })]);
+    const blocked = await upsertFacts(supa, 'S1', 'U1', [{ content: 'new fact', mkey: 'k:c', mcat: 'preference', importance: 3 }], 'learned', { cap: 2 });
+    assert.deepEqual(blocked, { saved: 0, updated: 0, blocked: 1 });
+    assert.equal(supa._db.items.length, 2, 'overflow must never delete existing facts');
+    const upd = await upsertFacts(supa, 'S1', 'U1', [{ content: 'a v2', mkey: 'k:a', mcat: 'preference', importance: 3 }], 'learned', { cap: 2 });
+    assert.deepEqual(upd, { saved: 0, updated: 1, blocked: 0 });
+    assert.equal(supa._db.items.length, 2);
+  });
+
+  it('upsertFacts without a cap saves as before (no invented numbers)', async () => {
+    const supa = fakeSupa([]);
+    const r = await upsertFacts(supa, 'S1', 'U1', [{ content: 'x', mkey: 'k:x', mcat: 'preference', importance: 3 }], 'learned');
+    assert.deepEqual(r, { saved: 1, updated: 0, blocked: 0 });
+  });
+
+  it('countFactsForQuota counts open facts; oldestWeakestForReview is read-only and ordered', async () => {
+    const supa = fakeSupa([
+      mkFact('new-strong', 5, 1), mkFact('old-weak', 1, 300), mkFact('mid-weak', 1, 100),
+    ]);
+    assert.equal(await countFactsForQuota(supa, 'S1'), 3);
+    const review = await oldestWeakestForReview(supa, 'S1', 2);
+    assert.deepEqual(review.map((f) => f.id), ['old-weak', 'mid-weak']);
+    assert.equal(supa._db.items.length, 3, 'review listing must not mutate the store');
+  });
+});
+
+describe('D1 — static guard: no hard-delete of memory items outside the sanctioned purge', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const itemsDelete = /\.from\(['"]items['"]\)\s*\.delete\(\)/g;
+
+  it('memory-consolidate contains no items delete', () => {
+    assert.equal(read('../functions/memory-consolidate/index.ts').match(itemsDelete), null);
+  });
+
+  it('chat contains no items delete (forget goes through trash)', () => {
+    assert.equal(read('../functions/chat/index.ts').match(itemsDelete), null);
+  });
+
+  it('memory engine has exactly one items delete, inside purgeExpiredTrashedFacts', () => {
+    const src = read('../functions/_shared/memory.ts');
+    const hits = [...src.matchAll(itemsDelete)];
+    assert.equal(hits.length, 1);
+    assert.ok(hits[0].index > src.indexOf('purgeExpiredTrashedFacts'), 'the single delete must live in the trash purge');
   });
 });

@@ -5,7 +5,17 @@
 //                         explicit "ناديني X" commands)
 //   * chat              — recall: relevance-ranked facts injected per turn +
 //                         remember_fact / forget_fact / list_memories tools
-//   * memory-consolidate — nightly: daily episodes, dedupe, decay, cap
+//   * memory-consolidate — nightly gardener: daily episodes, duplicate
+//                         surfacing, visibility re-scoring (NEVER deletes a
+//                         live memory — D1 data-protection contract, spec §1)
+//
+// DURABILITY CONTRACT (owner decision #1, D0.5 spec §1): a saved memory is
+// deleted ONLY through a user-initiated door: explicit delete → 30-day trash,
+// user-confirmed merge, full account delete, or the trash auto-purge of rows
+// the user already trashed. Age, downgrade, and quota overflow NEVER delete.
+// The single `.delete()` on items in this file lives in
+// purgeExpiredTrashedFacts() and only touches status='trashed' rows past
+// their retention window.
 //
 // Store: items rows with kind='memory' (migration 0023) in the user's PRIVATE
 // space — owner-only by RLS, invisible in every tab. meta carries:
@@ -85,7 +95,10 @@ export function scoreFact(f: MemoryRow, queryTokens: string[]): number {
   const daysOld =
     (Date.now() - new Date(f.updated_at ?? f.created_at).getTime()) / 86400000;
   const recency = Math.max(0, 1 - daysOld / 180);
-  return hits * 3 + importance * 0.6 + recency * 0.5;
+  // Visibility decay (spec §3.1): stale low-importance facts rank lower via
+  // meta.retrieval_boost — they are NEVER deleted for age.
+  const boost = Number(f.meta?.retrieval_boost ?? 1);
+  return (hits * 3 + importance * 0.6 + recency * 0.5) * (boost > 0 ? boost : 1);
 }
 
 /** Load all open memory facts for a space. */
@@ -171,8 +184,47 @@ export function parseLearned(raw: string): LearnedFact[] {
 }
 
 /**
+ * Quota gate (spec §4): true when a NEW save must be blocked. The cap value
+ * itself is an owner decision (OD-01/02, options in spec §4.4) — until the
+ * owner picks one, callers pass no cap and nothing is blocked. Overflow NEVER
+ * deletes existing facts; it only refuses new creation.
+ */
+export function quotaGate(count: number, cap?: number): boolean {
+  return typeof cap === 'number' && cap > 0 && count >= cap;
+}
+
+/** Read-only count of open memory facts in a space (quota + admin stats). */
+export async function countFactsForQuota(supa: Supa, spaceId: string): Promise<number> {
+  const { count, data } = await supa
+    .from('items')
+    .select('id', { count: 'exact', head: true })
+    .eq('space_id', spaceId)
+    .eq('kind', 'memory')
+    .eq('status', 'open');
+  if (typeof count === 'number') return count;
+  return ((data ?? []) as unknown[]).length;
+}
+
+/**
+ * Read-only candidate listing for user-driven cleanup (spec §4.2): weakest +
+ * stalest first. Listing NEVER mutates the store — deletion is the user's
+ * choice, through trash.
+ */
+export async function oldestWeakestForReview(supa: Supa, spaceId: string, n = 20): Promise<MemoryRow[]> {
+  const facts = await loadFacts(supa, spaceId);
+  return facts
+    .slice()
+    .sort((a, b) => Number(a.meta?.importance ?? 3) - Number(b.meta?.importance ?? 3) || (a.updated_at < b.updated_at ? -1 : 1))
+    .slice(0, n);
+}
+
+/**
  * Upsert learned facts. Same mkey → update + reinforce (importance bump, like
  * Muse's "last reinforced"). Returns counts for logging.
+ *
+ * D1 (spec §4.1): when `opts.cap` is provided and the store is at cap, NEW
+ * facts are refused (`blocked`) — nothing is deleted to make room. Updates to
+ * facts the user already owns (same mkey) are never blocked.
  */
 export async function upsertFacts(
   supa: Supa,
@@ -180,9 +232,12 @@ export async function upsertFacts(
   userId: string,
   facts: LearnedFact[],
   source: 'learned' | 'explicit' | 'episode' = 'learned',
-): Promise<{ saved: number; updated: number }> {
+  opts?: { cap?: number },
+): Promise<{ saved: number; updated: number; blocked: number }> {
   let saved = 0;
   let updated = 0;
+  let blocked = 0;
+  let knownCount: number | null = null;
   for (const f of facts) {
     const { data: existing } = await supa
       .from('items')
@@ -205,6 +260,13 @@ export async function upsertFacts(
         .eq('id', existing.id);
       updated++;
     } else {
+      if (opts?.cap !== undefined) {
+        if (knownCount === null) knownCount = await countFactsForQuota(supa, spaceId);
+        if (quotaGate(knownCount, opts.cap)) {
+          blocked++;
+          continue;
+        }
+      }
       const { error } = await supa.from('items').insert({
         space_id: spaceId,
         kind: 'memory',
@@ -214,24 +276,145 @@ export async function upsertFacts(
         created_by: userId,
         meta: { ...(f.meta ?? {}), mkey: f.mkey, mcat: f.mcat, layer: f.mcat === 'episode' ? 'episode' : 'fact', importance: f.importance, source },
       });
-      if (!error) saved++;
+      if (!error) {
+        saved++;
+        if (knownCount !== null) knownCount++;
+      }
     }
   }
-  return { saved, updated };
+  return { saved, updated, blocked };
 }
 
-/** Cap the store: drop the weakest (low importance, stalest) beyond `keep`. */
-export async function pruneFacts(supa: Supa, spaceId: string, keep = 200): Promise<number> {
+/**
+ * Non-destructive maintenance planning (spec §3, decision #7). PURE.
+ * - rescore: importance ≤1 facts untouched for 90+ days get a retrieval
+ *   penalty (meta.retrieval_boost = 0.5). The row stays; it ranks lower.
+ * - flagReview: facts untouched for 180+ days with importance ≤2 become
+ *   review-queue candidates (meta.review_candidate = true) for the user to
+ *   keep / archive / delete — the system never decides for them.
+ * Idempotent: facts already rescored/flagged are not returned again.
+ */
+export function planMemoryMaintenance(
+  facts: MemoryRow[],
+  now: Date,
+): { rescore: string[]; flagReview: string[] } {
+  const rescore: string[] = [];
+  const flagReview: string[] = [];
+  for (const f of facts) {
+    const ageDays = (now.getTime() - new Date(f.updated_at).getTime()) / 86400000;
+    const importance = Number(f.meta?.importance ?? 3);
+    if (ageDays > 90 && importance <= 1 && Number(f.meta?.retrieval_boost ?? 1) !== 0.5) {
+      rescore.push(f.id);
+    }
+    if (ageDays > 180 && importance <= 2 && f.meta?.review_candidate !== true) {
+      flagReview.push(f.id);
+    }
+  }
+  return { rescore, flagReview };
+}
+
+/**
+ * Apply planMemoryMaintenance to one space: metadata UPDATEs only.
+ * This replaces the old 90-day hard-delete ("decay"). NEVER deletes.
+ */
+export async function applyMemoryMaintenance(
+  supa: Supa,
+  spaceId: string,
+  now: Date = new Date(),
+): Promise<{ rescored: number; review_flagged: number }> {
   const facts = await loadFacts(supa, spaceId);
-  if (facts.length <= keep) return 0;
-  const victim = facts
-    .slice()
-    .sort((a, b) => Number(a.meta?.importance ?? 3) - Number(b.meta?.importance ?? 3) || (a.updated_at < b.updated_at ? -1 : 1))
-    .slice(0, facts.length - keep);
+  const plan = planMemoryMaintenance(facts, now);
+  const byId = new Map(facts.map((f) => [f.id, f]));
+  const patchFor = new Map<string, Record<string, unknown>>();
+  for (const id of plan.rescore) patchFor.set(id, { ...(patchFor.get(id) ?? {}), retrieval_boost: 0.5 });
+  for (const id of plan.flagReview) patchFor.set(id, { ...(patchFor.get(id) ?? {}), review_candidate: true });
+  for (const [id, patch] of patchFor) {
+    const row = byId.get(id);
+    if (!row) continue;
+    await supa
+      .from('items')
+      .update({ meta: { ...(row.meta ?? {}), ...patch } })
+      .eq('id', id);
+  }
+  return { rescored: plan.rescore.length, review_flagged: plan.flagReview.length };
+}
+
+/**
+ * Move a memory fact to trash (spec §5.2): status flip + trashed_at stamp.
+ * Recoverable for the retention window; the row is NOT deleted here.
+ * Requires migration 0035 (items status 'trashed') wherever deployed.
+ */
+export async function trashFact(
+  supa: Supa,
+  fact: MemoryRow,
+  reason: string,
+): Promise<boolean> {
+  const { error } = await supa
+    .from('items')
+    .update({
+      status: 'trashed',
+      meta: { ...(fact.meta ?? {}), trashed_at: new Date().toISOString(), trash_reason: reason },
+    })
+    .eq('id', fact.id);
+  return !error;
+}
+
+/** Restore a trashed memory fact back to open (undo, spec §5.2). */
+export async function restoreFact(supa: Supa, spaceId: string, factId: string): Promise<MemoryRow | null> {
+  const { data } = await supa
+    .from('items')
+    .select('id, title, details, meta, created_at, updated_at')
+    .eq('space_id', spaceId)
+    .eq('kind', 'memory')
+    .eq('status', 'trashed')
+    .eq('id', factId)
+    .maybeSingle();
+  if (!data) return null;
+  const meta = { ...((data as MemoryRow).meta ?? {}) };
+  delete meta.trashed_at;
+  delete meta.trash_reason;
+  const { error } = await supa
+    .from('items')
+    .update({ status: 'open', meta })
+    .eq('id', factId);
+  if (error) return null;
+  return { ...(data as MemoryRow), meta };
+}
+
+/** List trashed memory facts in a space (undo / trash views). */
+export async function listTrashedFacts(supa: Supa, spaceId: string): Promise<MemoryRow[]> {
+  const { data } = await supa
+    .from('items')
+    .select('id, title, details, meta, created_at, updated_at')
+    .eq('space_id', spaceId)
+    .eq('kind', 'memory')
+    .eq('status', 'trashed')
+    .order('updated_at', { ascending: false })
+    .limit(300);
+  return (data ?? []) as MemoryRow[];
+}
+
+/**
+ * The ONLY sanctioned hard-delete of memory rows (decision #6, spec §1 door
+ * #4): purge facts that are ALREADY in trash (status='trashed') and whose
+ * 30-day recovery window has expired. Live ('open') memories are never
+ * touched by this function — the status filter is the guarantee.
+ */
+export async function purgeExpiredTrashedFacts(
+  supa: Supa,
+  spaceId: string,
+  retentionDays = 30,
+  now: Date = new Date(),
+): Promise<number> {
+  const trashed = await listTrashedFacts(supa, spaceId);
+  const cutoff = now.getTime() - retentionDays * 86400000;
   let n = 0;
-  for (const v of victim) {
-    const { error } = await supa.from('items').delete().eq('id', v.id);
-    if (!error) n++;
+  for (const f of trashed) {
+    const at = new Date(String(f.meta?.trashed_at ?? '')).getTime();
+    if (Number.isFinite(at) && at < cutoff) {
+      const { error } = await supa.from('items').delete().eq('id', f.id);
+      if (!error) n++;
+    }
   }
   return n;
 }

@@ -18,7 +18,6 @@ import {
   learnSystem,
   parseLearned,
   upsertFacts,
-  pruneFacts,
   loadFacts,
   privateSpaceId,
 } from '../_shared/memory.ts';
@@ -115,14 +114,16 @@ Deno.serve(async (req) => {
     if (facts.length === 0) {
       return new Response(JSON.stringify({ learned: 0 }), { headers: cors });
     }
-    const { saved, updated } = await upsertFacts(supa, pid, userId, facts, 'learned');
-    const pruned = await pruneFacts(supa, pid);
+    // D1 (spec §4): no pruneFacts — overflow NEVER deletes. When an owner-set
+    // cap exists, upsertFacts blocks new saves and reports `blocked`; with no
+    // cap configured (OD-01/02 open) behavior is unchanged.
+    const { saved, updated, blocked } = await upsertFacts(supa, pid, userId, facts, 'learned');
     await logOps(admin, {
       user_id: userId, request_id: requestId,
       kind: 'memory_learned', ok: true, detail: hash,
-      meta: { saved, updated },
+      meta: { saved, updated, blocked },
     });
-    return new Response(JSON.stringify({ learned: saved + updated, saved, updated, pruned }), {
+    return new Response(JSON.stringify({ learned: saved + updated, saved, updated, blocked }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
   } catch (e) {
