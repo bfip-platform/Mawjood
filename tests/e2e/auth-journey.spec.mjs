@@ -187,16 +187,22 @@ test('memory creation via data API appears in the space notes browser', async ({
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
 
-  // create a private space + note as this user (RLS-enforced writes)
-  const { data: space, error: sErr } = await authed
+  // Use the user's DEFAULT private space (created by the app at boot via
+  // ensureDefaultSpaces). Creating a new space via API would not appear in
+  // the app's locally-loaded spaces list, so pickSpace('private') would open
+  // the default (empty) one, not the new one.
+  const { data: spaces, error: sErr } = await authed
     .from('spaces')
-    .insert({ owner_id: session.user.id, type: 'private', name: 'E2E Private' })
     .select('id')
-    .single();
-  expect(sErr, `space insert: ${sErr?.message}`).toBeNull();
+    .eq('owner_id', session.user.id)
+    .eq('type', 'private')
+    .limit(1);
+  expect(sErr, `space select: ${sErr?.message}`).toBeNull();
+  expect(spaces?.length, 'user has a default private space').toBeGreaterThan(0);
+  const spaceId = spaces[0].id;
   const marker = `e2e-memory-${Date.now()}`;
   const { error: nErr } = await authed.from('notes').insert({
-    space_id: space.id,
+    space_id: spaceId,
     transcript: marker,
     created_by: session.user.id,
   });
