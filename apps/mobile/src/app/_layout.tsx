@@ -24,12 +24,55 @@ function useNoInputFocusRing() {
   }, []);
 }
 
+/**
+ * Web only (D5 T-D5-2): the SPA export shell is generated from app.json —
+ * description + theme-color land statically from there. The Open Graph
+ * tags and the PWA manifest link have no app.json channel in single-page
+ * output mode, so they are injected here on mount (JS-rendering crawlers
+ * and the browser's installability check both read the live DOM). The
+ * manifest href is RELATIVE so the same export works at a domain root
+ * and under the GitHub Pages /Mawjood/ subpath. Static-only values —
+ * nothing user-specific is ever written into the document head.
+ */
+function useWebMeta() {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const added: Element[] = [];
+    const meta = (attr: 'property' | 'name', key: string, content: string) => {
+      const el = document.createElement('meta');
+      el.setAttribute(attr, key);
+      el.setAttribute('content', content);
+      el.setAttribute('data-mawjood', 'web-meta');
+      document.head.appendChild(el);
+      added.push(el);
+    };
+    meta('property', 'og:type', 'website');
+    meta('property', 'og:title', 'Mawjood — موجود');
+    meta(
+      'property',
+      'og:description',
+      'A voice-memory assistant for your things, tasks and family — Arabic and English from day one.',
+    );
+    meta('name', 'apple-mobile-web-app-capable', 'yes');
+    const link = document.createElement('link');
+    link.setAttribute('rel', 'manifest');
+    link.setAttribute('href', 'manifest.webmanifest');
+    link.setAttribute('data-mawjood', 'web-meta');
+    document.head.appendChild(link);
+    added.push(link);
+    return () => {
+      added.forEach((el) => el.remove());
+    };
+  }, []);
+}
+
 // Inner component: all the hooks and UI that might throw.
 // Wrapped by ErrorBoundary OUTSIDE so any startup JS error
 // shows on screen instead of crashing the app.
 function InnerLayout() {
   const { resolved, palette: P } = useTheme();
   useNoInputFocusRing();
+  useWebMeta();
   // Init theme AFTER mount — calling AsyncStorage at import time crashes
   // on iOS 26 (TurboModule NSException during bridge init).
   useEffect(() => {

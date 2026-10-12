@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -836,5 +836,62 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
+  const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
+
+  it('parseDeepLink: only well-formed join intents survive; everything else is null', () => {
+    assert.deepEqual(parseDeepLink('mawjood://family/join?code=abc123'), { kind: 'join-family', code: 'ABC123' });
+    assert.deepEqual(parseDeepLink('https://bfip-platform.github.io/join?code=XYZ987'), { kind: 'join-family', code: 'XYZ987' });
+    assert.deepEqual(
+      parseDeepLink('https://bfip-platform.github.io/Mawjood/join?code=XYZ987'),
+      { kind: 'join-family', code: 'XYZ987' },
+      'one deployment-subpath segment is tolerated for https (review N1)',
+    );
+    assert.equal(parseDeepLink('https://x.example/a/b/join?code=XYZ987'), null, 'two prefix segments are NOT tolerated');
+    assert.equal(parseDeepLink('mawjood://x/family/join?code=XYZ987'), null, 'the app scheme stays strict');
+    assert.equal(parseDeepLink('mawjood://family/join?code=short'), null, 'too-short code rejected');
+    assert.equal(parseDeepLink('mawjood://family/join'), null, 'missing code rejected');
+    assert.equal(parseDeepLink('mawjood://vault/open?path=secret'), null, 'unknown path rejected');
+    assert.deepEqual(
+      parseDeepLink('mawjood://family/join?code=ABC123&token=leak'),
+      { kind: 'join-family', code: 'ABC123' },
+      'extra params are never read — only the allowlisted code is extracted',
+    );
+    assert.equal(parseDeepLink('https://evil.example/join?code=../../etc'), null, 'malicious code rejected');
+    assert.equal(parseDeepLink('javascript:alert(1)'), null);
+    assert.equal(parseDeepLink(''), null);
+    assert.equal(parseDeepLink(null), null);
+    assert.equal(parseDeepLink(42), null);
+    assert.equal(parseDeepLink('not a url'), null);
+  });
+
+  it('GUARD: app.json carries the static SEO shell; OG/manifest are injected by useWebMeta; manifest + robots exist; links route through the parser', () => {
+    const appJson = JSON.parse(readFileSync(new URL('../../apps/mobile/app.json', import.meta.url), 'utf8'));
+    assert.ok(appJson.expo.web.description?.length > 20, 'static meta description via app.json');
+    assert.equal(appJson.expo.web.themeColor, '#FAF7F2', 'static theme-color via app.json');
+    const layout = readFileSync(new URL('../../apps/mobile/src/app/_layout.tsx', import.meta.url), 'utf8');
+    assert.ok(layout.includes('useWebMeta'), 'OG/manifest runtime injector exists');
+    assert.ok(layout.includes("link.setAttribute('rel', 'manifest')"), 'manifest link injected (relative href)');
+    assert.ok(layout.includes("'og:title'"), 'OG title injected');
+    const manifest = JSON.parse(readFileSync(new URL('../../apps/mobile/public/manifest.webmanifest', import.meta.url), 'utf8'));
+    assert.equal(manifest.display, 'standalone');
+    assert.equal(manifest.short_name, 'Mawjood');
+    assert.ok(manifest.icons.every((i) => !i.src.startsWith('assets/')), 'manifest icons resolve to public/ files, not bundle assets');
+    assert.ok(existsSync(new URL('../../apps/mobile/public/robots.txt', import.meta.url)), 'robots.txt exists');
+    assert.ok(existsSync(new URL('../../apps/mobile/public/icon-1024.png', import.meta.url)), 'PWA icon exists in public/');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('parseDeepLink(raw)'), 'the app routes links through the fail-closed parser');
+    assert.ok(app.includes("Linking.addEventListener('url'"), 'live link subscription wired');
+  });
+
+  it('GUARD (T-D5-5): BRAND tokens carry the Decision #11 baseline; OD-39 stays open', () => {
+    const theme = readFileSync(new URL('../../apps/mobile/src/lib/theme.ts', import.meta.url), 'utf8');
+    assert.ok(theme.includes("accentBlue: '#3B82C4'"), 'soft blue token (Decision #11)');
+    assert.ok(theme.includes("accentSage: '#5E7E63'"), 'muted sage token (Decision #11)');
+    assert.ok(theme.includes('IBM Plex Sans Arabic'), 'arabic font token');
+    assert.ok(theme.includes('OD-39'), 'the not-final caveat travels with the tokens');
   });
 });

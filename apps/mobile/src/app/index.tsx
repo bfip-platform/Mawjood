@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Image,
   I18nManager,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -37,6 +38,7 @@ import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import AuthScreen from '../components/AuthScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
+import { parseDeepLink } from '../lib/deeplinks';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
 import { useTheme } from '../lib/theme';
 import { SearchBar } from '../lib/SearchBar';
@@ -637,6 +639,23 @@ export default function HomeScreen() {
   const [joinCode, setJoinCode] = useState('');
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  // D5 T-D5-2: deep links — fail-closed allowlist (lib/deeplinks). The
+  // only external intent is a family-join code, which lands in the
+  // existing join modal for the user's own confirmation tap; anything
+  // unrecognized is ignored entirely.
+  useEffect(() => {
+    const handle = (raw: string | null) => {
+      const intent = parseDeepLink(raw);
+      if (intent?.kind === 'join-family') {
+        setJoinCode(intent.code);
+        setJoinError(null);
+        setJoinOpen(true);
+      }
+    };
+    Linking.getInitialURL().then(handle).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handle(e.url));
+    return () => sub.remove();
+  }, []);
   // ── multi-family: slots (paid hook), switcher, paywall ──
   const [familySlots, setFamilySlots] = useState(1);
   const [paywallOpen, setPaywallOpen] = useState(false);
