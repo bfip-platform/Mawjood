@@ -148,20 +148,18 @@ async function signInWithPassword(page, email, password = 'e2e-test-pass-123') {
   const key = storageKey();
   await page.goto('/');
   await page.evaluate(
-    ({ k, sess }) => localStorage.setItem(k, JSON.stringify(sess)),
+    ({ k, sess }) => {
+      localStorage.setItem(k, JSON.stringify(sess));
+      // Suppress the first-run welcome overlay (it blocks the tab bar).
+      // The app checks AsyncStorage 'mawjood.welcomed.v1' on boot; setting
+      // it pre-boot is what finishWelcome() does after a real user skips.
+      localStorage.setItem('mawjood.welcomed.v1', '1');
+    },
     { k: key, sess: session },
   );
   await page.reload();
   // signed in: AuthScreen gone
   await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 15000 });
-  // Fresh users get an onboarding overlay that blocks the tab bar. Dismiss
-  // it (Skip / تخطي) if present — it only appears for brand-new accounts.
-  const skipBtn = page.getByText(/^(Skip|تخطي)$/);
-  if (await skipBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await skipBtn.click();
-    // wait for the overlay to go away
-    await expect(skipBtn).toBeHidden({ timeout: 10000 }).catch(() => {});
-  }
   return session;
 }
 
