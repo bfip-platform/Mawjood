@@ -191,13 +191,24 @@ test('memory creation via data API appears in the space notes browser', async ({
   // ensureDefaultSpaces). Creating a new space via API would not appear in
   // the app's locally-loaded spaces list, so pickSpace('private') would open
   // the default (empty) one, not the new one.
-  const { data: spaces, error: sErr } = await authed
-    .from('spaces')
-    .select('id')
-    .eq('owner_id', session.user.id)
-    .eq('type', 'private')
-    .limit(1);
-  expect(sErr, `space select: ${sErr?.message}`).toBeNull();
+  //
+  // NOTE: ensureDefaultSpaces runs async on app boot; poll until the space
+  // exists instead of asserting immediately.
+  let spaces = null;
+  const spaceDeadline = Date.now() + 30000;
+  while (Date.now() < spaceDeadline) {
+    const { data, error } = await authed
+      .from('spaces')
+      .select('id')
+      .eq('owner_id', session.user.id)
+      .eq('type', 'private')
+      .limit(1);
+    if (!error && data?.length > 0) {
+      spaces = data;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   expect(spaces?.length, 'user has a default private space').toBeGreaterThan(0);
   const spaceId = spaces[0].id;
   const marker = `e2e-memory-${Date.now()}`;
