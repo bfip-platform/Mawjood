@@ -71,6 +71,9 @@ const MANIFEST = {
   'public-config': ['public'],
   'report-error': ['user-jwt'],
   route: ['public'],
+  // telemetry-janitor: service_role Bearer or x-cron-secret only (same
+  // posture as memory-consolidate); never callable from the client.
+  'telemetry-janitor': ['cron-secret'],
   transcribe: ['user-jwt'],
   // vault-master: user JWT (getUser -> 401) for every action; management
   // actions additionally require the HMAC mgmt capability (VAULT_MGMT_SECRET)
