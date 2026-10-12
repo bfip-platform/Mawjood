@@ -1,6 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, executeConfirmedForget } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
@@ -1000,17 +1000,40 @@ Deno.serve(async (req) => {
             .maybeSingle();
           const verdict = validateForgetConfirmation(row ?? null, userId, confirmCode, new Date());
           if (verdict.ok && row) {
-            const { trashed } = await executeConfirmedForget(admin, row);
-            const answer = trashed.length > 0
-              ? (uiAr
-                ? `انحذفت ونقلتها للمهملات: ${trashed.join('؛ ')} — بتقدر ترجعها خلال 30 يوم إذا غيّرت رأيك (قلّي «رجّعها»).`
-                : `Forgot and moved to trash: ${trashed.join('; ')} — you can undo within 30 days (say "restore it").`)
-              : (uiAr
-                ? 'هاي الذكرى ما عادت موجودة أصلاً — ما في شي أنساه.'
-                : 'That memory no longer exists — nothing to forget.');
-            return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmed)'] }), {
-              headers: { ...cors, 'Content-Type': 'application/json' },
-            });
+            // Atomic claim BEFORE executing: exactly one concurrent request
+            // can flip pending → executing; the rest get null and stop here.
+            const claimed = await claimForgetPreview(admin, row.id);
+            if (!claimed) {
+              const answer = uiAr
+                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنساه.'
+                : 'That code was already used or is being processed — nothing new to forget.';
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation already claimed)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            }
+            try {
+              const { trashed } = await executeConfirmedForget(admin, claimed);
+              const answer = trashed.length > 0
+                ? (uiAr
+                  ? `انحذفت ونقلتها للمهملات: ${trashed.join('؛ ')} — بتقدر ترجعها خلال 30 يوم إذا غيّرت رأيك (قلّي «رجّعها»).`
+                  : `Forgot and moved to trash: ${trashed.join('; ')} — you can undo within 30 days (say "restore it").`)
+                : (uiAr
+                  ? 'هاي الذكرى ما عادت موجودة أصلاً — ما في شي أنساه.'
+                  : 'That memory no longer exists — nothing to forget.');
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmed)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            } catch {
+              // Execution failed midway: release the claim so the state
+              // stays consistent and the user can retry with the same code.
+              await releaseForgetClaim(admin, row.id);
+              const answer = uiAr
+                ? 'صار خطأ أثناء التنفيذ — الذكرى ما انحذفت. جرّب تبعت الكود مرة تانية.'
+                : 'Something went wrong while executing — nothing was forgotten. Try sending the code again.';
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation error)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            }
           }
           const answer = uiAr
             ? 'كود التأكيد هاد مش صالح أو منتهي — الذكرى ما انحذفت. اطلب مني أنساها من جديد وبعطيك كود جديد.'

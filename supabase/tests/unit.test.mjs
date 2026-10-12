@@ -29,6 +29,8 @@ import {
   createForgetPreview,
   parseForgetConfirmation,
   validateForgetConfirmation,
+  claimForgetPreview,
+  releaseForgetClaim,
   executeConfirmedForget,
   trashFact,
   restoreFact,
@@ -359,7 +361,7 @@ function fakeSupa(rows) {
       return out;
     };
     const b = {
-      select(_cols, opts) { op = { type: 'select', count: opts?.count, head: opts?.head }; return b; },
+      select(_cols, opts) { if (op.type === 'update') { op.returning = true; return b; } op = { type: 'select', count: opts?.count, head: opts?.head }; return b; },
       eq(col, val) { filters.push([col, val]); return b; },
       order(col, o) { sortSpec = [col, o?.ascending === false ? 'desc' : 'asc']; return b; },
       limit() { return b; },
@@ -367,7 +369,12 @@ function fakeSupa(rows) {
       single: async () => ({ data: match()[0] ?? null, error: null }),
       insert: async (row) => {
         const nowIso = new Date().toISOString();
-        db[table].push({ id: `id-${db[table].length + 1}-${Math.random().toString(36).slice(2, 7)}`, created_at: nowIso, updated_at: nowIso, ...row });
+        // Emulate the schema default: pending_actions.expires_at defaults to
+        // now() + 30 minutes (migration 0034) when the writer omits it.
+        const defaults = table === 'pending_actions'
+          ? { expires_at: new Date(Date.now() + 30 * 60000).toISOString() }
+          : {};
+        db[table].push({ id: `id-${db[table].length + 1}-${Math.random().toString(36).slice(2, 7)}`, created_at: nowIso, updated_at: nowIso, ...defaults, ...row });
         return { error: null };
       },
       update(patch) { op = { type: 'update', patch }; return b; },
@@ -703,12 +710,15 @@ describe('D1 correction — confirmed forget (preview-only AI + user-sent code)'
     const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
     // Without the user's message there is no execution — validate is the gate:
     assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
-    const { trashed } = await executeConfirmedForget(supa, row);
+    const claimed = await claimForgetPreview(supa, row.id);
+    assert.ok(claimed && claimed.status === 'executing');
+    const { trashed } = await executeConfirmedForget(supa, claimed);
     assert.equal(trashed.length, 1);
     assert.equal(supa._db.items.find((r) => r.id === 'a').status, 'trashed');
     assert.equal(supa._db.items.find((r) => r.id === 'b').status, 'open');
     assert.equal(row.status, 'executed');
-    const again = await executeConfirmedForget(supa, row); // replay attempt
+    assert.equal(await claimForgetPreview(supa, row.id), null, 'an executed preview cannot be re-claimed');
+    const again = await executeConfirmedForget(supa, claimed); // replay attempt
     assert.equal(again.trashed.length, 0, 'consumed previews cannot execute twice');
   });
 
@@ -732,7 +742,8 @@ describe('D1 correction — confirmed forget (preview-only AI + user-sent code)'
     const facts = await loadFacts(supa, 'S1');
     const p = await createForgetPreview(supa, UID, 'S1', facts);
     const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
-    const { trashed } = await executeConfirmedForget(supa, row);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const { trashed } = await executeConfirmedForget(supa, claimed);
     assert.equal(trashed.length, 0);
     assert.equal(supa._db.items[0].status, 'open');
   });
@@ -761,5 +772,69 @@ describe('D1 correction — confirmed forget (preview-only AI + user-sent code)'
       assert.ok(!src.includes('deleteTrashRowForever') && !src.includes('emptyTrash'),
         `${f} must not reference the client-only Delete-Forever actions`);
     }
+  });
+});
+
+describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)', () => {
+  const UID = 'user-1';
+  const future = () => new Date(Date.now() + 600000).toISOString();
+  const mkRow = (over = {}) => ({
+    id: 'pa-1', user_id: UID, status: 'pending', expires_at: future(),
+    payload: { fact_ids: ['a'], fact_texts: ['fact a'], memory_space_id: 'S1', confirm_code: '123456' },
+    ...over,
+  });
+
+  it('NEGATIVE expiry: missing, null, empty, and malformed expires_at all fail CLOSED', () => {
+    for (const bad of [undefined, null, '', 'not-a-date', '2026-13-45T99:99:99Z']) {
+      const v = validateForgetConfirmation(mkRow({ expires_at: bad }), UID, '123456', new Date());
+      assert.equal(v.ok, false, `expires_at=${String(bad)} must not validate`);
+      assert.equal(v.reason, 'expired');
+    }
+  });
+
+  it('NEGATIVE expiry: execute refuses a CLAIMED row with malformed expiry', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    claimed.expires_at = 'garbage';
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('execute refuses an UNCLAIMED (still pending) row — no execution without the atomic claim', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const { trashed } = await executeConfirmedForget(supa, row); // validated but never claimed
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('claim: exactly one winner — a second claim on the same preview returns null', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const first = await claimForgetPreview(supa, p.action_id);
+    const second = await claimForgetPreview(supa, p.action_id);
+    assert.ok(first && first.status === 'executing');
+    assert.equal(second, null, 'the conditional claim must be single-winner');
+  });
+
+  it('release: a failed execution returns the preview to pending so the user can retry', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const claimed = await claimForgetPreview(supa, p.action_id);
+    assert.ok(claimed);
+    await releaseForgetClaim(supa, p.action_id);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(row.status, 'pending');
+    const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
+    assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });

@@ -142,4 +142,15 @@ export const ASSERTIONS = [
     sql: `select (pg_get_constraintdef(oid) like '%forget_memory%') as ok from pg_constraint
           where conname = 'pending_actions_action_type_check'`,
   },
+  {
+    name: 'pending_actions status accepts executing — atomic claim state (0037)',
+    sql: `select (pg_get_constraintdef(oid) like '%executing%') as ok from pg_constraint
+          where conname = 'pending_actions_status_check'`,
+  },
+  {
+    name: 'pending_actions.expires_at defaults to ~30 minutes (0034)',
+    sql: `select (column_default like '%00:30:00%' or column_default like '%30 minutes%') as ok
+          from information_schema.columns
+          where table_schema = 'public' and table_name = 'pending_actions' and column_name = 'expires_at'`,
+  },
 ];

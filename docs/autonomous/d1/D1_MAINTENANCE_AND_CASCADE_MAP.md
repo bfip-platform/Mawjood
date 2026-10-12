@@ -97,3 +97,23 @@ that **AI-initiated forgetting is preview-only**:
   expired-trash purge (door #4) is unchanged.
 - Deployment precondition grows: migrations **0035 + 0036** must be
   applied to a database before these functions deploy to it.
+
+## Addendum 2 (2026-10-12) — confirmation hardening: atomic claim + fail-closed expiry
+
+Owner re-review required two guarantees, both initially ABSENT and now
+implemented + behaviorally proven on the scratch database:
+
+- **Single-use under concurrency:** validation is now followed by an
+  atomic claim — one conditional `UPDATE … SET status='executing' WHERE
+  status='pending'` (migration 0037 adds the `executing` status). Exactly
+  one concurrent caller wins; execution requires the claimed state and
+  finalizes `executing → executed`; a failed execution releases the claim
+  back to `pending` (a stuck `executing` row fails closed). Proven on the
+  real scratch DB: 4 parallel claims → exactly 1 winner.
+- **Fail-closed expiry:** the schema default was verified on the real DB —
+  `expires_at = now() + '00:30:00'::interval`, NOT NULL, inserts land
+  exactly 30.0 minutes out. The code no longer trusts comparisons that
+  fail open on garbage: `Date.parse` NaN (missing/empty/malformed expiry)
+  is treated as expired in both validation and execution (negative-tested
+  for undefined/null/''/'not-a-date'/invalid ISO).
+- Deployment precondition is now migrations **0035 + 0036 + 0037**.

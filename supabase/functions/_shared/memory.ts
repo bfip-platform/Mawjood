@@ -510,9 +510,21 @@ export function parseForgetConfirmation(text: string): string | null {
 }
 
 /**
+ * Parse a pending row's expiry FAIL-CLOSED: a missing, null, or malformed
+ * value returns null (treated as expired), never "not expired". A raw
+ * `new Date(x).getTime() <= now` comparison is NaN-false for garbage input
+ * and would fail OPEN — this helper exists so that can never happen.
+ */
+function expiryMs(row: { expires_at?: string | null }): number | null {
+  const ms = Date.parse(String(row.expires_at ?? ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Validate a confirmation attempt against its pending row. PURE.
  * Fails closed on every mismatch: no row, wrong user, wrong/forged code,
- * non-pending status (already executed/cancelled/superseded), expiry.
+ * non-pending status (already executed/cancelled/superseded), and any
+ * expiry problem (past, missing, or malformed).
  */
 export function validateForgetConfirmation(
   row: PendingForgetRow | null,
@@ -523,7 +535,8 @@ export function validateForgetConfirmation(
   if (!row) return { ok: false, reason: 'no_pending' };
   if (row.user_id !== userId) return { ok: false, reason: 'wrong_user' };
   if (row.status !== 'pending') return { ok: false, reason: 'not_pending' };
-  if (new Date(row.expires_at).getTime() <= now.getTime()) return { ok: false, reason: 'expired' };
+  const exp = expiryMs(row);
+  if (exp === null || exp <= now.getTime()) return { ok: false, reason: 'expired' };
   if (!row.payload?.confirm_code || row.payload.confirm_code !== code) {
     return { ok: false, reason: 'bad_code' };
   }
@@ -572,19 +585,62 @@ export async function createForgetPreview(
 }
 
 /**
- * Execute a VALIDATED forget preview: move exactly the previewed facts to
+ * Atomically CLAIM a validated forget preview for execution
+ * (pending → executing) with a single conditional UPDATE: under concurrent
+ * confirmation requests, Postgres row locking lets exactly ONE caller flip
+ * the status; every other caller updates 0 rows and gets null. This is the
+ * single-use guarantee — validation alone (SELECT-then-act) would race.
+ * Returns the claimed row (status 'executing') or null when the race was
+ * lost / the row was no longer pending.
+ */
+export async function claimForgetPreview(
+  supa: Supa,
+  rowId: string,
+): Promise<PendingForgetRow | null> {
+  const { data, error } = await supa
+    .from('pending_actions')
+    .update({ status: 'executing' })
+    .eq('id', rowId)
+    .eq('status', 'pending')
+    .select('*');
+  if (error || !data || (data as PendingForgetRow[]).length !== 1) return null;
+  return (data as PendingForgetRow[])[0];
+}
+
+/**
+ * Release a claim after a failed execution (executing → pending), so a
+ * transient failure leaves a consistent, retryable state instead of a
+ * consumed-but-unexecuted preview. Best-effort: if the release itself
+ * fails, the row stays 'executing', which still fails CLOSED (validation
+ * requires 'pending', execution requires a fresh claim) — the user simply
+ * requests a new preview.
+ */
+export async function releaseForgetClaim(supa: Supa, rowId: string): Promise<void> {
+  try {
+    await supa
+      .from('pending_actions')
+      .update({ status: 'pending' })
+      .eq('id', rowId)
+      .eq('status', 'executing');
+  } catch { /* fail-closed: a stuck 'executing' row can never execute */ }
+}
+
+/**
+ * Execute a CLAIMED forget preview: move exactly the previewed facts to
  * trash (re-checked live: still open, same space, never route facts) and
- * consume the pending row. Defense in depth: refuses non-pending or
- * expired rows even if called directly. Called ONLY from the deterministic
- * confirmation path after validateForgetConfirmation passes — never from
- * a model tool.
+ * finalize the row (executing → executed). Defense in depth: refuses any
+ * row that is not in the claimed 'executing' state, and any row whose
+ * expiry is past, missing, or malformed. Called ONLY from the
+ * deterministic confirmation path after validateForgetConfirmation passes
+ * AND claimForgetPreview wins — never from a model tool.
  */
 export async function executeConfirmedForget(
   supa: Supa,
   row: PendingForgetRow,
 ): Promise<{ trashed: string[] }> {
-  if (row.status !== 'pending') return { trashed: [] };
-  if (new Date(row.expires_at).getTime() <= Date.now()) return { trashed: [] };
+  if (row.status !== 'executing') return { trashed: [] };
+  const exp = expiryMs(row);
+  if (exp === null || exp <= Date.now()) return { trashed: [] };
   const spaceId = String(row.payload?.memory_space_id ?? '');
   const ids = new Set((row.payload?.fact_ids ?? []).map(String));
   if (!spaceId || ids.size === 0) return { trashed: [] };
@@ -595,7 +651,11 @@ export async function executeConfirmedForget(
     if (f.meta?.mcat === 'route') continue;
     if (await trashFact(supa, f, 'user_forget_confirmed')) trashed.push(factLine(f));
   }
-  await supa.from('pending_actions').update({ status: 'executed' }).eq('id', row.id);
+  await supa
+    .from('pending_actions')
+    .update({ status: 'executed' })
+    .eq('id', row.id)
+    .eq('status', 'executing');
   return { trashed };
 }
 
