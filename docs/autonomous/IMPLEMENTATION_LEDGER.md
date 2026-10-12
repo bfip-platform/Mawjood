@@ -24,6 +24,35 @@ Each entry records:
 
 ---
 
+## 2026-10-12 — Mission MAWJOOD D0: Full Project Discovery & Audit (COMPLETE)
+
+- **Date:** 2026-10-12 ~04:10 UTC
+- **Mission / task ID:** MAWJOOD D0 (owner-dispatched 2026-10-11 23:48 EDT)
+- **Branch:** `d0/discovery-audit` (branched from main @ `1c3c57b7`)
+- **Base SHA:** `1c3c57b7b99def1816f63286356f95eef98573fe` (D-1/D-1.1 merged; verified)
+- **Scope:** Comprehensive evidence-based discovery & audit: codebase inventory,
+  product/UX audit, memory-retention audit (core contract), security &
+  architecture, performance & scale, App Factory reuse, commercial readiness.
+  10 versioned documents under `docs/autonomous/d0/`. Discovery/documentation
+  ONLY — zero application code changes. Bans honored: no merge/deploy/prod-data/
+  billing changes; no D0.5 begun; PR stays Draft.
+- **Method:** 7 parallel audit workstreams via coordinator subagent; critical
+  findings spot-verified against source by parent agent.
+- **Headline findings:** (1) CRITICAL — memory-consolidate hard-deletes saved
+  facts (90-day decay + 200-cap, no tier distinction) — contradicts durable-memory
+  promise; (2) HIGH — cross-user photo read escalation via photo_url;
+  (3) MEDIUM — route/classify public yet client-invoked (AI-spend oracle);
+  (4) CRITICAL commercial — zero Stripe, zero legal docs, zero SEO/PWA;
+  (5) HIGH — no AI quotas, ILIKE search w/o index, unindexed items.note_id.
+- **Recovery anchor:** `1c3c57b7` (main HEAD at D0 start); branch is docs-only.
+- **Review verdict:** pending (owner review of D0 findings required before D0.5).
+- **CI evidence:** BLOCKED — GitHub PAT is read-only (`metadata=read` only; 403 on
+  blob creation). Cannot push branch, open Draft PR, or trigger CI. Commit
+  `1190890` is complete locally on `d0/discovery-audit`; docs-only scope verified.
+- **PR URL:** BLOCKED (same PAT issue). Owner options: (a) provide fresh
+  fine-grained PAT (Contents:write, Pull requests:write) for push+PR, or
+  (b) push the local branch himself.
+
 ## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (COMPLETE)
 
 - **Date:** 2026-10-11 ~16:30 EDT → 2026-10-12 ~03:00 EDT
