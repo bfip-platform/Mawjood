@@ -46,12 +46,12 @@ Each entry records:
   (5) HIGH — no AI quotas, ILIKE search w/o index, unindexed items.note_id.
 - **Recovery anchor:** `1c3c57b7` (main HEAD at D0 start); branch is docs-only.
 - **Review verdict:** pending (owner review of D0 findings required before D0.5).
-- **CI evidence:** BLOCKED — GitHub PAT is read-only (`metadata=read` only; 403 on
-  blob creation). Cannot push branch, open Draft PR, or trigger CI. Commit
-  `1190890` is complete locally on `d0/discovery-audit`; docs-only scope verified.
-- **PR URL:** BLOCKED (same PAT issue). Owner options: (a) provide fresh
-  fine-grained PAT (Contents:write, Pull requests:write) for push+PR, or
-  (b) push the local branch himself.
+- **CI evidence:** 9/9 PASS on exact PR HEAD `3df5c94d` (e2e-auth, standards,
+  e2e-smoke, vuln-scan, ci, provenance, rls-audit, auth-gates, secret-scan —
+  all completed/success). Docs-only change; no app code touched.
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/12 (Draft, docs-only).
+  Branch `d0/discovery-audit` @ `3df5c94de73b0dfee3a125ada81cab964d46bfbf`
+  (pushed via Git Data API with owner's transient PAT; PAT used once, never stored).
 
 ## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (COMPLETE)
 
