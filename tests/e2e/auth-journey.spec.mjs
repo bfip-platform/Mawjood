@@ -216,6 +216,9 @@ test('memory creation via data API appears in the space notes browser', async ({
     space_id: spaceId,
     transcript: marker,
     created_by: session.user.id,
+    // statusLabel() only renders the transcript when status='ready';
+    // otherwise the card shows "⏳ processing…".
+    status: 'ready',
   });
   expect(nErr, `note insert: ${nErr?.message}`).toBeNull();
 
