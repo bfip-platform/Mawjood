@@ -1,7 +1,7 @@
 # D0.5 — Frontend Experience & Figma Specs
 
 **Version:** 1.0 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec` @ `8be1f8e`
-**Status:** Proposal-grade. Visual treatments assume Direction A ("Warm Archive") — if the owner approves a different direction, the token-dependent specs are re-issued. **No implementation authorized.**
+**Status:** Proposal-grade. Visual treatments follow the **accepted v1.2 baseline "Modern Minimal AI + Human Memories"** (owner, 2026-10-12) — monochrome-first tokens per `DESIGN_TOKENS_AND_COMPONENTS.md` v1.2. Layout/IA specs are direction-independent; token references follow v1.2. **No implementation authorized.**
 **Inputs:** `BRAND_STRATEGY_AND_POSITIONING.md` · `VISUAL_IDENTITY_DIRECTIONS.md` · `DESIGN_TOKENS_AND_COMPONENTS.md` · workstream 02 screen architecture (§6 of the brand workstream).
 
 ---
@@ -122,4 +122,4 @@ Pattern: warm illustration (paper/shelf motif, 120px) → serif headline → one
 
 ---
 
-*Visual treatments assume Direction A ("Warm Archive"). If the owner approves B or C, token-dependent specs are re-issued. No implementation is authorized by this document.*
+*Visual treatments follow the accepted v1.2 baseline (monochrome-first; DESIGN_TOKENS v1.2). No implementation is authorized by this document.*

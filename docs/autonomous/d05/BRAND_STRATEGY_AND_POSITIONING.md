@@ -1,7 +1,7 @@
 # D0.5 — Brand Strategy & Positioning
 
-**Version:** 1.0 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec` @ `8be1f8e`
-**Status:** Proposal-grade. No brand decision is final until owner approval (see `BRAND_APPROVAL_GATE.md`).
+**Version:** 1.1 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec`
+**Status:** Positioning ACCEPTED as baseline context. **Visual expression updated by owner v1.2 (2026-10-12):** the emotional positioning below stands (trusted place for memories), but its *visual* delivery follows v1.2 **"Modern Minimal AI + Human Memories"** — monochrome-first palette, contemporary type (no serif display), warmth carried by photography, storytelling, and copy rather than warm colors or vintage styling. Where this document's §§2–3 describe warm/editorial/serif expression, read them through the v1.2 lens (`DESIGN_TOKENS_AND_COMPONENTS.md` v1.2 is authoritative for tokens).
 **Inputs:** `docs/autonomous/d0/D0_TO_D05_HANDOFF.md` (9 approved owner decisions); product name **Mawjood (موجود)** ("found it" angle; bilingual AR/EN from day one).
 
 ---

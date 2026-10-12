@@ -243,7 +243,10 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned (not "latest"): resolving "latest" calls the GitHub API
+          # unauthenticated and failed on rate limit (run 38263560994,
+          # 2026-10-12). Pinning is reproducible and skips that call.
+          version: 2.120.0
 
       - name: Init + start local Supabase
         # supabase/ has no config.toml (only functions/migrations/tests);

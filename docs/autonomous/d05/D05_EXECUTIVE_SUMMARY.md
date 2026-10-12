@@ -79,7 +79,7 @@ P0 (data protection + security) before commercial launch work. Legal drafting ru
 
 ## Brand
 
-Three visual identity directions proposed; **Direction A "Warm Archive" recommended — awaiting owner approval** (doc 23 gate). No direction, palette, typeface, or logo is chosen until the owner approves. OFL typeface stack proposed ($0 licensing). Figma-ready specs for 5 key screens included.
+**✅ RESOLVED (owner, 2026-10-12):** **v1.2 "Modern Minimal AI + Human Memories"** — monochrome-first premium aesthetic — is the accepted design baseline (supersedes v1.1 Warm Archive A+B). Final logo artwork and polished screens remain open for owner review. OFL typeface stack (Inter + IBM Plex Sans Arabic, $0 licensing). Figma-ready specs for 5 key screens included.
 
 ## Risks (top 5 of 10)
 

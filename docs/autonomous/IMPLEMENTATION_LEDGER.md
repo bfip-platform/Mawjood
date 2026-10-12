@@ -33,7 +33,7 @@ Each entry records:
   (Stripe at D4); quotas all PROPOSED not finalized; photo Claim B kept
   MEDIUM/unproven; brand direction is proposal-only (approval gate doc 23);
   18+ applied consistently (20 docs); no invented owner approvals; no app code changes.
-- **Branch:** `d0.5/product-spec` @ `fd7000c3` (pushed; PR #13 Draft).
+- **Branch:** `d0.5/product-spec` @ `b30df965` (ledger-only; v1.2 content verified 9/9 at `23066225`) (pushed; PR #13 Draft).
 - **CI:** 9/9 PASS on exact HEAD `23066225` (verified 2026-10-12 ~15:15 UTC).
 - **PR URL:** https://github.com/bfip-platform/Mawjood/pull/13 (Draft, docs-only).
 - **Visual review package (v1.2):** `docs/autonomous/d05/review-package/index.html`
@@ -67,6 +67,25 @@ Each entry records:
 - **Review verdict:** pending (owner review of D0.5 spec required before D1).
 - **CI evidence:** pending (Draft PR + CI on PR HEAD after documents written).
 - **PR URL:** TBD (to be opened after specification documents are complete).
+
+## 2026-10-12 — D0.5 FINAL VERIFICATION: e2e-auth CI failure root-caused + fixed; v1.2 accepted as baseline (RECORDED)
+
+- **Owner acceptance:** v1.2 "Modern Minimal AI + Human Memories" accepted as the design baseline.
+- **CI failure investigated (run 38263560994, HEAD `b30df965`, job e2e-auth):**
+  logs show step 4 `supabase/setup-cli@v1` with `version: latest` failed with
+  "Failed to resolve latest Supabase CLI release: rate limit exceeded". The tests
+  never ran; the later "Stop local Supabase" failure is a cascade (exit 127).
+  **Verdict: environment/infrastructure failure — NOT a code regression, NOT a test defect.**
+  (The failing commit was docs-only; the same suite passed 9/9 at `23066225`.)
+- **Smallest justified correction:** pinned the CLI in `.github/workflows/ci.yml`
+  (`version: latest` → `version: 2.120.0`, latest stable as of 2026-10-06). Pinning
+  skips the rate-limited latest-resolution API call and improves reproducibility.
+  No tests, assertions, or security gates touched.
+- **v1.2 consistency pass:** fixed stale direction references in
+  `D05_EXECUTIVE_SUMMARY.md`, `FRONTEND_EXPERIENCE_AND_FIGMA_SPECS.md`, and
+  `OPEN_DECISIONS_AND_OWNER_APPROVALS.md` (OD-38 RESOLVED = v1.2 baseline; OD-39 logo/final
+  hex/polished screens still OPEN); `BRAND_STRATEGY_AND_POSITIONING.md` v1.1 alignment note.
+- **Still open:** final logo artwork; unresolved commercial decisions. No merge, no deploy, no D1.
 
 ## 2026-10-12 — Owner Decision #11: Visual direction REVISED to v1.2 "Modern Minimal AI + Human Memories" (RECORDED)
 

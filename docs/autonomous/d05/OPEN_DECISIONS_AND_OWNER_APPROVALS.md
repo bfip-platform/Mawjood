@@ -227,14 +227,15 @@
 
 ## E. UX / brand (brand gate: doc 23)
 
-### OD-38 — Final visual direction
-- **Open:** A "Warm Archive" (recommended) · B "Soft Sanctuary" · C "Bold Contrast".
-- **Rule:** no direction chosen until owner approves (BRAND_APPROVAL_GATE).
+### OD-38 — Final visual direction ✅ RESOLVED
+- **Resolved (owner, 2026-10-12):** v1.2 **"Modern Minimal AI + Human Memories"** — monochrome-first premium aesthetic — accepted as the design baseline. (v1.1 "Warm Archive" A+B was approved then superseded the same day; A/B/C proposals preserved in `VISUAL_IDENTITY_DIRECTIONS.md`.)
+- **Rule:** baseline locked; refinements through the brand gate, never silently.
 - **Decider:** Owner.
 
-### OD-39 — Palette, typefaces, logo, motion, imagery, marketing voice
-- **Open:** per brand gate items 2–7 (final hex, OFL vs commercial faces, mark design, motion catalog, illustration style, copy tone).
-- **Rule:** all pending direction approval; accessibility wins on any conflict.
+### OD-39 — Palette, typefaces, logo, motion, imagery, marketing voice — PARTIALLY OPEN
+- **Baseline set by v1.2:** palette family (white/near-black/neutral grays + restrained blue/sage), typefaces (Inter + IBM Plex Sans Arabic, OFL).
+- **Still OPEN (owner review):** final logo artwork (wordmark + app icon), final hex lock-in, polished screens, motion catalog, illustration style, copy tone.
+- **Rule:** accessibility wins on any conflict.
 - **Decider:** Owner.
 
 ### OD-40 — Arabic numerals: Eastern vs Western (WS2 O-2)
