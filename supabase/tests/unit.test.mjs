@@ -838,3 +838,24 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D5 PR-3 — a11y pass on primary surfaces + in-app support (T-D5-3/4)', () => {
+  it('GUARD: primary controls carry roles/labels; support lives in Profile and rides report-error', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes("accessibilityLabel={t('a11yMenu')}"), 'menu button labeled');
+    assert.ok(app.includes('accessibilityRole="tab"'), 'tabs expose the tab role');
+    assert.ok(app.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'composer action announces its current mode');
+    assert.ok(app.includes("context: 'support'"), 'support messages ride the report-error channel with the support context');
+    assert.ok(app.includes("invoke('report-error'"), 'support uses the existing function — no new endpoint');
+    // Decision #12: support must NOT add a drawer destination.
+    const drawerRegion = app.slice(app.indexOf('side drawer menu'), app.indexOf('side drawer menu') + 200);
+    assert.ok(app.includes("{t('supportSection')}"), 'support section renders (inside Profile)');
+  });
+  it('GUARD: i18n carries the new keys in BOTH languages', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['a11yMenu', 'a11yAttachPhoto', 'a11ySend', 'a11yRecord', 'a11yStopRecording', 'supportSection', 'supportHint', 'supportSend', 'supportSent', 'supportFailed']) {
+      const hits = i18n.split(`${k}:`).length - 1;
+      assert.ok(hits >= 2, `${k} must exist in AR and EN (found ${hits})`);
+    }
+  });
+});
