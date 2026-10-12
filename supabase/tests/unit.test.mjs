@@ -913,7 +913,9 @@ describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
     assert.ok(!chat.includes('setTimeout(r, 1500)'), 'the fixed 1.5s retry is gone');
     // review N1: approve/cancel must never touch an executing row
     const n1 = (chat.match(/execution in progress/g) ?? []).length;
-    assert.ok(n1 >= 3, 'execute/approve/cancel all refuse mid-execution rows');
+    assert.ok(n1 >= 2, 'approve + cancel both refuse mid-execution rows');
+    assert.ok(chat.includes("if (row.status === 'executing') return { error: 'execution in progress' };"),
+      'the refusal is a status guard, not a comment');
   });
 
   it('GUARD: report-error stores only sanitized telemetry', () => {
