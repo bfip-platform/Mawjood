@@ -139,8 +139,11 @@ async function toolSearch(supa: Supa, args: { query?: string; kind?: string }, v
   if (!q) return { results: [] };
   const like = `%${q}%`;
   const kind = ['appointment', 'shopping', 'task', 'place', 'thing'].includes(args.kind ?? '') ? args.kind : null;
+  // NOTE: notes.deleted_at was dropped in migration 0019 (trashed notes live
+  // in trash_bin) — never filter notes on it; the query errors and the notes
+  // leg silently returns nothing. Guard-tested.
   const [notesRes, itemsRes, borrowsRes] = await Promise.all([
-    scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').is('deleted_at', null).or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).ilike('transcript', like).order('created_at', { ascending: false }).limit(6),
+    scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).ilike('transcript', like).order('created_at', { ascending: false }).limit(6),
     (() => {
       // memory/feedback rows are the app's own bookkeeping — never agent fodder
       let iq = scopeVault(supa.from('items').select('id, kind, title, details, due_at, status, bought_at, space_id, meta').not('kind', 'in', '(memory,feedback)'), vctx, hasVaultCols).or(`title.ilike.${like},details.ilike.${like}`).order('created_at', { ascending: false }).limit(8);
@@ -1189,7 +1192,7 @@ Deno.serve(async (req) => {
           try {
             const { data: recent } = await supa.from('notes')
               .select('id, transcript, created_at')
-              .eq('created_by', userId).is('deleted_at', null)
+              .eq('created_by', userId)
               .order('created_at', { ascending: false }).limit(2);
             const target = (recent ?? []).find((r: { id: string }) => r.id !== note_id) as { id: string; transcript: string; created_at: string } | undefined;
             const fresh = !!target && (Date.now() - new Date(target.created_at).getTime() < 30 * 60 * 1000);
@@ -1331,7 +1334,7 @@ Deno.serve(async (req) => {
     // light context: recent notes + open items (so the agent often answers without a tool round-trip)
     // 🧠 vault-scoped: normal mode sees no vault rows; vault mode sees only its vault.
     const [notesRes, itemsRes, openBorrowsRes] = await Promise.all([
-      scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').is('deleted_at', null).or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(8),
+      scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(8),
       scopeVault(supa.from('items').select('id, kind, title, details, due_at, status, bought_at, meta').eq('status', 'open'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(20),
       scopeVault(supa.from('borrows').select('id, item_title, borrower, lent_at, due_at').is('returned_at', null), vctx, hasVaultCols).order('lent_at', { ascending: false }).limit(10),
     ]);
