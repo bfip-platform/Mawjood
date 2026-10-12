@@ -33,10 +33,10 @@ Each entry records:
   (Stripe at D4); quotas all PROPOSED not finalized; photo Claim B kept
   MEDIUM/unproven; brand direction is proposal-only (approval gate doc 23);
   18+ applied consistently (20 docs); no invented owner approvals; no app code changes.
-- **Branch:** `d0.5/product-spec` — docs-only; PR to be opened as Draft.
-- **Review verdict:** pending (owner review of D0.5 spec required before D1).
-- **CI evidence:** pending (Draft PR + CI on PR HEAD after push).
-- **D1:** NOT started — awaiting explicit owner authorization.
+- **Branch:** `d0.5/product-spec` @ `20048202` (pushed; PR #13 Draft).
+- **CI:** 9/9 PASS on exact HEAD `20048202` (verified 2026-10-12 ~14:30 UTC).
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/13 (Draft, docs-only).
+- **D1:** NOT started — awaiting explicit owner authorization after D0.5 spec review.
 
 ## 2026-10-12 — Mission MAWJOOD D0.5: Complete Product Spec & Execution Blueprint (IN-PROGRESS)
 
@@ -65,6 +65,29 @@ Each entry records:
 - **Review verdict:** pending (owner review of D0.5 spec required before D1).
 - **CI evidence:** pending (Draft PR + CI on PR HEAD after documents written).
 - **PR URL:** TBD (to be opened after specification documents are complete).
+
+## 2026-10-12 — Owner Decision #10: Brand direction approved — A+B fusion (RECORDED)
+
+- **Date:** 2026-10-12 ~10:05 EDT / ~14:05 UTC
+- **Decision:** Direction A — "Warm Archive" selected as Mawjood's official visual
+  foundation, enhanced with Direction B's contemporary calmness and softness.
+  Emotional identity: calm, warm, trustworthy, family-centered; premium, elegant,
+  modern, emotionally engaging; never dated, cluttered, childish, or generic SaaS.
+- **Binding fusion:** retain A's ivory/ink/terracotta/editorial photography;
+  adopt B's clean layouts, softness, comfortable spacing, restrained sage accents;
+  contemporary readable AR/EN type, expressive display only where appropriate;
+  polished light/dark; real photography focus; responsive; subtle motion with
+  reduced-motion respect; WCAG 2.2 AA.
+- **Recorded in:** `VISUAL_IDENTITY_DIRECTIONS.md` (v1.1, approval record),
+  `DESIGN_TOKENS_AND_COMPONENTS.md` (v1.1, A+B fused tokens incl. sage roles,
+  softened spacing/radii), `BRAND_APPROVAL_GATE.md` (v1.1, §7 approval record).
+- **Visual review package:** high-fidelity HTML mockups at
+  `docs/autonomous/d05/review-package/index.html` — 5 screens (home, timeline,
+  detail, AI assistant, family space) × desktop/mobile × AR-RTL/EN-LTR ×
+  light/dark toggle, plus wordmark + app icon directions. Review-only, not app code.
+- **Still requires owner review:** final logo artwork, polished mockups, remaining
+  brand details. No frontend application code until approved.
+- **Bans honored:** PR #13 stays Draft; no D1; no deploy; no billing activation.
 
 ## 2026-10-12 — Owner: all 9 D0→D0.5 decisions APPROVED (RECORDED)
 

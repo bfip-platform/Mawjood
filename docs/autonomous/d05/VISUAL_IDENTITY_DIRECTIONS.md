@@ -1,8 +1,26 @@
 # D0.5 — Visual Identity Directions
 
-**Version:** 1.0 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec` @ `8be1f8e`
-**Status:** ⚠️ **PROPOSAL ONLY.** These are three directions for owner review. **No direction is chosen.** The recommendation below is the workstream's opinion, not a decision.
+**Version:** 1.1 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec`
+**Status:** ✅ **OWNER-APPROVED 2026-10-12: Direction A — "Warm Archive", enhanced with Direction B's contemporary calmness and softness.** See approval record below. Final logo artwork, polished mockups, and remaining brand details still require owner review (per approval gate).
 **Positioning anchor:** *"A beautiful, trusted place for your personal and family memories."* (see `BRAND_STRATEGY_AND_POSITIONING.md`)
+
+## Owner approval record (2026-10-12)
+
+**Selected:** Direction A — Warm Archive, fused with Direction B's qualities.
+
+**Owner's emotional identity brief:** calm, warm, trustworthy, family-centered · beautifully preserves personal stories, relationships, memories · premium, elegant, modern, emotionally engaging · never dated, cluttered, childish, or generic SaaS.
+
+**Fusion requirements (owner-specified):**
+1. Retain A's warm ivory, ink, terracotta, editorial photography, memory-first identity.
+2. Borrow B's clean layouts, subtle softness, comfortable spacing, restrained sage accents.
+3. Contemporary readable AR/EN typography; expressive display type only where appropriate.
+4. Polished light and dark modes.
+5. Real memories and photography as the visual focus.
+6. Consistent responsive experiences (mobile, tablet, desktop).
+7. Subtle transitions + meaningful microinteractions, respecting reduced-motion.
+8. WCAG 2.2 AA contrast and accessibility throughout.
+
+The three directions below are preserved as the reviewed options. Direction A is now the official foundation; its token values in `DESIGN_TOKENS_AND_COMPONENTS.md` have been updated to the approved A+B fusion (v1.1).
 
 Each direction is a complete, internally consistent system: palette (hex), typography (Arabic + Latin), shapes, imagery, iconography, UI characteristics — plus honest pros/cons.
 

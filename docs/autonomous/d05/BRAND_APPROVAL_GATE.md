@@ -1,13 +1,33 @@
 # D0.5 — Brand Approval Gate
 
-**Version:** 1.0 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec` @ `8be1f8e`
-**Status:** ACTIVE GATE. This gate must be passed before any brand or frontend implementation work begins.
+**Version:** 1.1 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec`
+**Status:** ✅ **DIRECTION APPROVED 2026-10-12** — see §7. Gate remains ACTIVE for: final logo artwork, polished mockups, remaining brand details, and any frontend implementation.
 
 ---
 
-## 1. Explicit gate statement
+## 7. Owner approval record — visual direction (2026-10-12)
 
-**Owner approval is REQUIRED before:**
+**APPROVED:** Direction A — "Warm Archive", enhanced with Direction B's contemporary calmness and softness.
+
+**Owner's emotional identity:** calm, warm, trustworthy, family-centered · beautifully preserves personal stories, relationships, memories · premium, elegant, modern, emotionally engaging · never dated, cluttered, childish, or generic SaaS.
+
+**Approved fusion (binding):**
+1. A's warm ivory, ink, terracotta, editorial photography, memory-first identity — RETAINED.
+2. B's clean layouts, subtle softness, comfortable spacing, restrained sage accents — ADOPTED.
+3. Contemporary readable AR/EN typography; expressive display (Fraunces/Noto Naskh) only for emotional moments.
+4. Polished light and dark modes (token tables v1.1).
+5. Real memories and photography as the visual focus.
+6. Consistent responsive experiences (mobile, tablet, desktop).
+7. Subtle transitions + meaningful microinteractions, respecting reduced-motion.
+8. WCAG 2.2 AA contrast and accessibility throughout.
+
+**Still requiring owner review:** final logo artwork (wordmark + app icon) · polished high-fidelity mockups · remaining brand details (imagery system refinements, illustration set, brand voice guide). **No frontend application code until these are approved.**
+
+---
+
+## 1. Explicit gate statement (original — direction choice now resolved)
+
+**Owner approval was REQUIRED before:**
 
 (a) choosing the final visual direction,
 (b) finalizing the palette,
