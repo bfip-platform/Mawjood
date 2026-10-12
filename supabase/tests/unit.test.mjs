@@ -842,7 +842,8 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
 describe('BUGFIX 0042 — items.updated_at exists (memory engine selects/orders by it)', () => {
   it('GUARD: migration 0042 adds the column, backfills, and installs the touch trigger', () => {
     const mig = readFileSync(new URL('../migrations/0042_items_updated_at.sql', import.meta.url), 'utf8');
-    assert.ok(mig.includes('add column if not exists updated_at'), 'column added idempotently');
+    assert.ok(mig.includes('add column updated_at'), 'column added');
+    assert.ok(mig.includes("column_name = 'updated_at'"), 'the add+backfill are guarded on the column being absent (re-apply is a no-op)');
     assert.ok(mig.includes('set updated_at = created_at'), 'existing rows backfilled from created_at');
     assert.ok(mig.includes('create trigger items_touch_updated_at'), 'BEFORE UPDATE trigger keeps it current');
     assert.ok(mig.includes('before update on public.items'), 'trigger is on items');

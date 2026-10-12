@@ -10,16 +10,24 @@
 -- same-mkey updates silently fail. Same failure class as the
 -- notes.deleted_at bug (Stage 0, PR #16). Production schema state is a
 -- separate open question (D0) — this makes the canonical chain correct
--- either way: additive + idempotent.
---   · add items.updated_at (default now())
---   · backfill existing rows from created_at (best available truth)
+-- either way: additive only.
+--   · add items.updated_at (default now()) — ONLY when absent
+--   · backfill existing rows from created_at (best available truth),
+--     inside the same guard, so a manual re-apply can never re-stamp
+--     rows that were legitimately touched after the first run
 --   · BEFORE UPDATE trigger keeps it current for every writer
 -- ═══════════════════════════════════════════════════════════════════════════
 
-alter table public.items
-  add column if not exists updated_at timestamptz not null default now();
-
-update public.items set updated_at = created_at where updated_at > created_at;
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'items' and column_name = 'updated_at'
+  ) then
+    alter table public.items add column updated_at timestamptz not null default now();
+    update public.items set updated_at = created_at;
+  end if;
+end $$;
 
 create or replace function public.items_touch_updated_at()
 returns trigger
