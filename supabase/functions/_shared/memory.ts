@@ -467,6 +467,138 @@ export async function purgeExpiredTrashedFacts(
   return n;
 }
 
+// ── Confirmed forget (owner correction to spec §5, 2026-10-12) ─────────────
+// AI-initiated forgetting is PREVIEW-ONLY. The model can select a memory and
+// create a pending preview, but the move to trash executes ONLY when the
+// USER sends the server-issued confirmation code as their own chat message.
+// The code is validated server-side against a pending_actions row
+// (action_type='forget_memory', migration 0036) bound to (user, fact set,
+// 30-minute expiry, single use). A model-supplied fact_id, a model-claimed
+// "the user confirmed", or a forged code can never trash anything.
+
+export interface PendingForgetRow {
+  id: string;
+  user_id: string;
+  status: string;
+  expires_at: string;
+  payload: {
+    fact_ids?: string[];
+    fact_texts?: string[];
+    memory_space_id?: string;
+    confirm_code?: string;
+  };
+}
+
+/** Generate a 6-digit confirmation code (server-side only). */
+export function newForgetCode(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(buf[0] % 1000000).padStart(6, '0');
+}
+
+/**
+ * Extract a confirmation code from a raw user message. PURE.
+ * Accepts ONLY: the bare 6 digits, or "نفّذ/نفذ <code>", or "confirm <code>"
+ * as the ENTIRE message (Arabic-Indic digits normalized). Anything else —
+ * including a code embedded in a longer sentence — returns null, so a code
+ * quoted inside notes or model text can never act as a confirmation.
+ */
+export function parseForgetConfirmation(text: string): string | null {
+  const latin = (text ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  const m = normAr(latin).match(/^(?:نفذ|confirm)\s+(\d{6})$|^(\d{6})$/);
+  return m ? (m[1] ?? m[2]) : null;
+}
+
+/**
+ * Validate a confirmation attempt against its pending row. PURE.
+ * Fails closed on every mismatch: no row, wrong user, wrong/forged code,
+ * non-pending status (already executed/cancelled/superseded), expiry.
+ */
+export function validateForgetConfirmation(
+  row: PendingForgetRow | null,
+  userId: string,
+  code: string,
+  now: Date,
+): { ok: true } | { ok: false; reason: string } {
+  if (!row) return { ok: false, reason: 'no_pending' };
+  if (row.user_id !== userId) return { ok: false, reason: 'wrong_user' };
+  if (row.status !== 'pending') return { ok: false, reason: 'not_pending' };
+  if (new Date(row.expires_at).getTime() <= now.getTime()) return { ok: false, reason: 'expired' };
+  if (!row.payload?.confirm_code || row.payload.confirm_code !== code) {
+    return { ok: false, reason: 'bad_code' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Create a pending forget preview (supersedes the user's older pending
+ * forget previews, so at most one code is live per user). Returns the
+ * action id + code for the model to show the user. Trashes NOTHING.
+ */
+export async function createForgetPreview(
+  supa: Supa,
+  userId: string,
+  spaceId: string,
+  selected: MemoryRow[],
+): Promise<{ action_id: string; confirm_code: string } | null> {
+  if (selected.length === 0) return null;
+  await supa
+    .from('pending_actions')
+    .update({ status: 'superseded' })
+    .eq('user_id', userId)
+    .eq('action_type', 'forget_memory')
+    .eq('status', 'pending');
+  const confirm_code = newForgetCode();
+  const id = crypto.randomUUID();
+  const { error } = await supa.from('pending_actions').insert({
+    id,
+    user_id: userId,
+    action_type: 'forget_memory',
+    payload: {
+      fact_ids: selected.map((f) => f.id),
+      fact_texts: selected.map((f) => factLine(f)),
+      // Deliberately NOT named `space_id`: governed executors read
+      // payload.space_id — a forget preview must never be interpretable
+      // as a space action payload.
+      memory_space_id: spaceId,
+      confirm_code,
+    },
+    approvals: 0,
+    required_approvals: 1,
+    status: 'pending',
+  });
+  if (error) return null;
+  return { action_id: id, confirm_code };
+}
+
+/**
+ * Execute a VALIDATED forget preview: move exactly the previewed facts to
+ * trash (re-checked live: still open, same space, never route facts) and
+ * consume the pending row. Defense in depth: refuses non-pending or
+ * expired rows even if called directly. Called ONLY from the deterministic
+ * confirmation path after validateForgetConfirmation passes — never from
+ * a model tool.
+ */
+export async function executeConfirmedForget(
+  supa: Supa,
+  row: PendingForgetRow,
+): Promise<{ trashed: string[] }> {
+  if (row.status !== 'pending') return { trashed: [] };
+  if (new Date(row.expires_at).getTime() <= Date.now()) return { trashed: [] };
+  const spaceId = String(row.payload?.memory_space_id ?? '');
+  const ids = new Set((row.payload?.fact_ids ?? []).map(String));
+  if (!spaceId || ids.size === 0) return { trashed: [] };
+  const facts = await loadFacts(supa, spaceId);
+  const trashed: string[] = [];
+  for (const f of facts) {
+    if (!ids.has(f.id)) continue;
+    if (f.meta?.mcat === 'route') continue;
+    if (await trashFact(supa, f, 'user_forget_confirmed')) trashed.push(factLine(f));
+  }
+  await supa.from('pending_actions').update({ status: 'executed' }).eq('id', row.id);
+  return { trashed };
+}
+
 /** Find the user's private space id (memory lives there, owner-only). */
 export async function privateSpaceId(supa: Supa): Promise<string | null> {
   const { data } = await supa.from('spaces').select('id').eq('type', 'private').limit(1).maybeSingle();

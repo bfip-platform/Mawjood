@@ -65,3 +65,35 @@ Evidence still needed before the owner picks: facts-per-user distribution + per-
 1. Migration `0035_d1_data_protection.sql` must be applied to a database **before** the B1–B4 functions are deployed to it (the `'trashed'` status and the floor trigger are prerequisites). D1 itself deploys nothing.
 2. CI `migrate-check` proves 0001–0035 apply cleanly (twice) on a fresh database, with the two new 0035 assertions green.
 3. Scratch verification (synthetic data, ref `caimavjwasxiegjhxdsr` only) follows `D1_SCRATCH_ENVIRONMENT_PLAN.md`.
+
+---
+
+## Addendum (2026-10-12) — owner delete-safety correction: confirmed forget
+
+Owner review of PR #15 found that a unique match (or a model-supplied
+`fact_id`) trashed a memory on the model's assertion alone. Corrected so
+that **AI-initiated forgetting is preview-only**:
+
+- `forget_fact` (query or `fact_id`) only SELECTS a memory and creates a
+  pending preview — a `pending_actions` row (`action_type='forget_memory'`,
+  migration 0036) carrying a server-issued 6-digit confirmation code bound
+  to (user, fact set, 30-minute expiry, single use).
+- The move to trash executes ONLY in a deterministic, pre-model fast path:
+  the user sends «نفّذ <code>» as their own message; the server looks the
+  code up (`payload->>confirm_code`), validates user/status/expiry/code
+  (`validateForgetConfirmation`), and only then runs
+  `executeConfirmedForget`. A model-generated `fact_id`, a model-claimed
+  confirmation, and forged/expired/replayed codes all trash nothing
+  (negative-tested). New previews supersede older ones; at most one live
+  code per user.
+- The governed-actions rail was audited for cross-talk: `capFor` now fails
+  closed on unknown action types, `toolExecuteAction` no longer defaults
+  to `executeDeleteSpace`, and the preview payload deliberately names its
+  space field `memory_space_id` (never `space_id`).
+- **Delete Forever stays separate and user-only (spec §1 door #3):** it is
+  the explicit in-app action on Trash rows (`deleteTrashRowForever` /
+  `emptyTrash` in the mobile client). No edge function references it; the
+  AI surface can neither invoke it nor reach `trash_bin`. The gardener's
+  expired-trash purge (door #4) is unchanged.
+- Deployment precondition grows: migrations **0035 + 0036** must be
+  applied to a database before these functions deploy to it.

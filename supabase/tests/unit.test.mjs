@@ -25,6 +25,11 @@ import {
   oldestWeakestForReview,
   upsertFacts,
   matchForget,
+  loadFacts,
+  createForgetPreview,
+  parseForgetConfirmation,
+  validateForgetConfirmation,
+  executeConfirmedForget,
   trashFact,
   restoreFact,
   listTrashedFacts,
@@ -337,14 +342,14 @@ describe('governance — prompt building', () => {
 // In-memory PostgREST fake: just enough of the supabase-js builder surface
 // for the memory engine (select/eq/order/limit/maybeSingle/insert/update/delete).
 function fakeSupa(rows) {
-  const db = { items: rows.map((r) => ({ ...r, meta: { ...(r.meta ?? {}) } })) };
+  const db = { items: rows.map((r) => ({ ...r, meta: { ...(r.meta ?? {}) } })), pending_actions: [] };
   function builder(table) {
     const filters = [];
     let op = { type: 'select' };
     let sortSpec = null;
     const match = () => {
       const out = db[table].filter((r) => filters.every(([col, val]) => {
-        if (col === 'meta->>mkey') return r.meta?.mkey === val;
+        if (col.includes('->>')) { const [f, k] = col.split('->>'); return r[f]?.[k] === val; }
         return r[col] === val;
       }));
       if (sortSpec) {
@@ -622,5 +627,139 @@ describe('D1/B1-fix — gardener must not filter on dropped columns', () => {
     const src = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
     assert.ok(!/\.is\(\s*['"]deleted_at['"]/.test(src) && !/\.eq\(\s*['"]deleted_at['"]/.test(src),
       'deleted_at was dropped by migration 0019; filtering on it silently zeroes the job');
+  });
+});
+
+describe('D1 correction — confirmed forget (preview-only AI + user-sent code)', () => {
+  const UID = 'user-1';
+  const future = () => new Date(Date.now() + 600000).toISOString();
+  const mkRow = (over = {}) => ({
+    id: 'pa-1', user_id: UID, status: 'pending', expires_at: future(),
+    payload: { fact_ids: ['a'], fact_texts: ['fact a'], memory_space_id: 'S1', confirm_code: '123456' },
+    ...over,
+  });
+
+  it('parse: accepts ONLY the bare 6-digit code or «نفّذ/confirm <code>» as the whole message', () => {
+    assert.equal(parseForgetConfirmation('123456'), '123456');
+    assert.equal(parseForgetConfirmation('نفّذ 123456'), '123456');
+    assert.equal(parseForgetConfirmation('نفذ ١٢٣٤٥٦'), '123456'); // Arabic-Indic digits
+    assert.equal(parseForgetConfirmation('confirm 123456'), '123456');
+  });
+
+  it('parse: rejects codes embedded in text, wrong lengths, non-codes', () => {
+    assert.equal(parseForgetConfirmation('الكود هو 123456'), null);
+    assert.equal(parseForgetConfirmation('بدي أنسى 123456'), null);
+    assert.equal(parseForgetConfirmation('نفّذ 12345'), null);
+    assert.equal(parseForgetConfirmation('نفّذ 1234567'), null);
+    assert.equal(parseForgetConfirmation('انساني الرقم 123456 من فضلك'), null);
+    assert.equal(parseForgetConfirmation('شو الأخبار'), null);
+  });
+
+  it('validate: a genuine code for the right user passes', () => {
+    assert.deepEqual(validateForgetConfirmation(mkRow(), UID, '123456', new Date()), { ok: true });
+  });
+
+  it('NEGATIVE validate: forged code fails closed', () => {
+    const v = validateForgetConfirmation(mkRow(), UID, '999999', new Date());
+    assert.equal(v.ok, false);
+    assert.equal(v.reason, 'bad_code');
+  });
+
+  it('NEGATIVE validate: expired, consumed, superseded, wrong-user, missing rows all fail', () => {
+    assert.equal(validateForgetConfirmation(mkRow({ expires_at: new Date(Date.now() - 1000).toISOString() }), UID, '123456', new Date()).ok, false);
+    assert.equal(validateForgetConfirmation(mkRow({ status: 'executed' }), UID, '123456', new Date()).reason, 'not_pending');
+    assert.equal(validateForgetConfirmation(mkRow({ status: 'superseded' }), UID, '123456', new Date()).ok, false);
+    assert.equal(validateForgetConfirmation(mkRow(), 'someone-else', '123456', new Date()).reason, 'wrong_user');
+    assert.equal(validateForgetConfirmation(null, UID, '123456', new Date()).ok, false);
+  });
+
+  it('preview: creates a pending row + code, supersedes older previews, trashes NOTHING', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    supa._db.pending_actions.push({ id: 'old', user_id: UID, action_type: 'forget_memory', status: 'pending', payload: {}, expires_at: future() });
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    assert.ok(p && /^\d{6}$/.test(p.confirm_code));
+    assert.equal(supa._db.pending_actions.find((r) => r.id === 'old').status, 'superseded');
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.deepEqual(row.payload.fact_ids, ['a']);
+    assert.equal(supa._db.items[0].status, 'open', 'a preview must never trash');
+  });
+
+  it('NEGATIVE unconfirmed exact match: unique match still only previews (store untouched)', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const m = matchForget(facts, 'fact a');
+    assert.ok(m.auto, 'unique match exists');
+    // The ONLY thing the AI path may do with a unique match is preview:
+    await createForgetPreview(supa, UID, 'S1', [m.auto]);
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.equal(supa._db.items.length, 1);
+  });
+
+  it('confirmed roundtrip: user code validates, exactly the previewed fact trashes, single use', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1), mkFact('b', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', [facts.find((f) => f.id === 'a')]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    // Without the user's message there is no execution — validate is the gate:
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const { trashed } = await executeConfirmedForget(supa, row);
+    assert.equal(trashed.length, 1);
+    assert.equal(supa._db.items.find((r) => r.id === 'a').status, 'trashed');
+    assert.equal(supa._db.items.find((r) => r.id === 'b').status, 'open');
+    assert.equal(row.status, 'executed');
+    const again = await executeConfirmedForget(supa, row); // replay attempt
+    assert.equal(again.trashed.length, 0, 'consumed previews cannot execute twice');
+  });
+
+  it('NEGATIVE forged confirmation: wrong code never validates; expired row cannot execute', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const forged = parseForgetConfirmation('نفّذ 000000');
+    assert.equal(validateForgetConfirmation(row, UID, forged, new Date()).ok, false);
+    assert.equal(supa._db.items[0].status, 'open');
+    row.expires_at = new Date(Date.now() - 1000).toISOString(); // let it lapse
+    const { trashed } = await executeConfirmedForget(supa, row);
+    assert.equal(trashed.length, 0, 'expired previews refuse to execute even if called');
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.ok(p.confirm_code !== '000000');
+  });
+
+  it('execute skips route facts even if a preview lists them', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1, { mcat: 'route' })]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const { trashed } = await executeConfirmedForget(supa, row);
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('GUARD: chat has NO trashFact — the AI path cannot trash; confirmation is deterministic', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(!chat.includes('trashFact'), 'chat must never call trashFact directly');
+    const body = chat.slice(chat.indexOf('async function toolForgetFact'), chat.indexOf('async function toolRestoreFact'));
+    assert.ok(body.includes('createForgetPreview') && body.includes('needs_confirmation'),
+      'forget tool must be preview-only');
+    assert.ok(chat.includes('parseForgetConfirmation(t)') && chat.includes('validateForgetConfirmation')
+      && chat.includes('executeConfirmedForget'),
+      'the deterministic confirmation fast path must be wired in the handler');
+  });
+
+  it('GUARD: governed executor fails closed on unknown action types (no delete-space fall-through)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("return { error: 'unknown action_type' }"));
+    assert.ok(!/else res = await executeDeleteSpace/.test(chat),
+      'executeDeleteSpace must never be a default branch');
+  });
+
+  it('GUARD (req #7): Delete Forever stays user-controlled — no edge function references it', () => {
+    for (const f of ['chat/index.ts', '_shared/memory.ts', 'memory-consolidate/index.ts', 'memory-learn/index.ts']) {
+      const src = readFileSync(new URL(`../functions/${f}`, import.meta.url), 'utf8');
+      assert.ok(!src.includes('deleteTrashRowForever') && !src.includes('emptyTrash'),
+        `${f} must not reference the client-only Delete-Forever actions`);
+    }
   });
 });

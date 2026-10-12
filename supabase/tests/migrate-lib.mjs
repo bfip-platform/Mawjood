@@ -137,4 +137,9 @@ export const ASSERTIONS = [
     sql: `select count(*)::int = 1 as ok from pg_trigger
           where tgname = 'profiles_trash_floor' and not tgisinternal`,
   },
+  {
+    name: 'pending_actions accepts forget_memory + superseded (0036)',
+    sql: `select (pg_get_constraintdef(oid) like '%forget_memory%') as ok from pg_constraint
+          where conname = 'pending_actions_action_type_check'`,
+  },
 ];
