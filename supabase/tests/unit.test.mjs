@@ -838,3 +838,28 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('Stage 1b — route/classify auth gate (D0 MEDIUM: public AI-spend oracle)', () => {
+  for (const fn of ['classify', 'route']) {
+    it(`${fn}: requires a user JWT and rate-limits BEFORE any model call`, () => {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes("from '../_shared/edge-auth.ts'") && src.includes('authUserId(req)'),
+        `${fn} must resolve the caller from the JWT`);
+      assert.ok(src.includes('if (!callerId) return json401();'),
+        `${fn} must 401 when no user is resolved`);
+      assert.ok(src.includes(`checkRateLimit(adminClient(), callerId, '${fn}')`),
+        `${fn} must rate-limit per user`);
+      const authAt = src.indexOf('authUserId(req)');
+      const aiAt = src.indexOf('chat/completions');
+      assert.ok(authAt !== -1 && aiAt !== -1 && authAt < aiAt,
+        `${fn}: the gate must precede the model fetch`);
+    });
+  }
+
+  it('auth-gates manifest no longer lists classify/route as public', () => {
+    const check = readFileSync(new URL('./auth-gates-check.mjs', import.meta.url), 'utf8');
+    assert.ok(check.includes("classify: ['user-jwt']") && check.includes("route: ['user-jwt']"));
+    assert.ok(!check.includes("'stateless text classifier'") && !check.includes("'stateless input router'"),
+      'the stale public exceptions (and their no-longer-true rationale) must be gone');
+  });
+});

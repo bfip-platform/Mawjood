@@ -1,4 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
+import { authUserId, json401, adminClient } from '../_shared/edge-auth.ts';
+import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -71,6 +73,22 @@ Deno.serve(async (req) => {
     const { text, history } = await req.json();
     if (!text?.trim()) throw new Error('text is required');
     const t = text.slice(0, 500);
+
+    // ── authorization (Stage 1b — D0 MEDIUM) ──────────────────────
+    // Invoked only by the app with the caller's session. Without a user
+    // JWT this was a public AI-spend oracle: the published anon key
+    // alone reached the model. Anonymous-trial sessions carry a real
+    // JWT and keep working; the client falls back to local heuristics
+    // on 401/429.
+    const callerId = await authUserId(req);
+    if (!callerId) return json401();
+    const rl = await checkRateLimit(adminClient(), callerId, 'route');
+    if (!rl.allowed) {
+      return new Response(JSON.stringify({ error: rateLimitMessage(false) }), {
+        status: 429,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
     const hist: HistMsg[] = Array.isArray(history) ? history.slice(-6) : [];
 
     // instant layer
