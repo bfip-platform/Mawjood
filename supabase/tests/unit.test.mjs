@@ -838,3 +838,29 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('BUGFIX 0042 — items.updated_at exists (memory engine selects/orders by it)', () => {
+  it('GUARD: migration 0042 adds the column, backfills, and installs the touch trigger', () => {
+    const mig = readFileSync(new URL('../migrations/0042_items_updated_at.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('add column if not exists updated_at'), 'column added idempotently');
+    assert.ok(mig.includes('set updated_at = created_at'), 'existing rows backfilled from created_at');
+    assert.ok(mig.includes('create trigger items_touch_updated_at'), 'BEFORE UPDATE trigger keeps it current');
+    assert.ok(mig.includes('before update on public.items'), 'trigger is on items');
+  });
+
+  it('GUARD: every items select in the memory engine only names columns the schema has', () => {
+    const engine = readFileSync(new URL('../functions/_shared/memory.ts', import.meta.url), 'utf8');
+    const selects = engine.match(/\.select\('([^']+)'\)/g) ?? [];
+    assert.ok(selects.length > 0);
+    // The schema truth this guards: items columns per migrations 0002+
+    // plus 0035 (status values) and 0042 (updated_at).
+    const itemsCols = new Set(['id', 'space_id', 'note_id', 'kind', 'title', 'details', 'due_at', 'status', 'created_by', 'created_at', 'assigned_to', 'meta', 'list_id', 'bought_at', 'reminder_sent_at', 'vault_id', 'updated_at']);
+    // Only the items selects (they contain title/details/meta together)
+    const itemsSelects = selects.filter((s) => s.includes('details') && s.includes('meta'));
+    assert.ok(itemsSelects.length >= 3, 'loadFacts + trash/review listings found');
+    for (const s of itemsSelects) {
+      const cols = s.match(/\((.*)\)/)[1].replace(/'/g, '').split(',').map((c) => c.trim());
+      for (const c of cols) assert.ok(itemsCols.has(c), `column '${c}' must exist on items`);
+    }
+  });
+});

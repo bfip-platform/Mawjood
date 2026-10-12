@@ -143,6 +143,15 @@ export const ASSERTIONS = [
           where conname = 'pending_actions_action_type_check'`,
   },
   {
+    name: 'items has updated_at + touch trigger (0042)',
+    sql: `select (
+            exists (select 1 from information_schema.columns
+                    where table_schema = 'public' and table_name = 'items' and column_name = 'updated_at')
+            and exists (select 1 from pg_trigger
+                        where tgname = 'items_touch_updated_at' and tgrelid = 'public.items'::regclass and tgenabled = 'O')
+          ) as ok`,
+  },
+  {
     name: 'pending_actions status accepts executing — atomic claim state (0037)',
     sql: `select (pg_get_constraintdef(oid) like '%executing%') as ok from pg_constraint
           where conname = 'pending_actions_status_check'`,
