@@ -16,7 +16,9 @@
 | 3. Visibility maintenance | `applyMemoryMaintenance`: importance ≤1 & untouched >90d → `meta.retrieval_boost = 0.5` (ranking penalty, applied in `scoreFact`); untouched >180d & importance ≤2 → `meta.review_candidate = true`. Metadata UPDATEs only, idempotent | engine `planMemoryMaintenance` (pure) + `applyMemoryMaintenance` |
 | 4. Trash purge | `purgeExpiredTrashedFacts`: deletes ONLY rows already `status='trashed'` whose `meta.trashed_at` is >30 days old | engine (single sanctioned `items` delete) |
 
-**Report shape** (returned + logged): `{ users, episodes, merged, duplicate_candidates, rescored, review_flagged, trash_purged }`. The old `decayed` / `pruned` counters are retired.
+**Report shape** (returned as the function's HTTP response): `{ users, episodes, merged, duplicate_candidates, rescored, review_flagged, trash_purged }`. The old `decayed` / `pruned` counters are retired. *Correction (independent review F2):* unlike spec §3.3/§6.3's "logged to `ops_events`", the current function does **not** persist the report — it is response-only (a pre-existing pattern). Persisting run reports is a small observability follow-up, recorded here rather than silently claimed.
+
+**Memory-trash window (independent review F3):** the purge uses a **fixed 30 days** for memory facts (spec §5.2's window), independent of `profiles.trash_retention_days` grants above 30 that apply to `trash_bin` content. A user granted 90 days keeps *bin* content for 90 but trashed *memories* for 30. Unifying the two windows is an owner decision for a later pass; D1 follows §5.2 literally.
 
 **Known spec deltas (recorded, not silently dropped):**
 - Spec §6.3 dry-run mode (`?dry_run=1`) is **not** implemented in D1. The planner (`planMemoryMaintenance`) is pure, so a dry-run endpoint is a small follow-up; the gardener's writes are metadata-only, which is why D1 did not gate on it.
