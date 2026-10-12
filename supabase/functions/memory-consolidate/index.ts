@@ -71,11 +71,13 @@ Deno.serve(async (req) => {
     const todayStr = new Date().toISOString().slice(0, 10);
 
     // users active in the last 24h (note authors)
+    // NOTE: notes.deleted_at was dropped in migration 0019 (trash moved to
+    // trash_bin) — filtering on it made PostgREST error and this job
+    // silently process ZERO users on main. All rows in notes are live.
     const { data: recent } = await supa
       .from('notes')
       .select('created_by')
       .gte('created_at', since)
-      .is('deleted_at', null)
       .limit(2000);
     const userIds = [...new Set((recent ?? []).map((r: any) => r.created_by).filter(Boolean))];
 
@@ -93,7 +95,6 @@ Deno.serve(async (req) => {
         .select('transcript, created_at')
         .eq('created_by', uid)
         .gte('created_at', since)
-        .is('deleted_at', null)
         .order('created_at')
         .limit(40);
       const texts = (notes ?? []).map((n: any) => String(n.transcript ?? '').slice(0, 200)).filter((s: string) => s.trim());
