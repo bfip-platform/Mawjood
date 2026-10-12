@@ -5,6 +5,7 @@
 // rejected — they must link an email first (otherwise they'd lose the space).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -44,6 +45,12 @@ Deno.serve(async (req) => {
     if (!clean) return err('رمز الدعوة مطلوب');
 
     const admin = createClient(url, serviceKey);
+
+    // F-SEC-05: redemption attempts are rate-limited per user BEFORE any
+    // invite lookup, so code guessing stays impractical (codes are now
+    // 10 chars ≈ 49.6 bits; see client makeInviteCode).
+    const rl = await checkRateLimit(admin, user.id, 'join-family');
+    if (!rl.allowed) return err(rateLimitMessage(true), 429);
 
     const { data: invite } = await admin
       .from('space_invites')
@@ -90,10 +97,18 @@ Deno.serve(async (req) => {
       throw insErr;
     }
 
-    await admin
-      .from('space_invites')
-      .update({ used_count: invite.used_count + 1 })
-      .eq('id', invite.id);
+    // F-SEC-05: claim the invite use ATOMICALLY (migration 0040). The
+    // checks above are a fast path only — under concurrency this single
+    // conditional UPDATE is the authority on whether a use remained.
+    const { data: claimed, error: claimErr } = await admin.rpc('claim_invite_use', {
+      p_invite_id: invite.id,
+    });
+    if (claimErr) throw claimErr;
+    if (claimed !== true) {
+      // lost the race for the last use — roll back the membership
+      await admin.from('space_members').delete().eq('space_id', space.id).eq('user_id', user.id);
+      return err('تم استخدام رمز الدعوة بالكامل', 410);
+    }
 
     return new Response(JSON.stringify({ space }), {
       headers: { ...cors, 'Content-Type': 'application/json' },

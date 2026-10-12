@@ -2270,10 +2270,11 @@ export class VoiceEngine {
 
   // ── Family invites ──────────────────────────────────────────
 
-  /** Generate a human-friendly invite code (no confusing chars). */
+  /** Generate a human-friendly invite code (no confusing chars).
+   *  10 chars × 31-symbol alphabet ≈ 49.6 bits (F-SEC-05; was 6 ≈ 29.8). */
   private makeInviteCode(): string {
     const ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-    const bytes = new Uint8Array(6);
+    const bytes = new Uint8Array(10);
     crypto.getRandomValues(bytes);
     return Array.from(bytes, (b) => ABC[b % ABC.length]).join('');
   }

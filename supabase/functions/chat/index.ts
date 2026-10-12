@@ -5,6 +5,7 @@ import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceT
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
+import { retryDelayMs, sleep } from '../_shared/backoff.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
@@ -740,7 +741,10 @@ async function toolExecuteAction(admin: any, userId: string, gov: Governance | n
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
   if (row.status === 'cancelled') return { error: 'cancelled' };
-  if (new Date(row.expires_at).getTime() < Date.now()) {
+  // Fail-closed expiry (same NaN class fixed for forget in 0037):
+  // an unparseable expires_at counts as expired, never as valid.
+  const expMs = Date.parse(row.expires_at);
+  if (!Number.isFinite(expMs) || expMs < Date.now()) {
     await admin.from('pending_actions').update({ status: 'expired' }).eq('id', action_id);
     return { error: 'expired — request a new action' };
   }
@@ -750,17 +754,38 @@ async function toolExecuteAction(admin: any, userId: string, gov: Governance | n
   if ((row.approvals ?? 0) < required || row.status !== 'approved') {
     return { error: 'approvals_incomplete', approvals: row.approvals ?? 0, needed: required };
   }
+  // F-SEC-05 (M4): approval→execute TOCTOU. All checks above are reads;
+  // two concurrent execute_action calls could both pass them and run the
+  // destructive executor twice. Claim the row with ONE conditional
+  // UPDATE (approved → executing): exactly one caller wins. A stuck
+  // 'executing' row fails closed below (it is no longer 'approved').
+  const { data: claimed } = await admin
+    .from('pending_actions')
+    .update({ status: 'executing' })
+    .eq('id', action_id)
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .select('id');
+  if (!claimed || claimed.length !== 1) return { error: 'already executed or in progress' };
   // deno-lint-ignore no-explicit-any
   const payload = (row.payload ?? {}) as Record<string, any>;
   let res: unknown;
-  if (at === 'create_tab') res = await executeCreateTab(admin, userId, payload, gov, uiAr);
-  else if (at === 'delete_tab') res = await executeDeleteTab(admin, userId, payload);
-  else if (at === 'create_space') res = await executeCreateSpace(admin, userId, payload, gov, uiAr);
-  else if (at === 'delete_space') res = await executeDeleteSpace(admin, userId, payload);
-  else return { error: 'unknown action_type' }; // fail closed: never default to a destructive executor
+  try {
+    if (at === 'create_tab') res = await executeCreateTab(admin, userId, payload, gov, uiAr);
+    else if (at === 'delete_tab') res = await executeDeleteTab(admin, userId, payload);
+    else if (at === 'create_space') res = await executeCreateSpace(admin, userId, payload, gov, uiAr);
+    else if (at === 'delete_space') res = await executeDeleteSpace(admin, userId, payload);
+    else res = { error: 'unknown action_type' }; // fail closed: never default to a destructive executor
+  } catch (e) {
+    res = { error: e instanceof Error ? e.message : 'execute failed' };
+  }
   // deno-lint-ignore no-explicit-any
-  if ((res as any)?.error) return res;
-  await admin.from('pending_actions').update({ status: 'executed' }).eq('id', action_id);
+  if ((res as any)?.error) {
+    // release the claim — the action stays approved and retryable
+    await admin.from('pending_actions').update({ status: 'approved' }).eq('id', action_id).eq('status', 'executing');
+    return res;
+  }
+  await admin.from('pending_actions').update({ status: 'executed' }).eq('id', action_id).eq('status', 'executing');
   return { executed: true, action_type: at, ...(res as object) };
 }
 
@@ -792,7 +817,7 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
 }
 
 // deno-lint-ignore no-explicit-any
-async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
+async function callModel(ai: any, messages: any[], retries = 2): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
   const t0 = Date.now();
   const aiRes = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
@@ -804,9 +829,10 @@ async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text:
   });
   const latencyMs = Date.now() - t0;
   if (!aiRes.ok) {
-    // retry once on rate limits / overloaded backends, then surface a clean error
+    // retry on rate limits / overloaded backends with exponential
+    // backoff + jitter (F-SEC-08), then surface a clean error
     if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(retryDelayMs(2 - retries));
       return callModel(ai, messages, retries - 1);
     }
     // honest errors: only 429/503 are rate limits — anything else (e.g. a 400
@@ -827,7 +853,7 @@ async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text:
 // looks at the image. Returns the answer text, or null when the vision call
 // fails (caller then answers gracefully instead of guessing blind).
 // deno-lint-ignore no-explicit-any
-async function callVision(ai: any, imageUrl: string, question: string, retries = 1): Promise<string | null> {
+async function callVision(ai: any, imageUrl: string, question: string, retries = 2): Promise<string | null> {
   const sys = `You are Mawjood, a warm assistant inside a family memory app. The user attached a photo and asks about it. Look at the image carefully and answer their question directly in the SAME language they used (Levantine Arabic if they write Arabic). Be concise: 1-3 sentences. Describe only what you actually see — never invent details, people, or text that is not in the image. Reply with ONLY the answer, no preamble.`;
   try {
     // deno-lint-ignore no-explicit-any
@@ -851,7 +877,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     });
     if (!aiRes.ok) {
       if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await sleep(retryDelayMs(2 - retries));
         return callVision(ai, imageUrl, question, retries - 1);
       }
       return null;
@@ -920,14 +946,29 @@ Deno.serve(async (req) => {
     userId = userData?.user?.id ?? null;
     // 🧠 eval override: internal service-to-service (admin eval.run) may act
     // as a real user for regression testing. Never accepted from the client.
+    let evalImpersonation: string | null = null;
     if (!userId && eval_mode === true && isInternal(req)) {
       const euid = String(as_user_id ?? '');
-      if (/^[0-9a-f-]{36}$/i.test(euid)) userId = euid;
+      if (/^[0-9a-f-]{36}$/i.test(euid)) {
+        userId = euid;
+        evalImpersonation = euid;
+      }
     }
     if (!userId) throw new Error('not authenticated');
 
     admin = adminClient();
     requestId = newRequestId();
+
+    // F-SEC-06 (M3): every impersonation is audit-logged. The internal
+    // secret remains the gate; this makes its use visible after the fact
+    // (who was impersonated, when, under which request id).
+    if (evalImpersonation) {
+      await logOps(admin, {
+        user_id: evalImpersonation, request_id: requestId,
+        kind: 'eval_mode.impersonation', ok: true,
+        detail: 'internal eval call acting as this user',
+      });
+    }
 
     // 🧠 governance: verify the vault session (ownership proof, server-side)
     // + load the admin's rulebook. A failed vault check is a hard 403.

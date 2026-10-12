@@ -153,4 +153,9 @@ export const ASSERTIONS = [
           from information_schema.columns
           where table_schema = 'public' and table_name = 'pending_actions' and column_name = 'expires_at'`,
   },
+  {
+    name: 'claim_invite_use exists and is service-role only (0040)',
+    sql: `select (has_function_privilege('service_role', 'public.claim_invite_use(uuid)', 'execute')
+                 and not has_function_privilege('authenticated', 'public.claim_invite_use(uuid)', 'execute')) as ok`,
+  },
 ];
