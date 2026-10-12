@@ -59,19 +59,52 @@ export async function runJanitor(
   const out: { table: string; would_delete: number; deleted: number }[] = [];
   for (const target of JANITOR_ALLOWLIST) {
     const cutoff = janitorCutoff(target, now);
+    // Count via the target's OWN timestamp column: rate_limits has no
+    // `id` column, and a count query naming a missing column errors in
+    // PostgREST — which would silently read as "0 rows" and skip the
+    // leg forever (review N1).
     const { count } = await supa
       .from(target.table)
-      .select('id', { count: 'exact', head: true })
+      .select(target.column, { count: 'exact', head: true })
       .lt(target.column, cutoff);
     const would = typeof count === 'number' ? count : 0;
     let deleted = 0;
     if (opts.execute && would > 0) {
       if (target.table === 'rate_limits') {
-        // Composite PK, no id column: the window range itself is small.
-        const { error } = await supa.from(target.table).delete().lt(target.column, cutoff);
-        if (!error) deleted = would;
+        // Composite PK, no id column: delete in 1-day window slices
+        // (oldest first) so a first run against months of accumulated
+        // minute-windows is never one giant statement against a hot
+        // auth-path table (review N4c). Iteration-capped as a backstop.
+        for (let i = 0; i < 400; i++) {
+          const { data: oldest } = await supa
+            .from(target.table)
+            .select(target.column)
+            .lt(target.column, cutoff)
+            .order(target.column, { ascending: true })
+            .limit(1);
+          const first = (oldest ?? [])[0]?.[target.column];
+          if (!first) break;
+          const dayEnd = new Date(new Date(first).getTime() + 86400000).toISOString();
+          const sliceEnd = dayEnd < cutoff ? dayEnd : cutoff;
+          const { error } = await supa
+            .from(target.table)
+            .delete()
+            .gte(target.column, first)
+            .lt(target.column, sliceEnd);
+          if (error) break;
+          const { count: left } = await supa
+            .from(target.table)
+            .select(target.column, { count: 'exact', head: true })
+            .lt(target.column, cutoff);
+          const remaining = typeof left === 'number' ? left : 0;
+          deleted = would - remaining;
+          if (remaining === 0) break;
+        }
       } else {
-        for (;;) {
+        // Batched by id ranges; iteration-capped as a backstop so a
+        // delete that reports success without removing rows can never
+        // spin forever (review N4a).
+        for (let i = 0; i < 100; i++) {
           const { data: rows } = await supa
             .from(target.table)
             .select('id')

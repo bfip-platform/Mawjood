@@ -870,10 +870,11 @@ describe('D3 PR-A — janitor allowlist, scrubber, index migration (T-D3-1/2/3)'
       from(table) {
         const filters = [];
         let op = 'select';
-        const rows = () => (db[table] ?? []).filter((r) => filters.every(([c, v]) => r[c] < v));
+        const rows = () => (db[table] ?? []).filter((r) => filters.every(([o, c, v]) => (o === '<' ? r[c] < v : r[c] >= v)));
         const b = {
           select(_c, o) { if (o?.head) { b._head = true; } return b; },
-          lt(c, v) { filters.push([c, v]); return b; },
+          lt(c, v) { filters.push(['<', c, v]); return b; },
+          gte(c, v) { filters.push(['>=', c, v]); return b; },
           order() { return b; },
           limit() { return b; },
           in(_c, vals) { b._in = vals; return b; },
@@ -929,6 +930,15 @@ describe('D3 PR-A — janitor allowlist, scrubber, index migration (T-D3-1/2/3)'
     assert.equal(ev.request.data, undefined, 'request body removed');
     assert.equal(ev.extra.keep, 'plain', 'innocuous fields survive');
     assert.ok(scrubString('x'.repeat(500)).length <= 300, 'strings are capped');
+    // review N2: an opaque-token URL under a non-'url' key loses its query
+    const ev2 = scrubSentryEvent({ photo: 'https://cdn.example.com/p.jpg?sig=OPAQUESECRET123&dl=1' });
+    assert.equal(ev2.photo, 'https://cdn.example.com/p.jpg', 'URL queries are stripped under ANY key');
+  });
+
+  it('GUARD (review N1): the janitor counts via each target\u2019s own column — rate_limits has no id', () => {
+    const j = readFileSync(new URL('../functions/_shared/janitor.ts', import.meta.url), 'utf8');
+    assert.ok(j.includes(".select(target.column, { count: 'exact', head: true })"), 'count selects the timestamp column');
+    assert.ok(!j.includes(".select('id', { count: 'exact', head: true })"), 'the id-count bug cannot return');
   });
 
   it('GUARD: migration 0043 carries the measured index set + pg_trgm', () => {
