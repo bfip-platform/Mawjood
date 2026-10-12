@@ -3954,12 +3954,17 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>Lost it? Mawjood.</Text>
           </View>
         </View>
-        <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>🧪</Text>
-        </Pressable>
+        {/* F-COM-09 (D4 T-D4-6): the demo-seed panel is a DEV tool — it
+            must never ship to production users. __DEV__ is false in
+            release builds, so the button and panel vanish there. */}
+        {__DEV__ && (
+          <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn}>
+            <Text style={styles.iconBtnText}>🧪</Text>
+          </Pressable>
+        )}
       </View>
 
-      {showDemo && (
+      {__DEV__ && showDemo && (
         <View style={styles.demoPanel}>
           <Text style={styles.demoTitle}>{t('demoTitle')}</Text>
           <View style={styles.demoRow}>
