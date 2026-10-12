@@ -39,6 +39,29 @@ export interface OutboxOp {
 
 const LIST_PREFIX = 'offline:list:';
 const OUTBOX_KEY = 'offline:outbox:v1';
+const DEAD_KEY = 'offline:outbox:dead';
+/** Ops that fail this many flushes are dead-lettered (see flush). */
+export const MAX_FLUSH_ATTEMPTS = 5;
+
+/** Cache key for a paged list — pages never share an entry (review N2). */
+export function listCacheKey(scope: string, limit: number, offset: number): string {
+  return `${scope}:${limit}:${offset}`;
+}
+
+/**
+ * Is this failure worth queueing for later, or is it permanent?
+ * PostgREST/Postgres errors carry a `code` (a SQLSTATE like '23514' /
+ * '42501', or a 'PGRST…' code) — those are deterministic and will fail
+ * identically forever, so they must NOT enter the outbox (review N1:
+ * a poison op would starve the FIFO). Transport failures (TypeError
+ * from fetch, aborts) carry no such code and are exactly what the
+ * outbox exists for.
+ */
+export function isQueueableError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  if (typeof code === 'string' && code.length > 0) return false;
+  return true;
+}
 
 function defaultId(): string {
   const c = (globalThis as { crypto?: Crypto }).crypto;
@@ -89,6 +112,23 @@ export class OfflineSync {
       const parsed = JSON.parse(raw) as OutboxOp[];
       return Array.isArray(parsed) ? parsed : [];
     } catch {
+      // Review N4: never silently discard a corrupt outbox — preserve
+      // the raw payload under a side key before treating it as empty.
+      try {
+        await this.kv.set(`${OUTBOX_KEY}:corrupt:${this.now().toISOString()}`, raw);
+      } catch { /* best effort */ }
+      return [];
+    }
+  }
+
+  /** Ops that exhausted their attempts (dead-lettered by flush). */
+  async deadLettered(): Promise<OutboxOp[]> {
+    const raw = await this.kv.get(DEAD_KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as OutboxOp[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
       return [];
     }
   }
@@ -116,17 +156,38 @@ export class OfflineSync {
     return this.loadOutbox();
   }
 
+  private flushing: Promise<{ sent: number; remaining: number; deadLettered: number }> | null = null;
+
   /**
    * Flush the outbox FIFO through `send`. 'ok' (including an
    * idempotency-conflict resolution) removes the op; a throw or 'retry'
    * stops the flush, leaving the op (attempts+1) and everything behind
-   * it queued, in order.
+   * it queued, in order. An op that reaches MAX_FLUSH_ATTEMPTS is
+   * DEAD-LETTERED instead (moved aside, flush continues past it) so one
+   * permanently-failing op can never starve the queue. Concurrent
+   * flush() calls share one in-flight run (review N3).
    */
-  async flush(send: (op: OutboxOp) => Promise<'ok' | 'retry'>): Promise<{ sent: number; remaining: number }> {
+  async flush(send: (op: OutboxOp) => Promise<'ok' | 'retry'>): Promise<{ sent: number; remaining: number; deadLettered: number }> {
+    if (this.flushing) return this.flushing;
+    this.flushing = this.flushInner(send).finally(() => { this.flushing = null; });
+    return this.flushing;
+  }
+
+  private async flushInner(send: (op: OutboxOp) => Promise<'ok' | 'retry'>): Promise<{ sent: number; remaining: number; deadLettered: number }> {
     const ops = await this.loadOutbox();
     let sent = 0;
+    let deadLettered = 0;
     while (ops.length > 0) {
       const op = ops[0];
+      if (op.attempts >= MAX_FLUSH_ATTEMPTS) {
+        ops.shift();
+        deadLettered += 1;
+        const dead = await this.deadLettered();
+        dead.push(op);
+        await this.kv.set(DEAD_KEY, JSON.stringify(dead));
+        await this.saveOutbox(ops);
+        continue;
+      }
       let result: 'ok' | 'retry';
       try {
         result = await send(op);
@@ -136,12 +197,12 @@ export class OfflineSync {
       if (result !== 'ok') {
         op.attempts += 1;
         await this.saveOutbox(ops);
-        return { sent, remaining: ops.length };
+        return { sent, remaining: ops.length, deadLettered };
       }
       ops.shift();
       sent += 1;
       await this.saveOutbox(ops);
     }
-    return { sent, remaining: 0 };
+    return { sent, remaining: 0, deadLettered };
   }
 }

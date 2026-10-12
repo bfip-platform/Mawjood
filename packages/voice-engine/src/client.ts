@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Borrow, Item, ItemKind, Note, RecordedAudio, Space, SpaceTab, SpaceType, TabProposal } from './types';
 import { suggestSpaceType } from './suggest';
 import { isCorrection, isQuestion } from './answer';
-import { OfflineSync, type KVStore } from './offline';
+import { OfflineSync, isQueueableError, listCacheKey, type KVStore } from './offline';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 /**
@@ -782,6 +782,7 @@ export class VoiceEngine {
           .from('items')
           .select('*')
           .eq('id', id)
+          .eq('space_id', input.spaceId)
           .single();
         if (!selErr && existing) return existing as Item;
       }
@@ -803,7 +804,11 @@ export class VoiceEngine {
       const item = await this.createItem({ ...input, id });
       return { item, queued: false };
     } catch (e) {
-      if (!this.offline) throw e;
+      // Review N1: only transport-shaped failures are queued. A
+      // permanent server error (RLS, CHECK, FK — anything carrying a
+      // Postgres/PostgREST code) is rethrown: queueing it would render
+      // a phantom item and poison the FIFO for everything behind it.
+      if (!this.offline || !isQueueableError(e)) throw e;
       await this.offline.enqueueCreate({ ...input, id } as Record<string, unknown>);
       const placeholder = {
         id,
@@ -826,8 +831,8 @@ export class VoiceEngine {
   }
 
   /** Replay queued creates (FIFO, idempotent). No-op when disabled. */
-  async flushOutbox(): Promise<{ sent: number; remaining: number }> {
-    if (!this.offline) return { sent: 0, remaining: 0 };
+  async flushOutbox(): Promise<{ sent: number; remaining: number; deadLettered: number }> {
+    if (!this.offline) return { sent: 0, remaining: 0, deadLettered: 0 };
     return this.offline.flush(async (op) => {
       await this.createItem(op.payload as Parameters<VoiceEngine['createItem']>[0]);
       return 'ok';
@@ -835,15 +840,18 @@ export class VoiceEngine {
   }
 
   /** D3 T-D3-4: read-through cache for listItems — network result is
-   *  cached; on network failure the last cached list is served. */
+   *  cached per page (limit+offset in the key, review N2); on network
+   *  failure the last cached page is served. */
   async listItemsCached(spaceId: string, opts?: number | PageOpts): Promise<{ items: Item[]; fromCache: boolean }> {
+    const page = pageOptsOf(opts);
+    const key = listCacheKey(`items:${spaceId}`, Math.min(Math.max(page?.limit ?? 100, 1), 200), Math.max(page?.offset ?? 0, 0));
     try {
       const items = await this.listItems(spaceId, opts);
-      if (this.offline) await this.offline.cacheList(`items:${spaceId}`, items);
+      if (this.offline) await this.offline.cacheList(key, items);
       return { items, fromCache: false };
     } catch (e) {
       if (this.offline) {
-        const cached = await this.offline.readList<Item>(`items:${spaceId}`);
+        const cached = await this.offline.readList<Item>(key);
         if (cached) return { items: cached.rows, fromCache: true };
       }
       throw e;
