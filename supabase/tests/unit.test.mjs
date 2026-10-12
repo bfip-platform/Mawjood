@@ -854,7 +854,7 @@ describe('Post-D1 bugfix — notes.deleted_at stale filters (dropped in 0019)', 
     assert.ok(files.length > 10, 'guard must actually scan the functions tree');
     for (const f of files) {
       const src = readFileSync(f, 'utf8');
-      assert.ok(!/\.(is|eq)\(\s*['"]deleted_at['"]/.test(src),
+      assert.ok(!/\.(is|eq|filter|not|or)\(\s*['"][^'"]*deleted_at/.test(src),
         `${f.pathname} filters on deleted_at — dropped by 0019; PostgREST errors 42703 and the read silently returns nothing`);
     }
   });
