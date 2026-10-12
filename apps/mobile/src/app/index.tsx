@@ -653,7 +653,7 @@ export default function HomeScreen() {
   // report-error channel (sanitized server-side) with context 'support'.
   const [supportText, setSupportText] = useState('');
   const [supportBusy, setSupportBusy] = useState(false);
-  const [supportMsg, setSupportMsg] = useState<string | null>(null);
+  const [supportMsg, setSupportMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const sendSupport = useCallback(async () => {
     const msg = supportText.trim();
     if (!msg || supportBusy) return;
@@ -665,9 +665,9 @@ export default function HomeScreen() {
       });
       if (error) throw error;
       setSupportText('');
-      setSupportMsg(t('supportSent'));
+      setSupportMsg({ text: t('supportSent'), ok: true });
     } catch {
-      setSupportMsg(t('supportFailed'));
+      setSupportMsg({ text: t('supportFailed'), ok: false });
     } finally {
       setSupportBusy(false);
     }
@@ -4521,7 +4521,9 @@ export default function HomeScreen() {
                 maxLength={300}
                 accessibilityLabel={t('supportSection')}
               />
-              {supportMsg ? <Text style={styles.fieldOk}>{supportMsg}</Text> : null}
+              {supportMsg ? (
+                <Text style={supportMsg.ok ? styles.fieldOk : styles.fieldError}>{supportMsg.text}</Text>
+              ) : null}
               <Pressable
                 onPress={sendSupport}
                 disabled={supportBusy || !supportText.trim()}
