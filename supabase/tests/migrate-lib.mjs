@@ -153,4 +153,14 @@ export const ASSERTIONS = [
           from information_schema.columns
           where table_schema = 'public' and table_name = 'pending_actions' and column_name = 'expires_at'`,
   },
+  {
+    name: 'can_read_photo binds sponsoring note to its author (0038)',
+    sql: `select (pg_get_functiondef('public.can_read_photo(text,text)'::regprocedure) like '%created_by%') as ok`,
+  },
+  {
+    name: 'notes authorship immutability trigger exists (0039)',
+    sql: `select count(*)::int = 1 as ok from pg_trigger
+          where tgname = 'notes_preserve_authorship' and not tgisinternal
+            and tgrelid = 'public.notes'::regclass and tgenabled = 'O'`,
+  },
 ];

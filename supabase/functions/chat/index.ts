@@ -5,6 +5,7 @@ import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceT
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
+import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
@@ -902,7 +903,7 @@ Deno.serve(async (req) => {
     // photo attached in chat ("photograph, then talk about it") — the client
     // uploads it first and passes the public URL; the vision branch above
     // lets the model actually look at it when the user asks about the photo.
-    const photoUrl =
+    let photoUrl =
       typeof photo_url === 'string' && photo_url.startsWith('https://')
         ? photo_url.slice(0, 500)
         : null;
@@ -925,6 +926,11 @@ Deno.serve(async (req) => {
       if (/^[0-9a-f-]{36}$/i.test(euid)) userId = euid;
     }
     if (!userId) throw new Error('not authenticated');
+
+    // 🔒 photo isolation (D0 HIGH): a client-supplied photo_url may only
+    // reference the caller's OWN storage folder — otherwise it is dropped
+    // before it can be stored on a note or shown to the vision model.
+    photoUrl = sanitizePhotoUrl(photoUrl, userId);
 
     admin = adminClient();
     requestId = newRequestId();
