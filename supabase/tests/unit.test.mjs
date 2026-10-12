@@ -838,3 +838,42 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('Stage 1 — photo isolation guard (D0 HIGH)', () => {
+  const ME = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const OTHER = 'bbbbbbbb-1111-2222-3333-444444444444';
+  const own = `https://proj.supabase.co/storage/v1/object/public/item-photos/${ME}/photo1.jpg`;
+  const foreign = `https://proj.supabase.co/storage/v1/object/public/item-photos/${OTHER}/secret.jpg`;
+
+  it('keeps the caller\'s OWN storage photo URL', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl(own, ME), own);
+  });
+
+  it('NEGATIVE: drops a FOREIGN user\'s storage photo URL (the planted-reference attack)', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl(foreign, ME), null);
+  });
+
+  it('keeps external (non-storage) https image URLs for the vision flow', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    const ext = 'https://example.com/some/image.png';
+    assert.equal(sanitizePhotoUrl(ext, ME), ext);
+  });
+
+  it('rejects non-https, non-strings, and traversal-shaped folders', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl('http://x/item-photos/' + ME + '/a.jpg', ME), null);
+    assert.equal(sanitizePhotoUrl(null, ME), null);
+    assert.equal(sanitizePhotoUrl(42, ME), null);
+    assert.equal(sanitizePhotoUrl(`https://p/storage/v1/object/public/item-photos/../${OTHER}/s.jpg`, ME), null);
+    assert.equal(sanitizePhotoUrl(`https://p/storage/v1/object/public/item-photos/%2e%2e/${OTHER}/s.jpg`, ME), null);
+  });
+
+  it('GUARD: chat wires the sanitizer after auth, before any photo use', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("sanitizePhotoUrl(photoUrl, userId)"),
+      'the handler must re-sanitize the client photo_url against the authenticated user');
+    assert.ok(chat.includes("from '../_shared/photo-guard.ts'"));
+  });
+});
