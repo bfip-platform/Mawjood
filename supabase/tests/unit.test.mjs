@@ -845,11 +845,18 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
       select: () => ({
         eq: () => ({
           gte: () => ({
-            limit: async () => ({ data: rows, error }),
+            order: () => ({
+              limit: async () => ({ data: rows, error }),
+            }),
           }),
         }),
       }),
     }),
+  });
+  const throwingSupa = () => ({
+    from: () => {
+      throw new Error('builder exploded');
+    },
   });
 
   it('estimates cost from published rates; unknown models price at the premium fallback', async () => {
@@ -888,6 +895,13 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     assert.equal(r.reason, 'check_failed');
   });
 
+  it('FAIL-CLOSED (R2): a THROWN telemetry failure also denies — never propagates', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const r = await checkSpendCap(throwingSupa(), 'u1', 2.0);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, 'check_failed');
+  });
+
   it('kill-switch (cap=null) allows without touching telemetry', async () => {
     const { checkSpendCap } = await import('../functions/_shared/spend.ts');
     const r = await checkSpendCap(fakeSupa(null, { message: 'must not be queried' }), 'u1', null);
@@ -904,5 +918,19 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
       'chat agent loop returns the graceful cap answer');
     assert.ok(ask.includes('checkSpendCap(admin, userId)'), 'ask is gated');
     assert.ok(extract.includes('checkSpendCap(supabase, rlUser)'), 'extract is gated against the note owner');
+  });
+
+  it('R1: the vision path is gated AND metered (it was neither)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    const visionAt = chat.indexOf('const vres = await callVision');
+    assert.ok(visionAt !== -1, 'vision call site present');
+    const before = chat.slice(Math.max(0, visionAt - 1500), visionAt);
+    assert.ok(before.includes('if (!spend.allowed)'), 'vision model call must sit behind the spend gate');
+    assert.ok(before.includes("detail: `vision:"), 'vision denial is ops-logged as a spend_cap hit');
+    const after = chat.slice(visionAt, visionAt + 900);
+    assert.ok(after.includes('logAi(admin,') && after.includes('ai.visionModel') && after.includes('prompt_tokens'),
+      'vision calls are metered into ai_events with usage');
+    assert.ok(chat.includes('Promise<{ text: string; usage: any } | null>'),
+      'callVision returns usage for metering');
   });
 });

@@ -825,10 +825,11 @@ async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text:
 }
 
 // Vision: the user attached a photo and asks about it — the model actually
-// looks at the image. Returns the answer text, or null when the vision call
-// fails (caller then answers gracefully instead of guessing blind).
+// looks at the image. Returns the answer text + token usage (the caller
+// meters it into ai_events for the spend cap), or null when the vision
+// call fails (caller then answers gracefully instead of guessing blind).
 // deno-lint-ignore no-explicit-any
-async function callVision(ai: any, imageUrl: string, question: string, retries = 1): Promise<string | null> {
+async function callVision(ai: any, imageUrl: string, question: string, retries = 1): Promise<{ text: string; usage: any } | null> {
   const sys = `You are Mawjood, a warm assistant inside a family memory app. The user attached a photo and asks about it. Look at the image carefully and answer their question directly in the SAME language they used (Levantine Arabic if they write Arabic). Be concise: 1-3 sentences. Describe only what you actually see — never invent details, people, or text that is not in the image. Reply with ONLY the answer, no preamble.`;
   try {
     // deno-lint-ignore no-explicit-any
@@ -861,7 +862,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     const raw = (j.choices?.[0]?.message?.content ?? '').trim();
     // strip a thinking preamble if the model leaks one
     const clean = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    return clean || null;
+    return clean ? { text: clean, usage: j.usage ?? null } : null;
   } catch {
     return null;
   }
@@ -931,8 +932,9 @@ Deno.serve(async (req) => {
     requestId = newRequestId();
 
     // 💸 daily AI spend cap (T-D2-4, fail-closed): computed once per
-    // request and enforced ONLY on the model-bound paths below (split
-    // call + agent loop). Deterministic fast paths never consult it.
+    // request and enforced ONLY on the model-bound paths below (vision
+    // call, split call, agent loop). Deterministic fast paths never
+    // consult it.
     const spend = await checkSpendCap(admin, userId);
 
     // 🧠 governance: verify the vault session (ownership proof, server-side)
@@ -1136,7 +1138,30 @@ Deno.serve(async (req) => {
         // text path: persist the photo+question as a note (voice path already did)
         await toolSaveNote(supa, userId, spaceByType, { text: t }, photoUrl, routeCtx, vctx);
       }
-      const seen = await callVision(ai, photoUrl, t);
+      // 💸 spend cap (T-D2-4/R1): the note save above is a deterministic
+      // write and stays; the vision MODEL call is gated + metered.
+      if (!spend.allowed) {
+        await logOps(admin, {
+          user_id: userId, request_id: requestId,
+          kind: 'spend_cap.hit', ok: false, detail: `vision:${spend.reason ?? 'cap_reached'}`,
+        });
+        return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions: ['save_note'] }), {
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
+      const vStart = Date.now();
+      const vres = await callVision(ai, photoUrl, t);
+      if (admin) {
+        await logAi(admin, {
+          user_id: userId, request_id: requestId, fn: 'chat',
+          provider: ai.provider, model: ai.visionModel,
+          latency_ms: Date.now() - vStart, status: vres ? 200 : 502,
+          prompt_tokens: vres?.usage?.prompt_tokens ?? null,
+          completion_tokens: vres?.usage?.completion_tokens ?? null,
+          meta: { vision: true },
+        });
+      }
+      const seen = vres?.text ?? null;
       const answer = seen ?? (uiAr ? 'ما قدرت أشوف الصورة هلأ (الخدمة مضغوطة)، جرّب بعد شوي.' : 'Could not see the photo right now (service is busy), try again in a bit.');
       return new Response(JSON.stringify({ answer, actions: ['save_note', 'vision'] }), {
         headers: { ...cors, 'Content-Type': 'application/json' },

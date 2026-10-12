@@ -40,7 +40,10 @@ export function estimateCostUsd(
   return (pin * rate.input + pout * rate.output) / 1_000_000;
 }
 
-/** Parse cap configuration. Returns null when the kill-switch disables the cap. */
+/** Parse cap configuration. Returns null when the kill-switch disables the cap.
+ *  A non-positive or unparseable value falls back to the $2.00 default —
+ *  note this means "0" does NOT mean block-all; use a tiny positive cap
+ *  (or the kill-switch semantics in reverse) deliberately if ever needed. */
 export function parseSpendCapUsd(rawCap: string | undefined, rawOff: string | undefined): number | null {
   if (rawOff === '1') return null;
   const n = rawCap !== undefined ? Number(rawCap) : NaN;
@@ -77,21 +80,28 @@ export async function checkSpendCap(supa: any, userId: string, capOverride?: num
   if (capUsd === null) return { allowed: true, capUsd: null };
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);
-  const { data, error } = await supa
-    .from('ai_events')
-    .select('model, prompt_tokens, completion_tokens')
-    .eq('user_id', userId)
-    .gte('created_at', dayStart.toISOString())
-    .limit(5000);
-  if (error || !Array.isArray(data)) {
+  // Fail-closed on EVERY telemetry failure channel: a returned { error },
+  // a non-array payload, or a thrown/rejected query (R2) all deny.
+  try {
+    const { data, error } = await supa
+      .from('ai_events')
+      .select('model, prompt_tokens, completion_tokens')
+      .eq('user_id', userId)
+      .gte('created_at', dayStart.toISOString())
+      .order('created_at', { ascending: true })
+      .limit(5000);
+    if (error || !Array.isArray(data)) {
+      return { allowed: false, capUsd, reason: 'check_failed' };
+    }
+    let spent = 0;
+    for (const row of data) {
+      spent += estimateCostUsd(row.model, row.prompt_tokens, row.completion_tokens);
+    }
+    if (spent >= capUsd) return { allowed: false, spentUsd: spent, capUsd, reason: 'cap_reached' };
+    return { allowed: true, spentUsd: spent, capUsd };
+  } catch {
     return { allowed: false, capUsd, reason: 'check_failed' };
   }
-  let spent = 0;
-  for (const row of data) {
-    spent += estimateCostUsd(row.model, row.prompt_tokens, row.completion_tokens);
-  }
-  if (spent >= capUsd) return { allowed: false, spentUsd: spent, capUsd, reason: 'cap_reached' };
-  return { allowed: true, spentUsd: spent, capUsd };
 }
 
 export function spendCapMessage(uiAr: boolean): string {
