@@ -160,6 +160,7 @@ export const ASSERTIONS = [
   {
     name: 'notes authorship immutability trigger exists (0039)',
     sql: `select count(*)::int = 1 as ok from pg_trigger
-          where tgname = 'notes_preserve_authorship' and not tgisinternal`,
+          where tgname = 'notes_preserve_authorship' and not tgisinternal
+            and tgrelid = 'public.notes'::regclass and tgenabled = 'O'`,
   },
 ];
