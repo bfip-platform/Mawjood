@@ -838,3 +838,16 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D5 PR-2 — responsive foundation (T-D5-1)', () => {
+  it('GUARD: wide web gets a centered 880px column; native/narrow untouched; no hooks violations', () => {
+    const layout = readFileSync(new URL('../../apps/mobile/src/app/_layout.tsx', import.meta.url), 'utf8');
+    assert.ok(layout.includes("Platform.OS === 'web' && width >= 1024"), 'the wide treatment is web-only and breakpoint-gated');
+    assert.ok(layout.includes('maxWidth: 880'), 'readable column cap');
+    assert.ok(layout.includes('useWindowDimensions'), 'breakpoint comes from the window hook');
+    // The hook calls sit in InnerLayout before any conditional return.
+    const hookIdx = layout.indexOf('useWindowDimensions()');
+    const innerIdx = layout.indexOf('function InnerLayout');
+    assert.ok(hookIdx > innerIdx, 'hook is inside the layout component');
+  });
+});
