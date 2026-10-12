@@ -647,6 +647,31 @@ export default function HomeScreen() {
   // ── side menu (drawer) ──
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // D5 T-D5-4: in-app support (inside the existing Profile surface — no
+  // new navigation destination, Decision #12). The message is text the
+  // user deliberately writes for the team; it rides the existing
+  // report-error channel (sanitized server-side) with context 'support'.
+  const [supportText, setSupportText] = useState('');
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [supportMsg, setSupportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const sendSupport = useCallback(async () => {
+    const msg = supportText.trim();
+    if (!msg || supportBusy) return;
+    setSupportBusy(true);
+    setSupportMsg(null);
+    try {
+      const { error } = await supabase.functions.invoke('report-error', {
+        body: { message: msg.slice(0, 300), context: 'support' },
+      });
+      if (error) throw error;
+      setSupportText('');
+      setSupportMsg({ text: t('supportSent'), ok: true });
+    } catch {
+      setSupportMsg({ text: t('supportFailed'), ok: false });
+    } finally {
+      setSupportBusy(false);
+    }
+  }, [supportText, supportBusy]);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string | null>(null);
@@ -3946,7 +3971,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Pressable onPress={openMenu} style={styles.iconBtn}>
+          <Pressable onPress={openMenu} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t('a11yMenu')}>
             <Text style={styles.iconBtnText}>☰</Text>
           </Pressable>
           <View>
@@ -3981,6 +4006,8 @@ export default function HomeScreen() {
           onPress={() => setView('chat')}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
           testID="tab-home"
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === 'chat' }}
         >
           <Text style={[styles.tabText, view === 'chat' && styles.tabTextActive]}>
             {t('tabHome')}
@@ -3992,6 +4019,8 @@ export default function HomeScreen() {
             onPress={() => openSpace(t)}
             style={[styles.tab, view === t && styles.tabActive]}
             testID={`tab-space-${t}`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === t }}
           >
             <Text style={[styles.tabText, view === t && styles.tabTextActive]}>
               {SPACE_SHORT[t]}
@@ -4479,6 +4508,32 @@ export default function HomeScreen() {
                 </>
               ) : null}
 
+              {/* ── D5 T-D5-4: help & support (existing Profile surface) ── */}
+              <Text style={styles.sectionHeader}>{t('supportSection')}</Text>
+              <Text style={styles.fieldHint}>{t('supportHint')}</Text>
+              <TextInput
+                style={[styles.fieldInput, { textAlign: ta(), minHeight: 64 }]}
+                value={supportText}
+                onChangeText={(v) => { setSupportText(v); setSupportMsg(null); }}
+                placeholder={t('supportPlaceholder')}
+                placeholderTextColor={P.faint2}
+                multiline
+                maxLength={300}
+                accessibilityLabel={t('supportSection')}
+              />
+              {supportMsg ? (
+                <Text style={supportMsg.ok ? styles.fieldOk : styles.fieldError}>{supportMsg.text}</Text>
+              ) : null}
+              <Pressable
+                onPress={sendSupport}
+                disabled={supportBusy || !supportText.trim()}
+                style={[styles.primaryBtn, (supportBusy || !supportText.trim()) && styles.primaryBtnDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={t('supportSend')}
+              >
+                <Text style={styles.primaryBtnText}>{supportBusy ? t('supportSending') : t('supportSend')}</Text>
+              </Pressable>
+
               <Pressable onPress={() => setProfileOpen(false)} style={styles.ghostBtn}>
                 <Text style={styles.ghostBtnText}>{t('close')}</Text>
               </Pressable>
@@ -4569,7 +4624,7 @@ export default function HomeScreen() {
             <View style={styles.inputRow}>
               {/* WhatsApp-style composer: camera inside the box, mic/send beside it */}
               <View style={styles.composerBox}>
-                <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8}>
+                <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
                 <TextInput
@@ -4590,6 +4645,9 @@ export default function HomeScreen() {
               <Pressable
                 onPress={textNote.trim() && !isRecording ? () => onSendText() : onRecordPress}
                 disabled={saving || savingText || asking}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: saving || savingText || asking }}
+                accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
@@ -5277,7 +5335,7 @@ export default function HomeScreen() {
             {isRecording ? <Text style={styles.timer}>🔴 {fmtTime(duration)}</Text> : null}
             <View style={styles.inputRow}>
               <View style={styles.composerBox}>
-                <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8}>
+                <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
                 <TextInput
@@ -5295,6 +5353,9 @@ export default function HomeScreen() {
                   secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress
                 }
                 disabled={secretSaving}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: secretSaving }}
+                accessibilityLabel={isRecording ? t('a11yStopRecording') : secretDraft.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
