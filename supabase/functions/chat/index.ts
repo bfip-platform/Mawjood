@@ -1,6 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
@@ -322,24 +322,87 @@ async function toolRememberFact(supa: Supa, userId: string, spaceByType: Record<
   const pid = spaceByType['private'];
   if (!pid) return { error: 'no private space' };
   const mkey = 'manual:' + normAr(content).replace(/\s+/g, '_').slice(0, 40);
-  const { saved, updated } = await upsertFacts(supa, pid, userId, [{ content, mkey, mcat: 'preference', importance: 4 }], 'explicit');
+  const { saved, updated, blocked } = await upsertFacts(supa, pid, userId, [{ content, mkey, mcat: 'preference', importance: 4 }], 'explicit');
+  // blocked > 0 only when an owner-set memory cap exists and is full (spec §4):
+  // the save was refused, NOTHING was deleted to make room.
+  if (blocked > 0) return { error: 'memory_full', blocked_by_quota: true };
   return { remembered: saved + updated > 0 };
 }
 
-async function toolForgetFact(supa: Supa, spaceByType: Record<string, string>, args: { query?: string }, vctx?: VaultCtx | null) {
+// D1 + owner delete-safety correction (2026-10-12): forget is PREVIEW-ONLY
+// for the AI. The tool can SELECT a memory (exact → mkey → substring tiers;
+// ambiguous → candidates) and create a pending preview with a server-issued
+// confirmation code — but it NEVER trashes anything itself, not for a
+// unique match and not for a model-supplied fact_id. The move to trash
+// executes only in the deterministic confirmation path (see the serve
+// handler): the USER sends «نفّذ <code>» as their own message, and the
+// server validates the code against the pending_actions row (user-bound,
+// 30-minute expiry, single use) before executeConfirmedForget runs.
+// Route facts are never forgotten via chat.
+// deno-lint-ignore no-explicit-any
+async function toolForgetFact(supa: Supa, admin: any, userId: string, spaceByType: Record<string, string>, args: { query?: string; fact_id?: string }, vctx?: VaultCtx | null) {
   if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
-  const q = normAr(args.query ?? '');
-  if (!q) return { error: 'empty query' };
   const pid = spaceByType['private'];
   if (!pid) return { error: 'no private space' };
+  if (!admin) return { error: 'preview unavailable' };
   const facts = await loadFacts(supa, pid);
-  const qt = q.split(' ').filter((w) => w.length > 1);
-  const hits = facts.filter((f) => {
-    const ft = normAr(`${f.title} ${f.details ?? ''}`);
-    return qt.some((t) => ft.includes(t));
-  });
-  for (const h of hits) await supa.from('items').delete().eq('id', h.id);
-  return { forgotten: hits.map(factLine) };
+
+  // A fact_id (user-picked candidate or model-named) only ever yields a
+  // PREVIEW — an id is a selection, never a confirmation.
+  let selected: (typeof facts)[number] | null = null;
+  if (args.fact_id) {
+    selected = facts.find((f) => f.id === args.fact_id) ?? null;
+    if (!selected) return { error: 'fact not found' };
+    if (selected.meta?.mcat === 'route') return { error: 'route_not_forgettable' };
+  } else {
+    const q = (args.query ?? '').trim();
+    if (!q) return { error: 'empty query' };
+    const m = matchForget(facts, q);
+    if (m.tier === 'none' || m.candidates.length === 0) return { forgotten: [], not_found: true };
+    if (!m.auto) {
+      return {
+        forgotten: [],
+        needs_choice: true,
+        candidates: m.candidates.slice(0, 5).map((f) => ({ id: f.id, text: factLine(f) })),
+      };
+    }
+    selected = m.auto;
+  }
+
+  const preview = await createForgetPreview(admin, userId, pid, [selected]);
+  if (!preview) return { error: 'preview failed' };
+  return {
+    forgotten: [],
+    needs_confirmation: true,
+    selected: { id: selected.id, text: factLine(selected) },
+    confirm_code: preview.confirm_code,
+    confirm_instruction:
+      `Show the user the selected memory and ask them to confirm by sending exactly: نفّذ ${preview.confirm_code} as their own message. ` +
+      'The forget happens server-side when THEY send the code — you cannot confirm for them, a fact_id is not a confirmation, and nothing is forgotten until the code arrives. Do NOT claim it is forgotten yet.',
+  };
+}
+
+// Undo for forget_fact (spec §5.2): restores a trashed memory. With no
+// fact_id, restores the single trashed fact or asks the user to pick.
+async function toolRestoreFact(supa: Supa, spaceByType: Record<string, string>, args: { fact_id?: string }, vctx?: VaultCtx | null) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { error: 'no private space' };
+  if (args.fact_id) {
+    const r = await restoreFact(supa, pid, args.fact_id);
+    return r ? { restored: [factLine(r)] } : { error: 'not in trash' };
+  }
+  const trashed = await listTrashedFacts(supa, pid);
+  if (trashed.length === 0) return { restored: [], not_found: true };
+  if (trashed.length > 1) {
+    return {
+      restored: [],
+      needs_choice: true,
+      candidates: trashed.slice(0, 5).map((f) => ({ id: f.id, text: factLine(f) })),
+    };
+  }
+  const r = await restoreFact(supa, pid, trashed[0].id);
+  return r ? { restored: [factLine(r)] } : { error: 'restore failed' };
 }
 
 async function toolListMemories(supa: Supa, spaceByType: Record<string, string>, vctx?: VaultCtx | null) {
@@ -466,10 +529,14 @@ type GovernedType = (typeof GOVERNED_TYPES)[number];
 function capFor(action: GovernedType, gov: Governance | null): boolean {
   if (!gov) return false;
   const c = gov.capabilities;
-  return action === 'create_tab' ? c.can_add_tabs
-    : action === 'delete_tab' ? c.can_delete_tabs
-    : action === 'create_space' ? c.can_add_spaces
-    : c.can_delete_spaces;
+  // Explicit branches ONLY: an unknown action_type (e.g. 'forget_memory',
+  // which shares the pending_actions table) must fail closed — never fall
+  // through to another action's capability.
+  if (action === 'create_tab') return c.can_add_tabs;
+  if (action === 'delete_tab') return c.can_delete_tabs;
+  if (action === 'create_space') return c.can_add_spaces;
+  if (action === 'delete_space') return c.can_delete_spaces;
+  return false;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -689,7 +756,8 @@ async function toolExecuteAction(admin: any, userId: string, gov: Governance | n
   if (at === 'create_tab') res = await executeCreateTab(admin, userId, payload, gov, uiAr);
   else if (at === 'delete_tab') res = await executeDeleteTab(admin, userId, payload);
   else if (at === 'create_space') res = await executeCreateSpace(admin, userId, payload, gov, uiAr);
-  else res = await executeDeleteSpace(admin, userId, payload);
+  else if (at === 'delete_space') res = await executeDeleteSpace(admin, userId, payload);
+  else return { error: 'unknown action_type' }; // fail closed: never default to a destructive executor
   // deno-lint-ignore no-explicit-any
   if ((res as any)?.error) return res;
   await admin.from('pending_actions').update({ status: 'executed' }).eq('id', action_id);
@@ -709,7 +777,8 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
     case 'update_item': return await toolUpdateItem(supa, args ?? {}, vctx ?? null, hvc);
     case 'return_borrow': return await toolReturnBorrow(supa, args ?? {}, vctx ?? null, hvc);
     case 'remember_fact': return await toolRememberFact(supa, userId, spaceByType, args ?? {}, vctx ?? null);
-    case 'forget_fact': return await toolForgetFact(supa, spaceByType, args ?? {}, vctx ?? null);
+    case 'forget_fact': return await toolForgetFact(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
+    case 'restore_fact': return await toolRestoreFact(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_memories': return await toolListMemories(supa, spaceByType, vctx ?? null);
     case 'list_tabs': return await toolListTabs(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'read_tab': return await toolReadTab(supa, spaceByType, args ?? {}, vctx ?? null);
@@ -906,6 +975,75 @@ Deno.serve(async (req) => {
     const { data: spaces } = await supa.from('spaces').select('id, type, owner_id');
     const spaceByType: Record<string, string> = {};
     for (const s of spaces ?? []) spaceByType[s.type] = s.id;
+
+    // ── 🗑️ forget confirmation: deterministic, BEFORE the model. When the
+    // user's ENTIRE message is a confirmation code («نفّذ 123456»), validate
+    // it server-side against their pending forget preview and execute the
+    // move-to-trash here — the model is never in this loop, so it can never
+    // confirm on the user's behalf or forge a confirmation (owner
+    // delete-safety correction, 2026-10-12). Only engages when a code-shaped
+    // message arrives AND the user has a pending forget preview; otherwise
+    // the message flows to normal handling untouched (e.g. a bare 6-digit
+    // note with no pending forget is just a note).
+    if (!inVault) {
+      const confirmCode = parseForgetConfirmation(t);
+      if (confirmCode) {
+        const { data: pendingRows } = await admin.from('pending_actions')
+          .select('id')
+          .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+          .limit(1);
+        if ((pendingRows ?? []).length > 0) {
+          const { data: row } = await admin.from('pending_actions')
+            .select('*')
+            .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+            .eq('payload->>confirm_code', confirmCode)
+            .maybeSingle();
+          const verdict = validateForgetConfirmation(row ?? null, userId, confirmCode, new Date());
+          if (verdict.ok && row) {
+            // Atomic claim BEFORE executing: exactly one concurrent request
+            // can flip pending → executing; the rest get null and stop here.
+            const claimed = await claimForgetPreview(admin, row.id);
+            if (!claimed) {
+              const answer = uiAr
+                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنساه.'
+                : 'That code was already used or is being processed — nothing new to forget.';
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation already claimed)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            }
+            try {
+              const { trashed } = await executeConfirmedForget(admin, claimed);
+              const answer = trashed.length > 0
+                ? (uiAr
+                  ? `انحذفت ونقلتها للمهملات: ${trashed.join('؛ ')} — بتقدر ترجعها خلال 30 يوم إذا غيّرت رأيك (قلّي «رجّعها»).`
+                  : `Forgot and moved to trash: ${trashed.join('; ')} — you can undo within 30 days (say "restore it").`)
+                : (uiAr
+                  ? 'هاي الذكرى ما عادت موجودة أصلاً — ما في شي أنساه.'
+                  : 'That memory no longer exists — nothing to forget.');
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmed)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            } catch {
+              // Execution failed midway: release the claim so the state
+              // stays consistent and the user can retry with the same code.
+              await releaseForgetClaim(admin, row.id);
+              const answer = uiAr
+                ? 'صار خطأ أثناء التنفيذ — الذكرى ما انحذفت. جرّب تبعت الكود مرة تانية.'
+                : 'Something went wrong while executing — nothing was forgotten. Try sending the code again.';
+              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation error)'] }), {
+                headers: { ...cors, 'Content-Type': 'application/json' },
+              });
+            }
+          }
+          const answer = uiAr
+            ? 'كود التأكيد هاد مش صالح أو منتهي — الذكرى ما انحذفت. اطلب مني أنساها من جديد وبعطيك كود جديد.'
+            : 'That confirmation code is invalid or expired — nothing was forgotten. Ask me to forget it again for a fresh code.';
+          return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation rejected)'] }), {
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+    }
 
     // 👨‍👩‍👧 family context for proactive tab proposals: member names + whether
     // the current user is the family manager (proposals are phrased differently).

@@ -1,12 +1,19 @@
-// ── 🧠 memory-consolidate: nightly memory maintenance ───────────────────────
+// ── 🧠 memory-consolidate: nightly memory GARDENER (D1 redesign) ────────────
 // Runs once a day (cron, service_role). For every user active in the last
 // 24h it:
 //   1. writes a daily EPISODE ("ملخص ٢٧ سبتمبر: ...") from today's notes —
 //      the "what happened today" layer, like Muse's daily logs
-//   2. merges near-duplicate facts (same normalized content → keep newest,
-//      reinforce importance)
-//   3. decays: importance-1 facts untouched for 90 days are forgotten
-//   4. caps the store at 200 facts/user (weakest go first)
+//   2. surfaces near-duplicate facts as review candidates (spec §6) — the
+//      only auto-action is trashing byte-identical RETRY duplicates
+//      (same mkey + same text + created within 24h), which is recoverable
+//   3. applies VISIBILITY decay (spec §3): stale low-importance facts get a
+//      retrieval penalty + review-queue flag — metadata only
+//   4. purges memory trash whose 30-day window expired (decision #6) — the
+//      only hard delete, and only of rows the user already trashed
+//
+// DURABILITY CONTRACT (decision #1/#7): this job NEVER hard-deletes a live
+// memory. The old 90-day decay delete and the 200-fact cap prune are gone;
+// quota is enforced at the write path by blocking new saves (spec §4).
 //
 // Auth: service_role Bearer, or x-cron-secret == CRON_SECRET env (nightly
 // cron). Never callable from the client. Trigger: POST with empty body.
@@ -16,7 +23,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   loadFacts,
   upsertFacts,
-  pruneFacts,
+  applyMemoryMaintenance,
+  trashFact,
+  purgeExpiredTrashedFacts,
   normAr,
   factLine,
 } from '../_shared/memory.ts';
@@ -62,15 +71,17 @@ Deno.serve(async (req) => {
     const todayStr = new Date().toISOString().slice(0, 10);
 
     // users active in the last 24h (note authors)
+    // NOTE: notes.deleted_at was dropped in migration 0019 (trash moved to
+    // trash_bin) — filtering on it made PostgREST error and this job
+    // silently process ZERO users on main. All rows in notes are live.
     const { data: recent } = await supa
       .from('notes')
       .select('created_by')
       .gte('created_at', since)
-      .is('deleted_at', null)
       .limit(2000);
     const userIds = [...new Set((recent ?? []).map((r: any) => r.created_by).filter(Boolean))];
 
-    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, decayed: 0, pruned: 0 };
+    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, duplicate_candidates: 0, rescored: 0, review_flagged: 0, trash_purged: 0 };
 
     for (const uid of userIds) {
       // private space of this user
@@ -84,7 +95,6 @@ Deno.serve(async (req) => {
         .select('transcript, created_at')
         .eq('created_by', uid)
         .gte('created_at', since)
-        .is('deleted_at', null)
         .order('created_at')
         .limit(40);
       const texts = (notes ?? []).map((n: any) => String(n.transcript ?? '').slice(0, 200)).filter((s: string) => s.trim());
@@ -103,7 +113,10 @@ Deno.serve(async (req) => {
         } catch { /* best effort per user */ }
       }
 
-      // 2) merge near-duplicates (same normalized content → keep newest)
+      // 2) near-duplicates (same normalized content): SURFACE as review
+      // candidates — never auto-merge/delete (spec §6.1). Sole exception:
+      // byte-identical retry duplicates (same mkey, created within 24h) go
+      // to TRASH (recoverable, auditable) — still never hard-deleted.
       const facts = await loadFacts(supa, pid);
       const seen = new Map<string, any>();
       for (const f of facts) {
@@ -115,38 +128,28 @@ Deno.serve(async (req) => {
           const keepNewer = new Date(f.updated_at) >= new Date(prev.updated_at);
           const keep = keepNewer ? f : prev;
           const drop = keepNewer ? prev : f;
-          await supa.from('items').update({
-            details: factLine(keep),
-            meta: { ...(keep.meta ?? {}), importance: Math.min(5, Number(keep.meta?.importance ?? 3) + 1) },
-          }).eq('id', keep.id);
-          await supa.from('items').delete().eq('id', drop.id);
-          report.merged++;
+          const sameKey = String(drop.meta?.mkey ?? '') !== '' && drop.meta?.mkey === keep.meta?.mkey;
+          const within24h = Math.abs(new Date(keep.created_at).getTime() - new Date(drop.created_at).getTime()) <= 24 * 3600 * 1000;
+          if (sameKey && within24h) {
+            if (await trashFact(supa, drop, 'duplicate_retry')) report.merged++;
+          } else {
+            report.duplicate_candidates++;
+          }
           seen.set(k, keep);
         } else {
           seen.set(k, f);
         }
       }
 
-      // 3) decay: importance-1 facts untouched for 90 days are forgotten
-      const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
-      const { data: stale } = await supa
-        .from('items')
-        .select('id')
-        .eq('space_id', pid)
-        .eq('kind', 'memory')
-        .eq('status', 'open')
-        .lt('updated_at', cutoff)
-        .limit(50);
-      for (const s of stale ?? []) {
-        const { data: row } = await supa.from('items').select('meta').eq('id', (s as any).id).single();
-        if (Number((row as any)?.meta?.importance ?? 3) <= 1) {
-          await supa.from('items').delete().eq('id', (s as any).id);
-          report.decayed++;
-        }
-      }
+      // 3) visibility decay + review flagging (spec §3): metadata only.
+      const m = await applyMemoryMaintenance(supa, pid);
+      report.rescored += m.rescored;
+      report.review_flagged += m.review_flagged;
 
-      // 4) cap
-      report.pruned += await pruneFacts(supa, pid);
+      // 4) trash auto-purge (decision #6): ONLY memory rows the user already
+      // trashed whose 30-day recovery window expired. The engine's single
+      // sanctioned delete; live memories are never touched.
+      report.trash_purged += await purgeExpiredTrashedFacts(supa, pid);
     }
 
     return new Response(JSON.stringify(report), { headers: { ...cors, 'Content-Type': 'application/json' } });

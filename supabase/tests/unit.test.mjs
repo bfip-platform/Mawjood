@@ -18,7 +18,27 @@ import {
   scoreFact,
   parseLearned,
   factLine,
+  planMemoryMaintenance,
+  applyMemoryMaintenance,
+  quotaGate,
+  countFactsForQuota,
+  oldestWeakestForReview,
+  upsertFacts,
+  matchForget,
+  loadFacts,
+  createForgetPreview,
+  parseForgetConfirmation,
+  validateForgetConfirmation,
+  claimForgetPreview,
+  releaseForgetClaim,
+  executeConfirmedForget,
+  trashFact,
+  restoreFact,
+  listTrashedFacts,
+  purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
+import * as memoryEngine from '../functions/_shared/memory.ts';
+import { readFileSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -317,5 +337,504 @@ describe('governance — prompt building', () => {
     assert.ok(line.includes('2'));
     assert.ok(!line.includes('حذف تبويبات'));
     assert.equal(gov.capabilitiesLine({ ...base, capabilities: { ...base.capabilities, can_add_tabs: false } }, true), '');
+  });
+});
+
+// ── D1 data protection (failing-first suites for B1/B2) ─────────────────────
+// In-memory PostgREST fake: just enough of the supabase-js builder surface
+// for the memory engine (select/eq/order/limit/maybeSingle/insert/update/delete).
+function fakeSupa(rows) {
+  const db = { items: rows.map((r) => ({ ...r, meta: { ...(r.meta ?? {}) } })), pending_actions: [] };
+  function builder(table) {
+    const filters = [];
+    let op = { type: 'select' };
+    let sortSpec = null;
+    const match = () => {
+      const out = db[table].filter((r) => filters.every(([col, val]) => {
+        if (col.includes('->>')) { const [f, k] = col.split('->>'); return r[f]?.[k] === val; }
+        return r[col] === val;
+      }));
+      if (sortSpec) {
+        const [col, dir] = sortSpec;
+        out.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (dir === 'desc' ? -1 : 1));
+      }
+      return out;
+    };
+    const b = {
+      select(_cols, opts) { if (op.type === 'update') { op.returning = true; return b; } op = { type: 'select', count: opts?.count, head: opts?.head }; return b; },
+      eq(col, val) { filters.push([col, val]); return b; },
+      order(col, o) { sortSpec = [col, o?.ascending === false ? 'desc' : 'asc']; return b; },
+      limit() { return b; },
+      maybeSingle: async () => ({ data: match()[0] ?? null, error: null }),
+      single: async () => ({ data: match()[0] ?? null, error: null }),
+      insert: async (row) => {
+        const nowIso = new Date().toISOString();
+        // Emulate the schema default: pending_actions.expires_at defaults to
+        // now() + 30 minutes (migration 0034) when the writer omits it.
+        const defaults = table === 'pending_actions'
+          ? { expires_at: new Date(Date.now() + 30 * 60000).toISOString() }
+          : {};
+        db[table].push({ id: `id-${db[table].length + 1}-${Math.random().toString(36).slice(2, 7)}`, created_at: nowIso, updated_at: nowIso, ...defaults, ...row });
+        return { error: null };
+      },
+      update(patch) { op = { type: 'update', patch }; return b; },
+      delete() { op = { type: 'delete' }; return b; },
+      then: (resolve) => {
+        if (op.type === 'select') {
+          const m = match();
+          if (op.head) return resolve({ data: null, count: m.length, error: null });
+          return resolve({ data: m, error: null });
+        }
+        if (op.type === 'update') {
+          const m = match();
+          for (const r of m) Object.assign(r, op.patch);
+          return resolve({ data: m, error: null });
+        }
+        if (op.type === 'delete') {
+          const m = match();
+          db[table] = db[table].filter((r) => !m.includes(r));
+          return resolve({ error: null });
+        }
+        return resolve({ data: null, error: null });
+      },
+    };
+    return b;
+  }
+  return { from: (t) => builder(t), _db: db };
+}
+
+const NOW = new Date('2026-10-12T00:00:00.000Z');
+const daysAgo = (n) => new Date(NOW.getTime() - n * 86400000).toISOString();
+const mkFact = (id, importance, ageDays, extraMeta = {}) => ({
+  id, space_id: 'S1', kind: 'memory', status: 'open',
+  title: `fact ${id}`, details: `details ${id}`,
+  meta: { mkey: `k:${id}`, mcat: 'preference', importance, ...extraMeta },
+  created_at: daysAgo(ageDays), updated_at: daysAgo(ageDays),
+});
+
+describe('D1/B1 — non-destructive maintenance planning (spec §3)', () => {
+  it('rescores stale importance-1 facts (90d+), never deletes', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 100)], NOW);
+    assert.deepEqual(plan.rescore, ['a']);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('flags 180d+ low-importance facts for the review queue', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 200), mkFact('b', 2, 200)], NOW);
+    assert.deepEqual(plan.rescore, ['a']); // only importance<=1 rescores
+    assert.deepEqual([...plan.flagReview].sort(), ['a', 'b']);
+  });
+
+  it('leaves fresh and important facts alone', () => {
+    const plan = planMemoryMaintenance([mkFact('a', 1, 10), mkFact('b', 5, 400), mkFact('c', 3, 200)], NOW);
+    assert.deepEqual(plan.rescore, []);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('is idempotent: already-rescored / already-flagged facts are skipped', () => {
+    const plan = planMemoryMaintenance([
+      mkFact('a', 1, 200, { retrieval_boost: 0.5, review_candidate: true }),
+    ], NOW);
+    assert.deepEqual(plan.rescore, []);
+    assert.deepEqual(plan.flagReview, []);
+  });
+
+  it('applyMemoryMaintenance updates metadata only — row count unchanged, second run is a no-op', async () => {
+    const supa = fakeSupa([mkFact('a', 1, 100), mkFact('b', 2, 200, { retrieval_boost: 0.5 }), mkFact('c', 4, 5)]);
+    const r1 = await applyMemoryMaintenance(supa, 'S1', NOW);
+    assert.equal(r1.rescored, 1);
+    assert.equal(r1.review_flagged, 1);
+    assert.equal(supa._db.items.length, 3, 'no row may be deleted');
+    assert.equal(supa._db.items.find((r) => r.id === 'a').meta.retrieval_boost, 0.5);
+    assert.equal(supa._db.items.find((r) => r.id === 'b').meta.review_candidate, true);
+    const r2 = await applyMemoryMaintenance(supa, 'S1', NOW);
+    assert.deepEqual(r2, { rescored: 0, review_flagged: 0 });
+  });
+
+  it('scoreFact applies the retrieval_boost visibility penalty', () => {
+    const nowIso = new Date().toISOString();
+    const base = { title: 'مفتاح السيارة', details: 'في درج المطبخ', created_at: nowIso, updated_at: nowIso };
+    const normal = scoreFact({ ...base, meta: { importance: 3 } }, ['مفتاح']);
+    const decayed = scoreFact({ ...base, meta: { importance: 3, retrieval_boost: 0.5 } }, ['مفتاح']);
+    assert.ok(decayed < normal, `decayed=${decayed} should rank below normal=${normal}`);
+  });
+});
+
+describe('D1/B2 — quota mechanics: block-on-overflow, never prune (spec §4)', () => {
+  it('pruneFacts is gone from the engine (no caller can invoke deletion)', () => {
+    assert.equal('pruneFacts' in memoryEngine, false);
+  });
+
+  it('quotaGate blocks only at/over an explicit cap', () => {
+    assert.equal(quotaGate(0, undefined), false);
+    assert.equal(quotaGate(9999, undefined), false);
+    assert.equal(quotaGate(199, 200), false);
+    assert.equal(quotaGate(200, 200), true);
+    assert.equal(quotaGate(250, 200), true);
+  });
+
+  it('upsertFacts at cap: new facts blocked, nothing deleted, same-mkey updates still save', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1, { mkey: 'k:a' }), mkFact('b', 3, 1, { mkey: 'k:b' })]);
+    const blocked = await upsertFacts(supa, 'S1', 'U1', [{ content: 'new fact', mkey: 'k:c', mcat: 'preference', importance: 3 }], 'learned', { cap: 2 });
+    assert.deepEqual(blocked, { saved: 0, updated: 0, blocked: 1 });
+    assert.equal(supa._db.items.length, 2, 'overflow must never delete existing facts');
+    const upd = await upsertFacts(supa, 'S1', 'U1', [{ content: 'a v2', mkey: 'k:a', mcat: 'preference', importance: 3 }], 'learned', { cap: 2 });
+    assert.deepEqual(upd, { saved: 0, updated: 1, blocked: 0 });
+    assert.equal(supa._db.items.length, 2);
+  });
+
+  it('upsertFacts without a cap saves as before (no invented numbers)', async () => {
+    const supa = fakeSupa([]);
+    const r = await upsertFacts(supa, 'S1', 'U1', [{ content: 'x', mkey: 'k:x', mcat: 'preference', importance: 3 }], 'learned');
+    assert.deepEqual(r, { saved: 1, updated: 0, blocked: 0 });
+  });
+
+  it('countFactsForQuota counts open facts; oldestWeakestForReview is read-only and ordered', async () => {
+    const supa = fakeSupa([
+      mkFact('new-strong', 5, 1), mkFact('old-weak', 1, 300), mkFact('mid-weak', 1, 100),
+    ]);
+    assert.equal(await countFactsForQuota(supa, 'S1'), 3);
+    const review = await oldestWeakestForReview(supa, 'S1', 2);
+    assert.deepEqual(review.map((f) => f.id), ['old-weak', 'mid-weak']);
+    assert.equal(supa._db.items.length, 3, 'review listing must not mutate the store');
+  });
+});
+
+describe('D1 — static guard: no hard-delete of memory items outside the sanctioned purge', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const itemsDelete = /\.from\(['"]items['"]\)\s*\.delete\(\)/g;
+
+  it('memory-consolidate contains no items delete', () => {
+    assert.equal(read('../functions/memory-consolidate/index.ts').match(itemsDelete), null);
+  });
+
+  it('chat contains no items delete (forget goes through trash)', () => {
+    assert.equal(read('../functions/chat/index.ts').match(itemsDelete), null);
+  });
+
+  it('memory engine has exactly one items delete, inside purgeExpiredTrashedFacts', () => {
+    const src = read('../functions/_shared/memory.ts');
+    const hits = [...src.matchAll(itemsDelete)];
+    assert.equal(hits.length, 1);
+    assert.ok(hits[0].index > src.indexOf('purgeExpiredTrashedFacts'), 'the single delete must live in the trash purge');
+  });
+});
+
+describe('D1/B3 — forget_fact scoped matching (spec §5)', () => {
+  const F = (id, details, extraMeta = {}) => ({
+    id, space_id: 'S1', kind: 'memory', status: 'open',
+    title: `k:${id}`, details, meta: { mkey: `k:${id}`, mcat: 'preference', importance: 3, ...extraMeta },
+    created_at: daysAgo(1), updated_at: daysAgo(1),
+  });
+
+  it('exact match auto-selects exactly one fact', () => {
+    const facts = [F('a', 'يشرب قهوة كل صباح'), F('b', 'يحب الشاي')];
+    const m = matchForget(facts, 'يشرب قهوة كل صباح');
+    assert.equal(m.tier, 'exact');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('mkey match: query tokens subset of a known mkey', () => {
+    const facts = [F('a', 'يحب القهوة', { mkey: 'preference:coffee' }), F('b', 'يحب الشاي', { mkey: 'preference:tea' })];
+    const m = matchForget(facts, 'coffee');
+    assert.equal(m.tier, 'mkey');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('ambiguous substring (the old mass-delete repro): 3 candidates, zero auto-deleted', () => {
+    const facts = [
+      F('a', 'يشتري حليب كل اسبوع'),
+      F('b', 'حليب اللوز في الثلاجة'),
+      F('c', 'القط يحب الحليب'),
+    ];
+    const m = matchForget(facts, 'حليب');
+    assert.equal(m.tier, 'substring');
+    assert.equal(m.auto, null);
+    assert.equal(m.candidates.length, 3);
+  });
+
+  it('single substring candidate proceeds automatically', () => {
+    const facts = [F('a', 'مفتاح السيارة في درج المطبخ'), F('b', 'يحب الشاي')];
+    const m = matchForget(facts, 'مطبخ');
+    assert.equal(m.tier, 'substring');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('route facts are never matched by chat forget', () => {
+    const facts = [F('r', 'حليب يروح على التسوق', { mcat: 'route' })];
+    const m = matchForget(facts, 'حليب');
+    assert.equal(m.tier, 'none');
+    assert.equal(m.candidates.length, 0);
+  });
+
+  it('no match → none (never guess)', () => {
+    const m = matchForget([F('a', 'يحب الشاي')], 'برتقال');
+    assert.equal(m.tier, 'none');
+    assert.equal(m.auto, null);
+  });
+});
+
+describe('D1/B3+B4 — fact trash, undo, and the sanctioned purge (spec §5.2, decision #6)', () => {
+  it('trashFact moves to trash (row survives, leaves the open set); restoreFact undoes it', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const row = supa._db.items[0];
+    assert.equal(await trashFact(supa, row, 'user_forget'), true);
+    assert.equal(supa._db.items.length, 1, 'trash is a status flip, not a delete');
+    assert.equal(supa._db.items[0].status, 'trashed');
+    assert.ok(supa._db.items[0].meta.trashed_at);
+    assert.equal((await listTrashedFacts(supa, 'S1')).length, 1);
+    const restored = await restoreFact(supa, 'S1', 'a');
+    assert.ok(restored);
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.equal(supa._db.items[0].meta.trashed_at, undefined);
+  });
+
+  it('purge deletes ONLY trashed rows past the 30-day window', async () => {
+    const old = mkFact('old-trash', 3, 40, { trashed_at: daysAgo(31) });
+    old.status = 'trashed';
+    const fresh = mkFact('fresh-trash', 3, 1, { trashed_at: daysAgo(10) });
+    fresh.status = 'trashed';
+    const live = mkFact('live-old', 1, 400); // ancient but OPEN — untouchable
+    const supa = fakeSupa([old, fresh, live]);
+    const n = await purgeExpiredTrashedFacts(supa, 'S1', 30, NOW);
+    assert.equal(n, 1);
+    assert.deepEqual(supa._db.items.map((r) => r.id).sort(), ['fresh-trash', 'live-old']);
+  });
+});
+
+describe('D1/B4 — universal 30-day trash floor (decision #6)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('migration 0035 adds trashed status + retention floor trigger + backfill', () => {
+    const sql = read('../migrations/0035_d1_data_protection.sql');
+    assert.ok(sql.includes("'trashed'"), 'items status must allow trashed');
+    assert.ok(sql.includes('profiles_trash_floor'), 'floor trigger must exist');
+    assert.ok(/set trash_retention_days = 30\s+where trash_retention_days < 30/.test(sql), 'backfill must raise sub-30 rows');
+  });
+
+  it('client never falls back to permanent delete (0) on missing/error', () => {
+    const src = read('../../packages/voice-engine/src/client.ts');
+    assert.ok(!/trash_retention_days \?\? 0/.test(src), 'missing profile must not mean 0 retention');
+    assert.ok(src.includes('Math.max(30,'), 'client enforces the 30-day floor');
+  });
+
+  it('admin tools cannot set retention below the floor', () => {
+    for (const f of ['../functions/admin-subscribe/index.ts', '../functions/admin-set-limits/index.ts']) {
+      assert.ok(read(f).includes('trash_retention_days: [30, 3650]'), `${f} range must start at 30`);
+    }
+  });
+
+  it('gardener wires the sanctioned trash purge', () => {
+    assert.ok(read('../functions/memory-consolidate/index.ts').includes('purgeExpiredTrashedFacts'));
+  });
+});
+
+describe('D1/B1-fix — gardener must not filter on dropped columns', () => {
+  it('memory-consolidate never references notes.deleted_at (dropped in 0019)', () => {
+    const src = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(!/\.is\(\s*['"]deleted_at['"]/.test(src) && !/\.eq\(\s*['"]deleted_at['"]/.test(src),
+      'deleted_at was dropped by migration 0019; filtering on it silently zeroes the job');
+  });
+});
+
+describe('D1 correction — confirmed forget (preview-only AI + user-sent code)', () => {
+  const UID = 'user-1';
+  const future = () => new Date(Date.now() + 600000).toISOString();
+  const mkRow = (over = {}) => ({
+    id: 'pa-1', user_id: UID, status: 'pending', expires_at: future(),
+    payload: { fact_ids: ['a'], fact_texts: ['fact a'], memory_space_id: 'S1', confirm_code: '123456' },
+    ...over,
+  });
+
+  it('parse: accepts ONLY the bare 6-digit code or «نفّذ/confirm <code>» as the whole message', () => {
+    assert.equal(parseForgetConfirmation('123456'), '123456');
+    assert.equal(parseForgetConfirmation('نفّذ 123456'), '123456');
+    assert.equal(parseForgetConfirmation('نفذ ١٢٣٤٥٦'), '123456'); // Arabic-Indic digits
+    assert.equal(parseForgetConfirmation('confirm 123456'), '123456');
+  });
+
+  it('parse: rejects codes embedded in text, wrong lengths, non-codes', () => {
+    assert.equal(parseForgetConfirmation('الكود هو 123456'), null);
+    assert.equal(parseForgetConfirmation('بدي أنسى 123456'), null);
+    assert.equal(parseForgetConfirmation('نفّذ 12345'), null);
+    assert.equal(parseForgetConfirmation('نفّذ 1234567'), null);
+    assert.equal(parseForgetConfirmation('انساني الرقم 123456 من فضلك'), null);
+    assert.equal(parseForgetConfirmation('شو الأخبار'), null);
+  });
+
+  it('validate: a genuine code for the right user passes', () => {
+    assert.deepEqual(validateForgetConfirmation(mkRow(), UID, '123456', new Date()), { ok: true });
+  });
+
+  it('NEGATIVE validate: forged code fails closed', () => {
+    const v = validateForgetConfirmation(mkRow(), UID, '999999', new Date());
+    assert.equal(v.ok, false);
+    assert.equal(v.reason, 'bad_code');
+  });
+
+  it('NEGATIVE validate: expired, consumed, superseded, wrong-user, missing rows all fail', () => {
+    assert.equal(validateForgetConfirmation(mkRow({ expires_at: new Date(Date.now() - 1000).toISOString() }), UID, '123456', new Date()).ok, false);
+    assert.equal(validateForgetConfirmation(mkRow({ status: 'executed' }), UID, '123456', new Date()).reason, 'not_pending');
+    assert.equal(validateForgetConfirmation(mkRow({ status: 'superseded' }), UID, '123456', new Date()).ok, false);
+    assert.equal(validateForgetConfirmation(mkRow(), 'someone-else', '123456', new Date()).reason, 'wrong_user');
+    assert.equal(validateForgetConfirmation(null, UID, '123456', new Date()).ok, false);
+  });
+
+  it('preview: creates a pending row + code, supersedes older previews, trashes NOTHING', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    supa._db.pending_actions.push({ id: 'old', user_id: UID, action_type: 'forget_memory', status: 'pending', payload: {}, expires_at: future() });
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    assert.ok(p && /^\d{6}$/.test(p.confirm_code));
+    assert.equal(supa._db.pending_actions.find((r) => r.id === 'old').status, 'superseded');
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.deepEqual(row.payload.fact_ids, ['a']);
+    assert.equal(supa._db.items[0].status, 'open', 'a preview must never trash');
+  });
+
+  it('NEGATIVE unconfirmed exact match: unique match still only previews (store untouched)', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const m = matchForget(facts, 'fact a');
+    assert.ok(m.auto, 'unique match exists');
+    // The ONLY thing the AI path may do with a unique match is preview:
+    await createForgetPreview(supa, UID, 'S1', [m.auto]);
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.equal(supa._db.items.length, 1);
+  });
+
+  it('confirmed roundtrip: user code validates, exactly the previewed fact trashes, single use', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1), mkFact('b', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', [facts.find((f) => f.id === 'a')]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    // Without the user's message there is no execution — validate is the gate:
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    assert.ok(claimed && claimed.status === 'executing');
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 1);
+    assert.equal(supa._db.items.find((r) => r.id === 'a').status, 'trashed');
+    assert.equal(supa._db.items.find((r) => r.id === 'b').status, 'open');
+    assert.equal(row.status, 'executed');
+    assert.equal(await claimForgetPreview(supa, row.id), null, 'an executed preview cannot be re-claimed');
+    const again = await executeConfirmedForget(supa, claimed); // replay attempt
+    assert.equal(again.trashed.length, 0, 'consumed previews cannot execute twice');
+  });
+
+  it('NEGATIVE forged confirmation: wrong code never validates; expired row cannot execute', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const forged = parseForgetConfirmation('نفّذ 000000');
+    assert.equal(validateForgetConfirmation(row, UID, forged, new Date()).ok, false);
+    assert.equal(supa._db.items[0].status, 'open');
+    row.expires_at = new Date(Date.now() - 1000).toISOString(); // let it lapse
+    const { trashed } = await executeConfirmedForget(supa, row);
+    assert.equal(trashed.length, 0, 'expired previews refuse to execute even if called');
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.ok(p.confirm_code !== '000000');
+  });
+
+  it('execute skips route facts even if a preview lists them', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1, { mcat: 'route' })]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('GUARD: chat has NO trashFact — the AI path cannot trash; confirmation is deterministic', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(!chat.includes('trashFact'), 'chat must never call trashFact directly');
+    const body = chat.slice(chat.indexOf('async function toolForgetFact'), chat.indexOf('async function toolRestoreFact'));
+    assert.ok(body.includes('createForgetPreview') && body.includes('needs_confirmation'),
+      'forget tool must be preview-only');
+    assert.ok(chat.includes('parseForgetConfirmation(t)') && chat.includes('validateForgetConfirmation')
+      && chat.includes('executeConfirmedForget'),
+      'the deterministic confirmation fast path must be wired in the handler');
+  });
+
+  it('GUARD: governed executor fails closed on unknown action types (no delete-space fall-through)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("return { error: 'unknown action_type' }"));
+    assert.ok(!/else res = await executeDeleteSpace/.test(chat),
+      'executeDeleteSpace must never be a default branch');
+  });
+
+  it('GUARD (req #7): Delete Forever stays user-controlled — no edge function references it', () => {
+    for (const f of ['chat/index.ts', '_shared/memory.ts', 'memory-consolidate/index.ts', 'memory-learn/index.ts']) {
+      const src = readFileSync(new URL(`../functions/${f}`, import.meta.url), 'utf8');
+      assert.ok(!src.includes('deleteTrashRowForever') && !src.includes('emptyTrash'),
+        `${f} must not reference the client-only Delete-Forever actions`);
+    }
+  });
+});
+
+describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)', () => {
+  const UID = 'user-1';
+  const future = () => new Date(Date.now() + 600000).toISOString();
+  const mkRow = (over = {}) => ({
+    id: 'pa-1', user_id: UID, status: 'pending', expires_at: future(),
+    payload: { fact_ids: ['a'], fact_texts: ['fact a'], memory_space_id: 'S1', confirm_code: '123456' },
+    ...over,
+  });
+
+  it('NEGATIVE expiry: missing, null, empty, and malformed expires_at all fail CLOSED', () => {
+    for (const bad of [undefined, null, '', 'not-a-date', '2026-13-45T99:99:99Z']) {
+      const v = validateForgetConfirmation(mkRow({ expires_at: bad }), UID, '123456', new Date());
+      assert.equal(v.ok, false, `expires_at=${String(bad)} must not validate`);
+      assert.equal(v.reason, 'expired');
+    }
+  });
+
+  it('NEGATIVE expiry: execute refuses a CLAIMED row with malformed expiry', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    claimed.expires_at = 'garbage';
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('execute refuses an UNCLAIMED (still pending) row — no execution without the atomic claim', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const { trashed } = await executeConfirmedForget(supa, row); // validated but never claimed
+    assert.equal(trashed.length, 0);
+    assert.equal(supa._db.items[0].status, 'open');
+  });
+
+  it('claim: exactly one winner — a second claim on the same preview returns null', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const first = await claimForgetPreview(supa, p.action_id);
+    const second = await claimForgetPreview(supa, p.action_id);
+    assert.ok(first && first.status === 'executing');
+    assert.equal(second, null, 'the conditional claim must be single-winner');
+  });
+
+  it('release: a failed execution returns the preview to pending so the user can retry', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', facts);
+    const claimed = await claimForgetPreview(supa, p.action_id);
+    assert.ok(claimed);
+    await releaseForgetClaim(supa, p.action_id);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(row.status, 'pending');
+    const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
+    assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });

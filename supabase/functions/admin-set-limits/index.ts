@@ -22,7 +22,7 @@ const cors = {
 const LIMITS: Record<string, [number, number]> = {
   family_slots: [1, 100],
   chat_retention_days: [0, 3650],
-  trash_retention_days: [0, 3650],
+  trash_retention_days: [30, 3650],
   secret_vaults_limit: [1, 100],
   custom_tabs_limit: [0, 100],
 };
