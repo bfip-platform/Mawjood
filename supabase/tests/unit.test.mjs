@@ -761,7 +761,12 @@ describe('D1 correction — confirmed forget (preview-only AI + user-sent code)'
 
   it('GUARD: governed executor fails closed on unknown action types (no delete-space fall-through)', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
-    assert.ok(chat.includes("return { error: 'unknown action_type' }"));
+    // PR-B/M4 restructure: the executor runs inside the atomic-claim
+    // try block, so the unknown-type branch ASSIGNS the error (the claim
+    // is then released and the error returned) instead of returning
+    // inline. The invariant is unchanged: unknown types error out and
+    // never fall through to a destructive executor.
+    assert.ok(chat.includes("res = { error: 'unknown action_type' }"));
     assert.ok(!/else res = await executeDeleteSpace/.test(chat),
       'executeDeleteSpace must never be a default branch');
   });
@@ -836,5 +841,87 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
+  it('timingSafeEqual: exact match only, length- and content-sensitive', async () => {
+    const { timingSafeEqual } = await import('../functions/_shared/edge-auth.ts');
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret-token'), true);
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret-tokem'), false);
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret'), false);
+    assert.equal(timingSafeEqual('', ''), false);
+    assert.equal(timingSafeEqual('', 'x'), false);
+    assert.equal(timingSafeEqual('x', ''), false);
+  });
+
+  it('GUARD: no admin function compares the token with !== anymore', () => {
+    for (const fn of ['admin-ai-governance', 'admin-broadcast', 'admin-catalog', 'admin-set-limits', 'admin-stats', 'admin-subscribe', 'admin-user']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('timingSafeEqual(got, expected)'), `${fn} must use the constant-time compare`);
+      assert.ok(!src.includes('got !== expected'), `${fn} must not early-exit compare the admin token`);
+    }
+    const mc = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(mc.includes('timingSafeEqual(cronHeader, cronSecret)'), 'cron secret compare is constant-time too');
+  });
+
+  it('sanitizeTelemetryText strips secrets, PII shapes, and control chars', async () => {
+    const { sanitizeTelemetryText } = await import('../functions/_shared/sanitize.ts');
+    const dirty = 'Boom at https://x.co/p?token=abc123&u=4 for user@mail.com\nnext line\ttab';
+    const clean = sanitizeTelemetryText(dirty, 200);
+    assert.ok(!clean.includes('abc123') && !clean.includes('user@mail.com'));
+    assert.ok(!clean.includes('\n') && !clean.includes('\t'));
+    const jwt = sanitizeTelemetryText('hdr eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig_here ok', 200);
+    assert.ok(!jwt.includes('eyJhbGciOiJIUzI1NiJ9'));
+    assert.ok(sanitizeTelemetryText('Bearer abc.def-123', 200).includes('[redacted]'));
+    assert.equal(sanitizeTelemetryText('x'.repeat(500), 50).length, 50);
+    assert.equal(sanitizeTelemetryText(null, 50), '');
+    // control characters are stripped (the whole point of the class):
+    const ctrl = sanitizeTelemetryText('abc', 50);
+    assert.ok(!ctrl.includes('') && !ctrl.includes(''));
+  });
+
+  it('retryDelayMs grows exponentially with bounded jitter', async () => {
+    const { retryDelayMs } = await import('../functions/_shared/backoff.ts');
+    const noJitter = () => 0;
+    assert.equal(retryDelayMs(0, 600, 8000, noJitter), 600);
+    assert.equal(retryDelayMs(1, 600, 8000, noJitter), 1200);
+    assert.equal(retryDelayMs(2, 600, 8000, noJitter), 2400);
+    assert.equal(retryDelayMs(10, 600, 8000, noJitter), 8000);
+    const j = retryDelayMs(0, 600, 8000, () => 0.999);
+    assert.ok(j >= 600 && j < 850);
+  });
+
+  it('GUARD: join-family claims invite uses atomically + rate-limits; codes are 10 chars', () => {
+    const jf = readFileSync(new URL('../functions/join-family/index.ts', import.meta.url), 'utf8');
+    assert.ok(jf.includes("rpc('claim_invite_use'"), 'redemption must claim via the atomic RPC');
+    assert.ok(!jf.includes('used_count: invite.used_count + 1'), 'the stale check-then-increment write must be gone');
+    assert.ok(jf.includes("checkRateLimit(admin, user.id, 'join-family')"), 'redemption attempts are rate-limited');
+    const mig = readFileSync(new URL('../migrations/0040_invite_atomic_claim.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('used_count < max_uses') && mig.includes('used_count = used_count + 1'),
+      'the claim is one conditional UPDATE');
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('new Uint8Array(10)'), 'new invite codes are 10 chars (~49.6 bits)');
+  });
+
+  it('GUARD: execute_action claims the row atomically; eval_mode is audit-logged', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes(".eq('status', 'approved')") && chat.includes("status: 'executing'"),
+      'execution requires winning the approved→executing claim');
+    assert.ok(chat.includes("kind: 'eval_mode.impersonation'"), 'impersonation is written to the audit log');
+    assert.ok(chat.includes('retryDelayMs(2 - retries)'), 'provider retries use exponential backoff');
+    assert.ok(!chat.includes('setTimeout(r, 1500)'), 'the fixed 1.5s retry is gone');
+    // review N1: approve/cancel must never touch an executing row
+    const n1 = (chat.match(/execution in progress/g) ?? []).length;
+    assert.ok(n1 >= 2, 'approve + cancel both refuse mid-execution rows');
+    assert.ok(chat.includes("if (row.status === 'executing') return { error: 'execution in progress' };"),
+      'the refusal is a status guard, not a comment');
+  });
+
+  it('GUARD: report-error stores only sanitized telemetry', () => {
+    const re = readFileSync(new URL('../functions/report-error/index.ts', import.meta.url), 'utf8');
+    assert.ok(re.includes('sanitizeTelemetryText(b?.message'), 'message is sanitized');
+    assert.ok(re.includes('sanitizeTelemetryText(b.stack') && re.includes('sanitizeTelemetryText(b.context'));
+    assert.ok(!re.includes('String(b?.message'), 'raw client text must not reach storage');
   });
 });

@@ -19,6 +19,7 @@
 // cron). Never callable from the client. Trigger: POST with empty body.
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
+import { timingSafeEqual } from '../_shared/edge-auth.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   loadFacts,
@@ -61,8 +62,8 @@ Deno.serve(async (req) => {
     const auth = req.headers.get('Authorization') ?? '';
     const cronSecret = Deno.env.get('CRON_SECRET') ?? '';
     const cronHeader = req.headers.get('x-cron-secret') ?? '';
-    const okService = !!key && auth === `Bearer ${key}`;
-    const okCron = !!cronSecret && cronHeader === cronSecret;
+    const okService = !!key && timingSafeEqual(auth, `Bearer ${key}`);
+    const okCron = !!cronSecret && timingSafeEqual(cronHeader, cronSecret);
     if (!okService && !okCron) throw new Error('forbidden');
 
     const supa = createClient(Deno.env.get('SUPABASE_URL')!, key);

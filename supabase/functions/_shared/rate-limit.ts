@@ -31,6 +31,8 @@ export const OP_LIMITS: Record<string, RateLimitRule> = {
   'account-export': { perMinute: 5, perHour: 20 },
   'account-delete': { perMinute: 3, perHour: 10 },
   'report-error': { perMinute: 20, perHour: 200 },
+  // invite-code redemption: tight — guessing must stay impractical
+  'join-family': { perMinute: 5, perHour: 30 },
 };
 
 /** Truncated window-start timestamps (ISO) for the given instant. Pure. */
