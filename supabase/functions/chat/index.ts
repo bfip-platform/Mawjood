@@ -1,6 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget, findDuplicateCandidates, mergeFacts } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
@@ -413,6 +413,49 @@ async function toolListMemories(supa: Supa, spaceByType: Record<string, string>,
   return { facts: facts.slice(0, 50).map(factLine) };
 }
 
+// D2 (spec §6.1): surface duplicate candidates for the USER to decide.
+// Read-only — merging is a separate, explicit step (merge_memories).
+async function toolListDuplicates(supa: Supa, spaceByType: Record<string, string>, vctx?: VaultCtx | null) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { duplicates: [] };
+  const facts = await loadFacts(supa, pid);
+  const pairs = findDuplicateCandidates(facts).slice(0, 10);
+  return {
+    duplicates: pairs.map((p) => ({
+      keep_id: p.a.id, other_id: p.b.id,
+      text: factLine(p.a), reason: p.reason,
+    })),
+    next: pairs.length
+      ? 'Show each pair to the user and ask: keep the first, keep the second, keep both, or merge into one. Only call merge_memories after the user picks merge for a specific pair.'
+      : 'No duplicate memories found.',
+  };
+}
+
+// D2 (spec §6.1): user-confirmed merge. The loser is TRASHED (restorable
+// via restore_fact) and its text is preserved on the keeper's
+// meta.previous_versions — auditable and undoable, never hard-deleted.
+async function toolMergeMemories(
+  supa: Supa,
+  spaceByType: Record<string, string>,
+  args: { keep_id?: string; other_id?: string; merged_text?: string },
+  vctx?: VaultCtx | null,
+) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { error: 'no private space' };
+  const keepId = String(args.keep_id ?? '');
+  const otherId = String(args.other_id ?? '');
+  if (!keepId || !otherId || keepId === otherId) return { error: 'keep_id and other_id (different) required' };
+  const facts = await loadFacts(supa, pid);
+  const keep = facts.find((f) => f.id === keepId);
+  const loser = facts.find((f) => f.id === otherId);
+  if (!keep || !loser) return { error: 'memory not found in your private space' };
+  const ok = await mergeFacts(supa, keep, loser, args.merged_text ? String(args.merged_text) : undefined);
+  if (!ok) return { error: 'merge failed' };
+  return { merged: true, kept: factLine(keep), trashed_id: loser.id, undo: 'restore_fact can bring the merged-away memory back from trash within 30 days.' };
+}
+
 async function toolReturnBorrow(supa: Supa, args: { borrow_id?: string }, vctx?: VaultCtx | null, hasVaultCols?: boolean) {
   if (!args.borrow_id) return { error: 'borrow_id required' };
   if (hasVaultCols) {
@@ -780,6 +823,8 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
     case 'forget_fact': return await toolForgetFact(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'restore_fact': return await toolRestoreFact(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_memories': return await toolListMemories(supa, spaceByType, vctx ?? null);
+    case 'list_memory_duplicates': return await toolListDuplicates(supa, spaceByType, vctx ?? null);
+    case 'merge_memories': return await toolMergeMemories(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_tabs': return await toolListTabs(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'read_tab': return await toolReadTab(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'propose_tab': return await toolProposeTab(admin, userId, spaceByType, args ?? {}, vctx ?? null);

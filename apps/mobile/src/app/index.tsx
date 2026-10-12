@@ -2611,7 +2611,20 @@ export default function HomeScreen() {
       listMemoryItems: async (sid: string) =>
         (await engine.listItems(sid)).filter((i) => i.kind === 'memory' && i.status === 'open'),
       deleteMemoryItem: async (id: string) => {
-        const { error } = await supabase.from('items').delete().eq('id', id);
+        // D2 (spec §1 contract): a saved memory is NEVER hard-deleted
+        // from the client — replacing a restated fact sends the old row
+        // to trash (recoverable for the retention window; only the
+        // engine's trash purge may ever delete it). listMemoryItems
+        // filters status='open', so the flow is unchanged.
+        const { data: row } = await supabase.from('items').select('meta').eq('id', id).maybeSingle();
+        const { error } = await supabase.from('items').update({
+          status: 'trashed',
+          meta: {
+            ...((row as any)?.meta ?? {}),
+            trashed_at: new Date().toISOString(),
+            trash_reason: 'replaced_by_restatement',
+          },
+        }).eq('id', id);
         if (error) throw error;
       },
       createMemoryItem: async (input) => {

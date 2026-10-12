@@ -340,6 +340,75 @@ export async function applyMemoryMaintenance(
 }
 
 /**
+ * Duplicate candidates for USER review (spec §6.1). PURE. Pairs whose
+ * normalized text is identical but which are NOT retry duplicates (the
+ * auto-merge exception — same mkey + created within 24h — is handled
+ * by the consolidation job and excluded here). The user decides:
+ * keep one, keep both, or merge. Nothing here mutates anything.
+ */
+export function findDuplicateCandidates(
+  facts: MemoryRow[],
+): { a: MemoryRow; b: MemoryRow; reason: 'same_text_diff_key' | 'same_text_stale_dup' }[] {
+  const out: { a: MemoryRow; b: MemoryRow; reason: 'same_text_diff_key' | 'same_text_stale_dup' }[] = [];
+  const byText = new Map<string, MemoryRow[]>();
+  for (const f of facts) {
+    if (f.meta?.mcat === 'episode' || f.meta?.mcat === 'route') continue;
+    const k = normAr(factLine(f));
+    if (!k) continue;
+    byText.set(k, [...(byText.get(k) ?? []), f]);
+  }
+  for (const group of byText.values()) {
+    if (group.length < 2) continue;
+    const sorted = group.slice().sort((x, y) => (x.created_at < y.created_at ? -1 : 1));
+    for (let i = 1; i < sorted.length; i++) {
+      const a = sorted[0];
+      const b = sorted[i];
+      const sameKey = String(a.meta?.mkey ?? '') !== '' && a.meta?.mkey === b.meta?.mkey;
+      const within24h = Math.abs(new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) <= 24 * 3600 * 1000;
+      if (sameKey && within24h) continue; // retry duplicate — the job auto-merges it to trash
+      out.push({ a, b, reason: sameKey ? 'same_text_stale_dup' : 'same_text_diff_key' });
+    }
+  }
+  return out;
+}
+
+/**
+ * User-confirmed merge (spec §6.1): the KEEPER survives (the caller
+ * passes the newer row, or whichever the user picked), the loser's
+ * text is appended to the keeper's meta.previous_versions (bounded,
+ * auditable), importance becomes max+1 capped at 5, and the loser
+ * goes to TRASH — recoverable for 30 days, never hard-deleted.
+ * `mergedText` lets the user supply an edited combined text.
+ */
+export async function mergeFacts(
+  supa: Supa,
+  keep: MemoryRow,
+  loser: MemoryRow,
+  mergedText?: string,
+): Promise<boolean> {
+  if (keep.id === loser.id) return false;
+  const prev = Array.isArray(keep.meta?.previous_versions) ? keep.meta.previous_versions : [];
+  const versions = [
+    ...prev,
+    { text: factLine(loser), from_id: loser.id, merged_at: new Date().toISOString() },
+  ].slice(-10);
+  const importance = Math.min(
+    5,
+    Math.max(Number(keep.meta?.importance ?? 3), Number(loser.meta?.importance ?? 3)) + 1,
+  );
+  const { error } = await supa
+    .from('items')
+    .update({
+      ...(mergedText ? { details: mergedText } : {}),
+      updated_at: new Date().toISOString(),
+      meta: { ...(keep.meta ?? {}), importance, previous_versions: versions },
+    })
+    .eq('id', keep.id);
+  if (error) return false;
+  return trashFact(supa, loser, 'merged_duplicate');
+}
+
+/**
  * Scoped forget matching (spec §5.1). PURE — decides WHAT a forget request
  * may touch, never deletes anything itself.
  *   tier 'exact'     — normalized content/title equals the query
