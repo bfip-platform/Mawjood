@@ -1,6 +1,8 @@
 # D4 T-D4-4 — Legal drafts + 18+ design
 
 > ⚠️ **DRAFTS — NOT LEGAL ADVICE.** These drafts exist so the owner and their counsel start from an accurate, code-derived data inventory instead of a blank page. **Nothing here is final, published, or a substitute for counsel's review** (roadmap: "legal drafts require owner/counsel — agent review insufficient"). No draft is wired into the app by this PR.
+>
+> **Verification basis (review note, 2026-10-12):** §1 describes the product as designed across **main + Draft PRs #17 (photo binding), #19 (spend cap), #20 (telemetry sanitization), #23 (telemetry janitor)** — each such row carries its PR attribution inline. If any of those PRs is declined or deferred, the corresponding §1 rows must be amended before counsel relies on them: on main alone, photos bind more loosely, error reports store raw text, and no telemetry retention windows are enforced yet.
 
 ## 1. Data-flow inventory (verified against the code, 2026-10-12)
 

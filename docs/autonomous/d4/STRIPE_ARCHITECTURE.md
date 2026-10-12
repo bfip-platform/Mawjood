@@ -19,7 +19,7 @@
 ## 3. Checkout flow
 
 1. Client asks the `billing-checkout` edge function (user JWT) for a Checkout Session for a chosen plan.
-2. The function resolves/creates the Stripe customer, creates the session with `client_reference_id = user_id` and metadata `{user_id, plan_id}`, success/cancel URLs back into the app (deep links per the D5 rules — no object paths or tokens in URLs).
+2. The function resolves/creates the Stripe customer — with a Stripe **idempotency key** derived from (user_id, plan_id, hour) so a double-submit can never create duplicate customers or sessions — then creates the session with `client_reference_id = user_id` and metadata `{user_id, plan_id}`, success/cancel URLs back into the app (deep links per the D5 rules — no object paths or tokens in URLs).
 3. **The client learns nothing authoritative from the return URL.** Entitlement changes only when the webhook lands (§4). The app polls its own subscription mirror.
 
 ## 4. Webhooks — the only writer of billing truth
@@ -27,9 +27,12 @@
 Endpoint: `billing-webhook` edge function (public by necessity; authenticated by signature).
 
 - **Signature verification** on the raw body against `STRIPE_WEBHOOK_SECRET` (per-environment). Any failure → 400, no processing, ops-logged. (Constant-time compare is performed by Stripe's `constructEvent` HMAC verification.)
-- **Idempotency (tested in this PR's harness):** insert `event_id` into `billing_events` FIRST; a unique-conflict means a redelivery → acknowledge 200 and skip. Processing then runs in a transaction-shaped sequence: apply mirror update → mark `processed_at`. A crash between apply and mark reprocesses the event — every handler is therefore written to be **replay-safe** (upserts keyed by Stripe ids; status transitions monotonic by `current_period_end`/event `created` ordering guard: a stale event never regresses a newer state).
+- **Idempotency (tested in this PR's harness):** insert `event_id` into `billing_events` FIRST; a unique-conflict means a redelivery → acknowledge 200 and skip. Processing then runs in a transaction-shaped sequence: apply mirror update → mark `processed_at`. A crash between apply and mark reprocesses the event — every handler is therefore written to be **replay-safe** (upserts keyed by Stripe ids; status transitions monotonic by the last-applied event-`created` watermark guard: a stale event never regresses a newer state).
+- **The other crash window — claim without apply (review note):** a crash between the claim insert and the apply leaves the event claimed-but-unprocessed, and redeliveries would skip it as a duplicate. Two safeguards close this: (a) duplicate-skip applies only when the ledger row has `processed_at IS NOT NULL` — a claimed-but-unprocessed event is REPROCESSED on redelivery (safe: handlers are replay-safe); (b) a periodic reconciliation sweep (janitor-class job) lists `billing_events` rows with `processed_at IS NULL` older than 15 minutes and re-drives them, alerting via `ops_events` — a lost webhook can delay an entitlement change, never silently erase it.
+- **Respond fast:** the handler verifies the signature, claims the event, and returns 2xx immediately; application work happens behind the claim (async within the function or via the sweeper) so slow handlers never trigger Stripe-side timeout retries.
+- **API version pinning:** the Stripe API version is pinned in code/config (never "latest"), and bumps are deliberate reviewed changes.
 - Events handled: `checkout.session.completed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed`. Everything else: recorded, ignored, 200.
-- **Ordering:** Stripe does not guarantee order. Each handler compares the event's `created` against the mirror's `updated_at` watermark for that subscription and ignores state older than what it has.
+- **Ordering:** Stripe does not guarantee order. Each handler compares the event's `created` against the mirror's **last-applied event-created watermark** for that subscription and ignores state older than what it has.
 
 ## 5. Proration & dunning (policy design — values are owner's)
 

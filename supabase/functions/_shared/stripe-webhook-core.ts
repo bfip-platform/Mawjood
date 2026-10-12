@@ -41,11 +41,10 @@ export function decideWebhookEvent(args: {
 }): WebhookDecision {
   if (!HANDLED_TYPES.has(args.eventType)) return { action: 'ignore_type' };
   if (args.alreadyClaimed) return { action: 'skip_duplicate' };
-  if (
-    Number.isFinite(args.eventCreated) &&
-    Number.isFinite(args.mirrorWatermark) &&
-    args.eventCreated < args.mirrorWatermark
-  ) {
+  // Fail-closed (review N3): a malformed `created` must never bypass
+  // the no-regression guard by falling through to 'process'.
+  if (!Number.isFinite(args.eventCreated)) return { action: 'skip_stale' };
+  if (Number.isFinite(args.mirrorWatermark) && args.eventCreated < args.mirrorWatermark) {
     return { action: 'skip_stale' };
   }
   return { action: 'process' };

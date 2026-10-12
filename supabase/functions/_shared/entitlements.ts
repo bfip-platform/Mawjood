@@ -28,9 +28,25 @@ export function entitled(plan: unknown, feature: unknown): boolean {
   return MATRIX[plan as Plan].has(feature as Feature);
 }
 
-/** Plan resolution from a billing-mirror row (or anything else). */
-export function planFromMirror(row: { plan_id?: unknown; status?: unknown } | null | undefined): Plan {
+/**
+ * Plan resolution from a billing-mirror row (or anything else).
+ * Dunning grace (STRIPE_ARCHITECTURE.md §5, review N4): a `past_due`
+ * subscription keeps its plan until the END of the period already
+ * paid for — never a mid-period cutoff for a payment failure.
+ * `nowIso` is injectable for tests; defaults to now.
+ */
+export function planFromMirror(
+  row: { plan_id?: unknown; status?: unknown; current_period_end?: unknown } | null | undefined,
+  nowIso?: string,
+): Plan {
   if (!row) return 'free';
-  if (row.status !== 'active' && row.status !== 'trialing') return 'free';
-  return (PLANS as readonly string[]).includes(row.plan_id as string) ? (row.plan_id as Plan) : 'free';
+  const known = (PLANS as readonly string[]).includes(row.plan_id as string) ? (row.plan_id as Plan) : 'free';
+  if (known === 'free') return 'free';
+  if (row.status === 'active' || row.status === 'trialing') return known;
+  if (row.status === 'past_due') {
+    const end = typeof row.current_period_end === 'string' ? Date.parse(row.current_period_end) : NaN;
+    const now = Date.parse(nowIso ?? new Date().toISOString());
+    if (Number.isFinite(end) && Number.isFinite(now) && now < end) return known;
+  }
+  return 'free';
 }

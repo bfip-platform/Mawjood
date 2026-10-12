@@ -859,11 +859,21 @@ describe('D4 — entitlements fail-closed + vault gate OFF (decision #4) + webho
     for (const p of ent.PLANS) assert.equal(ent.entitled(p, 'vault_ai'), false, `${p} must not have vault_ai while the gate is off`);
   });
 
-  it('planFromMirror: only active/trialing known plans resolve; everything else is free', () => {
+  it('planFromMirror: only active/trialing known plans resolve; dunning grace honors the paid period (review N4)', () => {
     assert.equal(ent.planFromMirror(null), 'free');
     assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'active' }), 'family_plus');
     assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'trialing' }), 'family_plus');
-    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due' }), 'free');
+    assert.equal(
+      ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due', current_period_end: '2026-11-01T00:00:00Z' }, '2026-10-15T00:00:00Z'),
+      'family_plus',
+      'past_due inside the paid period keeps the plan (no mid-period cutoff)',
+    );
+    assert.equal(
+      ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due', current_period_end: '2026-10-01T00:00:00Z' }, '2026-10-15T00:00:00Z'),
+      'free',
+      'past_due past the paid period resolves to free',
+    );
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due' }), 'free', 'past_due without a period end fails closed');
     assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'canceled' }), 'free');
     assert.equal(ent.planFromMirror({ plan_id: 'gold', status: 'active' }), 'free');
     assert.equal(ent.planFromMirror({}), 'free');
@@ -875,6 +885,11 @@ describe('D4 — entitlements fail-closed + vault gate OFF (decision #4) + webho
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' }, 'equal watermark is not stale');
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'charge.refunded', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 0 }), { action: 'ignore_type' });
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'customer.subscription.updated', eventCreated: 200, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' });
+    assert.deepEqual(
+      wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: NaN, alreadyClaimed: false, mirrorWatermark: 0 }),
+      { action: 'skip_stale' },
+      'a malformed created fails closed — never falls through to process (review N3)',
+    );
   });
 
   it('GUARD: the D4 design package exists and legal drafts carry the not-final marking', () => {
