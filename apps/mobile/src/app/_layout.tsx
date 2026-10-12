@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect } from 'react';
-import { Platform, StatusBar, Text } from 'react-native';
+import { Platform, StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme, initTheme } from '../lib/theme';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -30,20 +30,31 @@ function useNoInputFocusRing() {
 function InnerLayout() {
   const { resolved, palette: P } = useTheme();
   useNoInputFocusRing();
+  const { width } = useWindowDimensions();
+  // D5 T-D5-1 (responsive foundation): on wide WEB viewports the app
+  // renders as a centered, readable column (max 880px) over the paper
+  // background instead of stretching edge-to-edge. Native layouts and
+  // narrow web are untouched; the chat-first architecture (Decision
+  // #12) is preserved — this is a frame, not a redesign.
+  const wideWeb = Platform.OS === 'web' && width >= 1024;
   // Init theme AFTER mount — calling AsyncStorage at import time crashes
   // on iOS 26 (TurboModule NSException during bridge init).
   useEffect(() => {
     initTheme();
   }, []);
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: P.paper }}>
+    <GestureHandlerRootView
+      style={{ flex: 1, backgroundColor: P.paper, alignItems: wideWeb ? 'center' : 'stretch' }}
+    >
       <StatusBar barStyle={resolved === 'dark' ? 'light-content' : 'dark-content'} />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: P.paper },
-        }}
-      />
+      <View style={wideWeb ? { flex: 1, width: '100%', maxWidth: 880 } : { flex: 1 }}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: P.paper },
+          }}
+        />
+      </View>
     </GestureHandlerRootView>
   );
 }
