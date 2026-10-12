@@ -33,7 +33,7 @@ Each entry records:
   (Stripe at D4); quotas all PROPOSED not finalized; photo Claim B kept
   MEDIUM/unproven; brand direction is proposal-only (approval gate doc 23);
   18+ applied consistently (20 docs); no invented owner approvals; no app code changes.
-- **Branch:** `d0.5/product-spec` @ `23066225` (pushed; PR #13 Draft).
+- **Branch:** `d0.5/product-spec` @ `fd7000c3` (pushed; PR #13 Draft).
 - **CI:** 9/9 PASS on exact HEAD `23066225` (verified 2026-10-12 ~15:15 UTC).
 - **PR URL:** https://github.com/bfip-platform/Mawjood/pull/13 (Draft, docs-only).
 - **Visual review package (v1.2):** `docs/autonomous/d05/review-package/index.html`
