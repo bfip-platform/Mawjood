@@ -10,7 +10,10 @@
  * Allowed intents:
  *  - mawjood://family/join?code=XXXXXX   (invite code: 6–10 alphanumerics,
  *    matching the invite-code shapes the app issues)
- *  - https://<site>/join?code=XXXXXX     (same, universal-link form)
+ *  - https://<site>/join?code=XXXXXX     (same, universal-link form;
+ *    ONE leading path segment — a deployment subpath like /Mawjood/ —
+ *    is tolerated for https only, since the web trial is served from a
+ *    subpath; the tail must still match exactly)
  *
  * NOT links: photo/storage URLs, auth tokens, reset links — those flows
  * live inside the app already and must never be drivable from outside.
@@ -36,7 +39,10 @@ export function parseDeepLink(raw: unknown): DeepLinkIntent | null {
   // (mawjood://family/join), while https URLs keep it in the pathname.
   const parts = url.pathname.split('/').filter((s) => s.length > 0);
   const segments = isAppScheme && url.host ? [url.host, ...parts] : parts;
-  const path = segments.join('/');
+  let path = segments.join('/');
+  // https only: tolerate ONE deployment-subpath segment (review N1 —
+  // the Pages trial serves the app under /Mawjood/).
+  if (isWeb && segments.length > 2) path = segments.slice(1).join('/');
 
   if (path === 'family/join' || path === 'join') {
     const code = url.searchParams.get('code') ?? '';

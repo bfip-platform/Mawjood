@@ -845,6 +845,13 @@ describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand
   it('parseDeepLink: only well-formed join intents survive; everything else is null', () => {
     assert.deepEqual(parseDeepLink('mawjood://family/join?code=abc123'), { kind: 'join-family', code: 'ABC123' });
     assert.deepEqual(parseDeepLink('https://bfip-platform.github.io/join?code=XYZ987'), { kind: 'join-family', code: 'XYZ987' });
+    assert.deepEqual(
+      parseDeepLink('https://bfip-platform.github.io/Mawjood/join?code=XYZ987'),
+      { kind: 'join-family', code: 'XYZ987' },
+      'one deployment-subpath segment is tolerated for https (review N1)',
+    );
+    assert.equal(parseDeepLink('https://x.example/a/b/join?code=XYZ987'), null, 'two prefix segments are NOT tolerated');
+    assert.equal(parseDeepLink('mawjood://x/family/join?code=XYZ987'), null, 'the app scheme stays strict');
     assert.equal(parseDeepLink('mawjood://family/join?code=short'), null, 'too-short code rejected');
     assert.equal(parseDeepLink('mawjood://family/join'), null, 'missing code rejected');
     assert.equal(parseDeepLink('mawjood://vault/open?path=secret'), null, 'unknown path rejected');
