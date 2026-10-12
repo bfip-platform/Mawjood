@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -836,5 +836,54 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('D4 — entitlements fail-closed + vault gate OFF (decision #4) + webhook idempotency core', async () => {
+  const ent = await import('../functions/_shared/entitlements.ts');
+  const wh = await import('../functions/_shared/stripe-webhook-core.ts');
+
+  it('entitled: deny-by-default for unknown plan/feature/garbage', () => {
+    assert.equal(ent.entitled('free', 'extra_family_slot'), false);
+    assert.equal(ent.entitled('family_plus', 'extra_family_slot'), true);
+    assert.equal(ent.entitled('family_plus', 'priority_support'), true);
+    assert.equal(ent.entitled('family_plus', 'nonsense'), false);
+    assert.equal(ent.entitled('enterprise', 'extra_family_slot'), false);
+    assert.equal(ent.entitled(null, 'extra_family_slot'), false);
+    assert.equal(ent.entitled(undefined, undefined), false);
+    assert.equal(ent.entitled('', ''), false);
+  });
+
+  it('DECISION #4 PROOF: the vault paid gate is OFF — vault_ai denied for every plan', () => {
+    assert.equal(ent.VAULT_PAID_GATE_ENABLED, false);
+    for (const p of ent.PLANS) assert.equal(ent.entitled(p, 'vault_ai'), false, `${p} must not have vault_ai while the gate is off`);
+  });
+
+  it('planFromMirror: only active/trialing known plans resolve; everything else is free', () => {
+    assert.equal(ent.planFromMirror(null), 'free');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'active' }), 'family_plus');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'trialing' }), 'family_plus');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due' }), 'free');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'canceled' }), 'free');
+    assert.equal(ent.planFromMirror({ plan_id: 'gold', status: 'active' }), 'free');
+    assert.equal(ent.planFromMirror({}), 'free');
+  });
+
+  it('webhook decisions: duplicate skipped, stale skipped, unknown types ignored, fresh processed', () => {
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: true, mirrorWatermark: 0 }), { action: 'skip_duplicate' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 50, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'skip_stale' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' }, 'equal watermark is not stale');
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'charge.refunded', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 0 }), { action: 'ignore_type' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'customer.subscription.updated', eventCreated: 200, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' });
+  });
+
+  it('GUARD: the D4 design package exists and legal drafts carry the not-final marking', () => {
+    for (const f of ['STRIPE_ARCHITECTURE.md', 'ENTITLEMENTS.md', 'QUOTA_PRICE_OPTIONS.md', 'LEGAL_DRAFTS.md', 'ACCOUNT_LIFECYCLE.md']) {
+      assert.ok(existsSync(new URL(`../../docs/autonomous/d4/${f}`, import.meta.url)), `missing docs/autonomous/d4/${f}`);
+    }
+    const legal = readFileSync(new URL('../../docs/autonomous/d4/LEGAL_DRAFTS.md', import.meta.url), 'utf8');
+    assert.ok(legal.includes('NOT LEGAL ADVICE'), 'legal drafts must be marked non-final');
+    const quota = readFileSync(new URL('../../docs/autonomous/d4/QUOTA_PRICE_OPTIONS.md', import.meta.url), 'utf8');
+    assert.ok(quota.includes('OD-01/02 remain OPEN'), 'quota paper must not finalize numbers');
   });
 });
