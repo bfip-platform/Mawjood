@@ -1406,7 +1406,9 @@ export class VoiceEngine {
     }
   }
 
-  /** Trash retention tier (paid hook): 0 = free/permanent delete, 30 = Plus. */
+  /** Trash retention (decision #6): a universal 30-day FLOOR for every tier.
+   *  A missing profile or a read error must never turn a delete permanent —
+   *  the safe default is the recoverable window. Plans may grant more. */
   async getTrashRetention(userId: string): Promise<number> {
     try {
       const { data, error } = await this.supabase
@@ -1415,9 +1417,9 @@ export class VoiceEngine {
         .eq('id', userId)
         .maybeSingle();
       if (error) throw error;
-      return (data as { trash_retention_days: number } | null)?.trash_retention_days ?? 0;
+      return Math.max(30, (data as { trash_retention_days: number } | null)?.trash_retention_days ?? 30);
     } catch {
-      return 0;
+      return 30;
     }
   }
 

@@ -127,4 +127,14 @@ export const ASSERTIONS = [
     sql: `select count(*)::int >= 1 as ok from cron._jobs
           where jobname in ('mawjood-due-reminders','mawjood-watch-reminders')`,
   },
+  {
+    name: 'items status allows trashed (0035)',
+    sql: `select pg_get_constraintdef(oid) like '%trashed%' as ok from pg_constraint
+          where conname = 'items_status_check'`,
+  },
+  {
+    name: 'trash retention floor trigger exists (0035)',
+    sql: `select count(*)::int = 1 as ok from pg_trigger
+          where tgname = 'profiles_trash_floor' and not tgisinternal`,
+  },
 ];

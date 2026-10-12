@@ -8,6 +8,8 @@
 //      (same mkey + same text + created within 24h), which is recoverable
 //   3. applies VISIBILITY decay (spec §3): stale low-importance facts get a
 //      retrieval penalty + review-queue flag — metadata only
+//   4. purges memory trash whose 30-day window expired (decision #6) — the
+//      only hard delete, and only of rows the user already trashed
 //
 // DURABILITY CONTRACT (decision #1/#7): this job NEVER hard-deletes a live
 // memory. The old 90-day decay delete and the 200-fact cap prune are gone;
@@ -23,6 +25,7 @@ import {
   upsertFacts,
   applyMemoryMaintenance,
   trashFact,
+  purgeExpiredTrashedFacts,
   normAr,
   factLine,
 } from '../_shared/memory.ts';
@@ -76,7 +79,7 @@ Deno.serve(async (req) => {
       .limit(2000);
     const userIds = [...new Set((recent ?? []).map((r: any) => r.created_by).filter(Boolean))];
 
-    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, duplicate_candidates: 0, rescored: 0, review_flagged: 0 };
+    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, duplicate_candidates: 0, rescored: 0, review_flagged: 0, trash_purged: 0 };
 
     for (const uid of userIds) {
       // private space of this user
@@ -141,6 +144,11 @@ Deno.serve(async (req) => {
       const m = await applyMemoryMaintenance(supa, pid);
       report.rescored += m.rescored;
       report.review_flagged += m.review_flagged;
+
+      // 4) trash auto-purge (decision #6): ONLY memory rows the user already
+      // trashed whose 30-day recovery window expired. The engine's single
+      // sanctioned delete; live memories are never touched.
+      report.trash_purged += await purgeExpiredTrashedFacts(supa, pid);
     }
 
     return new Response(JSON.stringify(report), { headers: { ...cors, 'Content-Type': 'application/json' } });

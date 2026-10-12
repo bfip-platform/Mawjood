@@ -589,3 +589,30 @@ describe('D1/B3+B4 — fact trash, undo, and the sanctioned purge (spec §5.2, d
     assert.deepEqual(supa._db.items.map((r) => r.id).sort(), ['fresh-trash', 'live-old']);
   });
 });
+
+describe('D1/B4 — universal 30-day trash floor (decision #6)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('migration 0035 adds trashed status + retention floor trigger + backfill', () => {
+    const sql = read('../migrations/0035_d1_data_protection.sql');
+    assert.ok(sql.includes("'trashed'"), 'items status must allow trashed');
+    assert.ok(sql.includes('profiles_trash_floor'), 'floor trigger must exist');
+    assert.ok(/set trash_retention_days = 30\s+where trash_retention_days < 30/.test(sql), 'backfill must raise sub-30 rows');
+  });
+
+  it('client never falls back to permanent delete (0) on missing/error', () => {
+    const src = read('../../packages/voice-engine/src/client.ts');
+    assert.ok(!/trash_retention_days \?\? 0/.test(src), 'missing profile must not mean 0 retention');
+    assert.ok(src.includes('Math.max(30,'), 'client enforces the 30-day floor');
+  });
+
+  it('admin tools cannot set retention below the floor', () => {
+    for (const f of ['../functions/admin-subscribe/index.ts', '../functions/admin-set-limits/index.ts']) {
+      assert.ok(read(f).includes('trash_retention_days: [30, 3650]'), `${f} range must start at 30`);
+    }
+  });
+
+  it('gardener wires the sanctioned trash purge', () => {
+    assert.ok(read('../functions/memory-consolidate/index.ts').includes('purgeExpiredTrashedFacts'));
+  });
+});
