@@ -24,6 +24,74 @@ Each entry records:
 
 ---
 
+## 2026-10-12 — Owner: all 9 D0→D0.5 decisions APPROVED (RECORDED)
+
+- **Date:** 2026-10-12 ~09:20 EDT / ~13:20 UTC
+- **Scope of approval:** Product planning ONLY — not production migrations,
+  deployment, billing activation, or application-code changes.
+- **Decisions:** (1) Durable saved memories — no auto-deletion by age, plan
+  downgrade, or quota overflow; redesign decay, pruneFacts, forget_fact.
+  (2) Free/Plus quotas designed in D0.5; existing memories preserved on
+  overflow; no numeric quotas invented (evidence-based options for owner
+  approval). (3) Stripe complete billing design in commercial scope.
+  (4) Vault paid-gate stays off until billing+entitlements ready.
+  (5) 18+ only at launch (approved earlier same day). (6) Trash keeps 30-day
+  recovery; no flip to zero. (7) No scheduled destructive decay; non-destructive
+  maintenance may be designed. (8) Indexes+janitors approved for design/testing
+  only; never delete saved memories via cleanup. (9) ai-provider-core conditional
+  on compatibility/security/regression gates.
+- **Recorded in:** `D0_TO_D05_HANDOFF.md` (full 9-decision set + details),
+  `D0_EXECUTIVE_REPORT.md`, ledger (this entry), `RECOVERY_CHECKPOINT_D0.md`.
+- **D0.5:** NOT started — awaiting explicit owner authorization.
+
+## 2026-10-12 — Owner Decision #5: 18+ only at launch (RECORDED)
+
+- **Date:** 2026-10-12 ~05:10 UTC
+- **Decision:** Mawjood launches for users aged 18 and older only. No child
+  accounts or child-specific features at launch. Enforce 18+ during registration;
+  reflect in Terms and Privacy Policy. Preserve architectural extensibility for
+  future parent-managed child accounts. No implementation of children's accounts
+  now; future minor support needs separate product/legal/security/owner approval.
+- **Recorded in:** `docs/autonomous/d0/D0_TO_D05_HANDOFF.md` (Decision #5 table +
+  full text + D0.5 implications), `docs/autonomous/d0/D0_EXECUTIVE_REPORT.md`.
+- **Evidence reconciliations (same commit):**
+  (1) Photo exploit — split into Claim A (code defect: CONFIRMED/HIGH) and
+  Claim B (E2E exploit chain: MEDIUM, pending scratch repro).
+  (2) AI E2E coverage — 5 E2E tests cover auth/notes/isolation/nav only; zero
+  automated coverage of chat/extract/memory-learn/ask/transcribe; prior
+  "verified" labels downgraded to "insufficiently tested" (manual verification only).
+- **Branch:** `d0/discovery-audit` @ `69aa2832` (pushed; PR #12 stays Draft).
+- **CI:** 9/9 PASS on exact HEAD `69aa2832` (verified 2026-10-12 ~06:00 UTC).
+
+## 2026-10-12 — Mission MAWJOOD D0: Full Project Discovery & Audit (COMPLETE)
+
+- **Date:** 2026-10-12 ~04:10 UTC
+- **Mission / task ID:** MAWJOOD D0 (owner-dispatched 2026-10-11 23:48 EDT)
+- **Branch:** `d0/discovery-audit` (branched from main @ `1c3c57b7`)
+- **Base SHA:** `1c3c57b7b99def1816f63286356f95eef98573fe` (D-1/D-1.1 merged; verified)
+- **Scope:** Comprehensive evidence-based discovery & audit: codebase inventory,
+  product/UX audit, memory-retention audit (core contract), security &
+  architecture, performance & scale, App Factory reuse, commercial readiness.
+  10 versioned documents under `docs/autonomous/d0/`. Discovery/documentation
+  ONLY — zero application code changes. Bans honored: no merge/deploy/prod-data/
+  billing changes; no D0.5 begun; PR stays Draft.
+- **Method:** 7 parallel audit workstreams via coordinator subagent; critical
+  findings spot-verified against source by parent agent.
+- **Headline findings:** (1) CRITICAL — memory-consolidate hard-deletes saved
+  facts (90-day decay + 200-cap, no tier distinction) — contradicts durable-memory
+  promise; (2) HIGH — cross-user photo read escalation via photo_url;
+  (3) MEDIUM — route/classify public yet client-invoked (AI-spend oracle);
+  (4) CRITICAL commercial — zero Stripe, zero legal docs, zero SEO/PWA;
+  (5) HIGH — no AI quotas, ILIKE search w/o index, unindexed items.note_id.
+- **Recovery anchor:** `1c3c57b7` (main HEAD at D0 start); branch is docs-only.
+- **Review verdict:** pending (owner review of D0 findings required before D0.5).
+- **CI evidence:** 9/9 PASS on exact PR HEAD `3df5c94d` (e2e-auth, standards,
+  e2e-smoke, vuln-scan, ci, provenance, rls-audit, auth-gates, secret-scan —
+  all completed/success). Docs-only change; no app code touched.
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/12 (Draft, docs-only).
+  Branch `d0/discovery-audit` @ `3df5c94de73b0dfee3a125ada81cab964d46bfbf`
+  (pushed via Git Data API with owner's transient PAT; PAT used once, never stored).
+
 ## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (COMPLETE)
 
 - **Date:** 2026-10-11 ~16:30 EDT → 2026-10-12 ~03:00 EDT
