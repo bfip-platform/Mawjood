@@ -11,17 +11,29 @@
 
 ## Owner decisions required
 
-| # | Decision | Blocks |
-|---|---|---|
-| 1 | `memory-consolidate`: disable decay / tier-aware redesign / keep-as-is | Any durable-memory claim |
-| 2 | Intended Plus memory quota (none exists) | Entitlement design |
-| 3 | Stripe: still postponed or in scope? | All billing work |
-| 4 | Vault paid-gate LAUNCH flip | Vault launch |
-| 5 | Age-gate / children's-data posture | Legal docs |
-| 6 | `trash_retention_days` 30→0 launch flip | Trash UX |
-| 7 | Schedule `memory-consolidate` or remove "nightly" claim | Ops honesty |
-| 8 | Approve index additions + retention janitor (repo-modifying) | Perf work |
-| 9 | ai-provider-core GPT-5/Groq quirk coverage | ADOPT scope |
+| # | Decision | Status | Blocks |
+|---|---|---|---|
+| 1 | `memory-consolidate`: disable decay / tier-aware redesign / keep-as-is | ⏳ Pending | Any durable-memory claim |
+| 2 | Intended Plus memory quota (none exists) | ⏳ Pending | Entitlement design |
+| 3 | Stripe: still postponed or in scope? | ⏳ Pending | All billing work |
+| 4 | Vault paid-gate LAUNCH flip | ⏳ Pending | Vault launch |
+| 5 | Age-gate / children's-data posture | ✅ **DECIDED 2026-10-12: 18+ only at launch** | Legal docs |
+| 6 | `trash_retention_days` 30→0 launch flip | ⏳ Pending | Trash UX |
+| 7 | Schedule `memory-consolidate` or remove "nightly" claim | ⏳ Pending | Ops honesty |
+| 8 | Approve index additions + retention janitor (repo-modifying) | ⏳ Pending | Perf work |
+| 9 | ai-provider-core GPT-5/Groq quirk coverage | ⏳ Pending | ADOPT scope |
+
+### Decision #5 — Age eligibility (APPROVED 2026-10-12)
+
+**Mawjood launches for users aged 18 and older only.**
+
+- No child accounts or child-specific features at launch.
+- Enforce the 18+ eligibility requirement during registration and reflect it in Terms and Privacy Policy.
+- Preserve architectural extensibility for future parent-managed child accounts and appropriate consent, privacy, and safety controls.
+- Do not implement or activate children's accounts now.
+- Future support for minors requires separate product, legal, security, and owner approval.
+
+**D0.5 implications:** registration flow must include an 18+ eligibility gate (self-declaration at minimum; document the chosen mechanism); Terms + Privacy Policy must state the 18+ requirement; data model must not preclude future parent-managed child accounts (no schema changes now — extensibility only).
 
 ## Prioritized work queue
 

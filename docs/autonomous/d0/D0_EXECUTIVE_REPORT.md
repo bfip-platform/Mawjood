@@ -37,7 +37,9 @@ Comprehensive read-only audit of the entire Mawjood codebase at the merged D-1/D
 
 ## Unresolved (need owner/dashboard)
 
-Memory-consolidate fate · Plus memory quota · Stripe scope · vault paid-gate flip · age-gate posture · `trash_retention_days` flip · redirect URLs · crons · secrets · `ops_events` monitoring · token/PAT revocation (still outstanding from D-1.1)
+Memory-consolidate fate · Plus memory quota · Stripe scope · vault paid-gate flip · `trash_retention_days` flip · redirect URLs · crons · secrets · `ops_events` monitoring · token/PAT revocation (still outstanding from D-1.1)
+
+**Decided 2026-10-12 (Decision #5): 18+ only at launch** — no child accounts or child-specific features; enforce during registration; reflect in Terms + Privacy Policy; preserve architectural extensibility for future parent-managed child accounts; future minor support needs separate product/legal/security/owner approval.
 
 ## Proposed D0.5 priorities
 

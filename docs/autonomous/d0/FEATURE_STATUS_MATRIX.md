@@ -41,9 +41,9 @@
 
 | Feature | Status | Evidence |
 |---|---|---|
-| Chat (ReAct, 5 steps) | ✅ | `chat` fn; e2e-covered |
-| Governed structural actions | ✅ | Double approval; `admin-ai-governance` |
-| Memory retrieval | ✅ | `memory-learn`, `ask` fns |
+| Chat (ReAct, 5 steps) | ⚠️ | `chat` fn; code + manual verification only — **zero automated E2E** (see CODEBASE_INVENTORY reconciliation) |
+| Governed structural actions | ⚠️ | Double approval; `admin-ai-governance`; no automated tests of the approval flow |
+| Memory retrieval | ⚠️ | `memory-learn`, `ask` fns; no automated tests |
 | Prompt-injection mitigation | ⚠️ | Single-user self-injection residual; destructive ops have multi-approval |
 | AI cost quotas | ❌ | No per-tier quotas (HIGH finding) |
 

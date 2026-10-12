@@ -7,11 +7,17 @@
 
 ## HIGH
 
-### H1 — Cross-user private-photo read escalation [CONFIRMED]
-- **Evidence:** `supabase/functions/chat/index.ts:836-839` (only `startsWith('https://')` check on client-supplied `photo_url`); `supabase/migrations/0029_private_storage.sql:55-72` (`can_read_photo` grants SELECT when any accessible note references the path)
-- **Impact:** Ex-family member references victim's photo URL from own note → indefinite signed-URL reads. Defeats the 0029 P0-6 fix.
+### H1 — Cross-user private-photo read escalation
+**Evidence reconciliation (2026-10-12):** This finding has two separable claims with different confidence levels.
+
+**Claim A — the code defect [CONFIRMED, HIGH confidence]:**
+- **Evidence:** `supabase/functions/chat/index.ts:836-839` (only `startsWith('https://')` check on client-supplied `photo_url`); `supabase/migrations/0029_private_storage.sql:55-72` (`can_read_photo` grants SELECT when any accessible note references the path via `like '%/item-photos/' || p_name`, bypassing the owner-folder check in the OR branch)
+- **Impact:** The validation gap and overly-broad policy are code-evident. The 0029 P0-6 storage hardening is bypassable via the chat `photo_url` path.
 - **Recommendation:** Server-side validate storage path starts with `${userId}/`; harden `can_read_photo` to require owner/space match.
-- **Verification:** Scratch-project repro required.
+
+**Claim B — the end-to-end exploit chain [MEDIUM confidence, UNVERIFIED]:**
+- What remains unproven: an attacker actually obtaining a working signed URL for a victim's photo in practice (storage-policy interaction, exact URL format needed, `createSignedUrl` behavior against this policy).
+- **Verification required:** Scratch-project repro (victim uploads → attacker references URL from own note → signed URL succeeds). Do not describe Claim B as confirmed until the repro exists.
 
 ## MEDIUM
 

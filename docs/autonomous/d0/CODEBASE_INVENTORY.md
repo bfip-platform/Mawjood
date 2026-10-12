@@ -52,18 +52,27 @@ Core tables: `spaces`, `space_members`, `space_invites`, `notes`, `items`, `prof
 | RLS static audit | ✅ CI-enforced |
 | `tests/e2e/auth-journey.spec.mjs` | ✅ 4/4 journeys (D-1.1) |
 | Unit tests | ✅ 33/33 |
-| Edge-function handler logic | ❌ **No tests** |
+| Edge-function handler logic | ❌ **No tests** (incl. all AI paths: chat, extract, memory-learn, ask, transcribe) |
+| AI E2E journeys (chat/extract/memory) | ❌ **Zero automated coverage** — see reconciliation note below |
 | Vault / export / delete flows | ❌ **No tests** |
 | UI rendering | ❌ **No tests** |
 | Performance benchmarks | ❌ **None exist** |
 
-## Classification summary
+### Evidence reconciliation — AI E2E coverage (2026-10-12)
 
-- **Implemented + verified:** 7 (auth, RLS, chat, extract, transcribe, family, admin console)
-- **Implemented, insufficiently tested:** 8 (vault, export/delete, notifications, reminders, borrows, shopping, agenda, AI governance)
+The 5 E2E tests (`tests/e2e/auth-journey.spec.mjs`, `smoke.spec.mjs`) cover: magic-link sign-in, note creation via data API, 2-user isolation, tab navigation, bundle load. **Zero tests touch the AI paths** (chat ReAct loop, extract, memory-learn, ask, transcribe). The spec header itself documents this as an explicit gap (`auth-journey.spec.mjs:12-13`): AI journeys need the edge functions + OPENAI_API_KEY, which CI does not provide.
+
+AI features (chat, extract, memory-learn) are classified "implemented" based on code inspection and dev-time manual verification — **not** on automated E2E evidence. Any "verified" label on AI behavior refers to code-review/manual verification, not CI. Closing this gap requires edge-function integration tests with a mock AI provider or a sandboxed key.
+
+## Classification summary (reconciled 2026-10-12)
+
+- **Implemented + verified:** 4 (auth, RLS, family, admin console) — behavioral/e2e tests in CI
+- **Implemented, insufficiently tested:** 11 (chat, extract, transcribe, vault, export/delete, notifications, reminders, borrows, shopping, agenda, AI governance) — code + manual verification; zero automated E2E on AI paths
 - **Partially implemented:** 3 (subscriptions — manual only; PWA — absent; offline — absent)
 - **Planned/documented only:** 12 (Stripe, SEO, analytics, Sentry, FTS, quotas, support, etc.)
-- **Missing:** 6 (Terms/Privacy, age-gate, email-change, deactivation, deep-links, status page)
+- **Missing:** 6 (Terms/Privacy, email-change, deactivation, deep-links, status page; age-gate decided 18+ — spec pending)
 - **Broken/unsafe:** 1 active (memory-consolidate decay) + 3 D-1.1 carry-overs (documented in findings)
+
+*Reconciliation note: chat/extract/transcribe moved from "verified" to "insufficiently tested" — prior label rested on manual verification; CI has zero AI-path E2E (see reconciliation section above).*
 
 See `FEATURE_STATUS_MATRIX.md` for per-feature detail.
