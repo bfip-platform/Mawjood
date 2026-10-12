@@ -107,7 +107,8 @@ States key: **L** loading · **E** empty · **O** offline · **X** error · **R*
 
 ### S-9 — Chat home (PRIMARY — preserved pillar)
 - **Purpose:** Chat-first home; fastest path to memory capture and recall.
-- **Layout (REDESIGN for web — §3):** desktop three-pane (conversation list rail | active chat | assistant context panel); tablet two-pane; mobile single-pane with nav.
+- **⚠️ Correction (owner Decision #12, 2026-10-12):** the "desktop three-pane" line below was a redesign proposal, NOT the baseline. The baseline is the CURRENT app (see `UX_ARCHITECTURE_CORRECTION.md` §2): chat home + header + space-tabs row + drawer. On desktop the drawer destinations become a persistent sidebar; the assistant-context third pane is optional/future. The D0.5 dashboard-style mockups were exploration only.
+- **Layout (baseline):** mobile single-pane chat (header ☰ + space-tabs row + composer; drawer navigation); desktop/tablet = sidebar (drawer destinations) + spacious centered chat column.
 - **Key components:** Space tabs (🔒 Private / 👨‍👩‍👧 Family / 💼 Work — preserved), message bubbles with action cards (task confirm, tab proposal, borrow badge), chat input (text + voice note + photo attach + fullscreen photo viewer — preserved), "move to suggested space?" bubble (preserved), suggestion chips.
 - **States:** L (message skeleton), E (new chat — preserved good-onboarding prompt), O (queued send + banner), X (send failure → retry per message), R (undo on structural actions — preserved double-approval).
 
