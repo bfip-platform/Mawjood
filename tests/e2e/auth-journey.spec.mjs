@@ -199,24 +199,12 @@ test('memory creation via data API appears in the space notes browser', async ({
   // navigate to the private space tab in the UI and find the note
   await page.goto('/');
   await page.waitForTimeout(2000);
-  // space tabs: Home + private/family/work — tap the private one.
-  // SPACE_SHORT labels come from i18n; match by partial text is fragile,
-  // so tap the second tab (index 1 = first space tab).
-  const tabs = page.locator('div[role="button"]');
-  // DEBUG: dump state if tabs are missing
-  if ((await tabs.count()) === 0) {
-    const dbg = await page.evaluate(() => ({
-      href: window.location.href,
-      keys: Object.keys(localStorage),
-      bodyText: document.body?.innerText?.slice(0, 500),
-    }));
-    // eslint-disable-next-line no-console
-    console.log('TABS_DEBUG', JSON.stringify(dbg));
-  }
-  await expect(tabs.first()).toBeVisible({ timeout: 15000 });
-  const tabCount = await tabs.count();
-  expect(tabCount).toBeGreaterThan(1);
-  await tabs.nth(1).click();
+  // Space tabs carry testIDs (tab-home, tab-space-private, ...). The
+  // Pressables render without role="button" in React Native Web, so select
+  // by testID, not by role.
+  const privateTab = page.getByTestId('tab-space-private');
+  await expect(privateTab).toBeVisible({ timeout: 15000 });
+  await privateTab.click();
   await expect(page.getByText(marker)).toBeVisible({ timeout: 20000 });
 });
 
@@ -263,11 +251,12 @@ test('navigation: tabs switch views without errors', async ({ page }) => {
   const email = `e2e-d-${Date.now()}@example.com`;
   await signInWithPassword(page, email);
   await page.goto('/');
-  const tabs = page.locator('div[role="button"]');
-  await expect(tabs.first()).toBeVisible({ timeout: 15000 });
-  const n = await tabs.count();
-  for (let i = 0; i < Math.min(n, 4); i++) {
-    await tabs.nth(i).click();
+  // Space tabs by testID (see test 2 comment re: role="button").
+  const tabIds = ['tab-home', 'tab-space-private', 'tab-space-family', 'tab-space-work'];
+  for (const id of tabIds) {
+    const tab = page.getByTestId(id);
+    await expect(tab).toBeVisible({ timeout: 15000 });
+    await tab.click();
     await page.waitForTimeout(1200);
   }
   expect(pageErrors, `page errors during navigation: ${pageErrors.join(' | ')}`).toEqual([]);

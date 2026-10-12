@@ -3980,6 +3980,7 @@ export default function HomeScreen() {
         <Pressable
           onPress={() => setView('chat')}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
+          testID="tab-home"
         >
           <Text style={[styles.tabText, view === 'chat' && styles.tabTextActive]}>
             {t('tabHome')}
@@ -3990,6 +3991,7 @@ export default function HomeScreen() {
             key={t}
             onPress={() => openSpace(t)}
             style={[styles.tab, view === t && styles.tabActive]}
+            testID={`tab-space-${t}`}
           >
             <Text style={[styles.tabText, view === t && styles.tabTextActive]}>
               {SPACE_SHORT[t]}
