@@ -340,6 +340,54 @@ export async function applyMemoryMaintenance(
 }
 
 /**
+ * Scoped forget matching (spec §5.1). PURE — decides WHAT a forget request
+ * may touch, never deletes anything itself.
+ *   tier 'exact'     — normalized content/title equals the query
+ *   tier 'mkey'      — every query token appears in a fact's mkey tokens
+ *   tier 'substring' — legacy substring candidates (any query token in text)
+ * `auto` is set ONLY when the winning tier yields exactly one candidate;
+ * otherwise the caller must ask the user to pick from `candidates`.
+ * Route facts (mcat='route') are excluded — they change only via explicit
+ * corrections (spec §5.3).
+ */
+export interface ForgetMatch {
+  tier: 'exact' | 'mkey' | 'substring' | 'none';
+  candidates: MemoryRow[];
+  auto: MemoryRow | null;
+}
+
+export function matchForget(facts: MemoryRow[], query: string): ForgetMatch {
+  const q = normAr(query ?? '');
+  if (!q) return { tier: 'none', candidates: [], auto: null };
+  const eligible = facts.filter((f) => f.meta?.mcat !== 'route');
+  const done = (tier: ForgetMatch['tier'], candidates: MemoryRow[]): ForgetMatch => ({
+    tier,
+    candidates,
+    auto: candidates.length === 1 ? candidates[0] : null,
+  });
+
+  const exact = eligible.filter((f) =>
+    normAr(f.details ?? '') === q || normAr(f.title) === q || normAr(`${f.title} ${f.details ?? ''}`) === q);
+  if (exact.length > 0) return done('exact', exact);
+
+  const qt = q.split(' ').filter(Boolean);
+  const mkey = eligible.filter((f) => {
+    const kt = String(f.meta?.mkey ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return qt.length > 0 && kt.length > 0 && qt.every((t) => kt.includes(t));
+  });
+  if (mkey.length > 0) return done('mkey', mkey);
+
+  const qtoks = qt.filter((w) => w.length > 1);
+  const sub = eligible.filter((f) => {
+    const ft = normAr(`${f.title} ${f.details ?? ''}`);
+    return qtoks.some((t) => ft.includes(t));
+  });
+  if (sub.length > 0) return done('substring', sub);
+
+  return { tier: 'none', candidates: [], auto: null };
+}
+
+/**
  * Move a memory fact to trash (spec §5.2): status flip + trashed_at stamp.
  * Recoverable for the retention window; the row is NOT deleted here.
  * Requires migration 0035 (items status 'trashed') wherever deployed.

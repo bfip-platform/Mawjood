@@ -24,6 +24,11 @@ import {
   countFactsForQuota,
   oldestWeakestForReview,
   upsertFacts,
+  matchForget,
+  trashFact,
+  restoreFact,
+  listTrashedFacts,
+  purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
 import { readFileSync } from 'node:fs';
@@ -500,5 +505,87 @@ describe('D1 — static guard: no hard-delete of memory items outside the sancti
     const hits = [...src.matchAll(itemsDelete)];
     assert.equal(hits.length, 1);
     assert.ok(hits[0].index > src.indexOf('purgeExpiredTrashedFacts'), 'the single delete must live in the trash purge');
+  });
+});
+
+describe('D1/B3 — forget_fact scoped matching (spec §5)', () => {
+  const F = (id, details, extraMeta = {}) => ({
+    id, space_id: 'S1', kind: 'memory', status: 'open',
+    title: `k:${id}`, details, meta: { mkey: `k:${id}`, mcat: 'preference', importance: 3, ...extraMeta },
+    created_at: daysAgo(1), updated_at: daysAgo(1),
+  });
+
+  it('exact match auto-selects exactly one fact', () => {
+    const facts = [F('a', 'يشرب قهوة كل صباح'), F('b', 'يحب الشاي')];
+    const m = matchForget(facts, 'يشرب قهوة كل صباح');
+    assert.equal(m.tier, 'exact');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('mkey match: query tokens subset of a known mkey', () => {
+    const facts = [F('a', 'يحب القهوة', { mkey: 'preference:coffee' }), F('b', 'يحب الشاي', { mkey: 'preference:tea' })];
+    const m = matchForget(facts, 'coffee');
+    assert.equal(m.tier, 'mkey');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('ambiguous substring (the old mass-delete repro): 3 candidates, zero auto-deleted', () => {
+    const facts = [
+      F('a', 'يشتري حليب كل اسبوع'),
+      F('b', 'حليب اللوز في الثلاجة'),
+      F('c', 'القط يحب الحليب'),
+    ];
+    const m = matchForget(facts, 'حليب');
+    assert.equal(m.tier, 'substring');
+    assert.equal(m.auto, null);
+    assert.equal(m.candidates.length, 3);
+  });
+
+  it('single substring candidate proceeds automatically', () => {
+    const facts = [F('a', 'مفتاح السيارة في درج المطبخ'), F('b', 'يحب الشاي')];
+    const m = matchForget(facts, 'مطبخ');
+    assert.equal(m.tier, 'substring');
+    assert.equal(m.auto?.id, 'a');
+  });
+
+  it('route facts are never matched by chat forget', () => {
+    const facts = [F('r', 'حليب يروح على التسوق', { mcat: 'route' })];
+    const m = matchForget(facts, 'حليب');
+    assert.equal(m.tier, 'none');
+    assert.equal(m.candidates.length, 0);
+  });
+
+  it('no match → none (never guess)', () => {
+    const m = matchForget([F('a', 'يحب الشاي')], 'برتقال');
+    assert.equal(m.tier, 'none');
+    assert.equal(m.auto, null);
+  });
+});
+
+describe('D1/B3+B4 — fact trash, undo, and the sanctioned purge (spec §5.2, decision #6)', () => {
+  it('trashFact moves to trash (row survives, leaves the open set); restoreFact undoes it', async () => {
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    const row = supa._db.items[0];
+    assert.equal(await trashFact(supa, row, 'user_forget'), true);
+    assert.equal(supa._db.items.length, 1, 'trash is a status flip, not a delete');
+    assert.equal(supa._db.items[0].status, 'trashed');
+    assert.ok(supa._db.items[0].meta.trashed_at);
+    assert.equal((await listTrashedFacts(supa, 'S1')).length, 1);
+    const restored = await restoreFact(supa, 'S1', 'a');
+    assert.ok(restored);
+    assert.equal(supa._db.items[0].status, 'open');
+    assert.equal(supa._db.items[0].meta.trashed_at, undefined);
+  });
+
+  it('purge deletes ONLY trashed rows past the 30-day window', async () => {
+    const old = mkFact('old-trash', 3, 40, { trashed_at: daysAgo(31) });
+    old.status = 'trashed';
+    const fresh = mkFact('fresh-trash', 3, 1, { trashed_at: daysAgo(10) });
+    fresh.status = 'trashed';
+    const live = mkFact('live-old', 1, 400); // ancient but OPEN — untouchable
+    const supa = fakeSupa([old, fresh, live]);
+    const n = await purgeExpiredTrashedFacts(supa, 'S1', 30, NOW);
+    assert.equal(n, 1);
+    assert.deepEqual(supa._db.items.map((r) => r.id).sort(), ['fresh-trash', 'live-old']);
   });
 });

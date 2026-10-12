@@ -1,6 +1,6 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, trashFact, restoreFact, listTrashedFacts } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
@@ -322,24 +322,69 @@ async function toolRememberFact(supa: Supa, userId: string, spaceByType: Record<
   const pid = spaceByType['private'];
   if (!pid) return { error: 'no private space' };
   const mkey = 'manual:' + normAr(content).replace(/\s+/g, '_').slice(0, 40);
-  const { saved, updated } = await upsertFacts(supa, pid, userId, [{ content, mkey, mcat: 'preference', importance: 4 }], 'explicit');
+  const { saved, updated, blocked } = await upsertFacts(supa, pid, userId, [{ content, mkey, mcat: 'preference', importance: 4 }], 'explicit');
+  // blocked > 0 only when an owner-set memory cap exists and is full (spec §4):
+  // the save was refused, NOTHING was deleted to make room.
+  if (blocked > 0) return { error: 'memory_full', blocked_by_quota: true };
   return { remembered: saved + updated > 0 };
 }
 
-async function toolForgetFact(supa: Supa, spaceByType: Record<string, string>, args: { query?: string }, vctx?: VaultCtx | null) {
+// D1 redesign (spec §5): forget is TWO-STAGE and never hard-deletes.
+// Stage 1 matches precisely (exact → mkey → substring candidates). A unique
+// target moves to TRASH (30-day undo); an ambiguous query deletes NOTHING
+// and returns candidates for the user to pick (then call again with
+// fact_id). Route facts are never forgotten via chat.
+async function toolForgetFact(supa: Supa, spaceByType: Record<string, string>, args: { query?: string; fact_id?: string }, vctx?: VaultCtx | null) {
   if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
-  const q = normAr(args.query ?? '');
-  if (!q) return { error: 'empty query' };
   const pid = spaceByType['private'];
   if (!pid) return { error: 'no private space' };
   const facts = await loadFacts(supa, pid);
-  const qt = q.split(' ').filter((w) => w.length > 1);
-  const hits = facts.filter((f) => {
-    const ft = normAr(`${f.title} ${f.details ?? ''}`);
-    return qt.some((t) => ft.includes(t));
-  });
-  for (const h of hits) await supa.from('items').delete().eq('id', h.id);
-  return { forgotten: hits.map(factLine) };
+
+  // Stage 2: the user picked a candidate (or named an id directly).
+  if (args.fact_id) {
+    const target = facts.find((f) => f.id === args.fact_id);
+    if (!target) return { error: 'fact not found' };
+    if (target.meta?.mcat === 'route') return { error: 'route_not_forgettable' };
+    if (!(await trashFact(supa, target, 'user_forget'))) return { error: 'trash failed' };
+    return { forgotten: [factLine(target)], trashed_ids: [target.id], undo: true };
+  }
+
+  const q = (args.query ?? '').trim();
+  if (!q) return { error: 'empty query' };
+  const m = matchForget(facts, q);
+  if (m.tier === 'none' || m.candidates.length === 0) return { forgotten: [], not_found: true };
+  if (!m.auto) {
+    return {
+      forgotten: [],
+      needs_choice: true,
+      candidates: m.candidates.slice(0, 5).map((f) => ({ id: f.id, text: factLine(f) })),
+    };
+  }
+  if (!(await trashFact(supa, m.auto, 'user_forget'))) return { error: 'trash failed' };
+  return { forgotten: [factLine(m.auto)], trashed_ids: [m.auto.id], undo: true };
+}
+
+// Undo for forget_fact (spec §5.2): restores a trashed memory. With no
+// fact_id, restores the single trashed fact or asks the user to pick.
+async function toolRestoreFact(supa: Supa, spaceByType: Record<string, string>, args: { fact_id?: string }, vctx?: VaultCtx | null) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { error: 'no private space' };
+  if (args.fact_id) {
+    const r = await restoreFact(supa, pid, args.fact_id);
+    return r ? { restored: [factLine(r)] } : { error: 'not in trash' };
+  }
+  const trashed = await listTrashedFacts(supa, pid);
+  if (trashed.length === 0) return { restored: [], not_found: true };
+  if (trashed.length > 1) {
+    return {
+      restored: [],
+      needs_choice: true,
+      candidates: trashed.slice(0, 5).map((f) => ({ id: f.id, text: factLine(f) })),
+    };
+  }
+  const r = await restoreFact(supa, pid, trashed[0].id);
+  return r ? { restored: [factLine(r)] } : { error: 'restore failed' };
 }
 
 async function toolListMemories(supa: Supa, spaceByType: Record<string, string>, vctx?: VaultCtx | null) {
@@ -710,6 +755,7 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
     case 'return_borrow': return await toolReturnBorrow(supa, args ?? {}, vctx ?? null, hvc);
     case 'remember_fact': return await toolRememberFact(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'forget_fact': return await toolForgetFact(supa, spaceByType, args ?? {}, vctx ?? null);
+    case 'restore_fact': return await toolRestoreFact(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_memories': return await toolListMemories(supa, spaceByType, vctx ?? null);
     case 'list_tabs': return await toolListTabs(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'read_tab': return await toolReadTab(supa, spaceByType, args ?? {}, vctx ?? null);
