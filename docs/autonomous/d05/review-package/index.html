@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mawjood — v1.2 Visual Direction Review · Modern Minimal AI + Human Memories</title>
+<style>
+/* ============ v1.2 TOKENS — monochrome-first ============ */
+:root, [data-theme="light"]{
+  --bg:#FFFFFF; --s1:#FFFFFF; --s2:#F5F5F6; --ssoft:#F9F9FA;
+  --bd:#E7E7EA; --bdsoft:#F0F0F2;
+  --t1:#0A0A0B; --t2:#52525B; --t3:#71717A;
+  --ac:#0A0A0B; --ac-tx:#FFFFFF; --ac-pr:#3F3F46;
+  --blue:#3B82C4; --blue-tx:#2F6FA8; --blue-soft:#EAF2FB;
+  --sage:#5E7E63; --sage-soft:#EDF3EE;
+  --danger:#C23B2E; --warn:#9A6B1A;
+  --sh1:0 1px 2px rgba(10,10,11,.05); --sh2:0 4px 16px rgba(10,10,11,.07); --sh3:0 12px 32px rgba(10,10,11,.12);
+  --scrim:rgba(10,10,11,.45);
+}
+[data-theme="dark"]{
+  --bg:#0A0A0B; --s1:#141416; --s2:#1C1C1F; --ssoft:#18181B;
+  --bd:#2A2A2E; --bdsoft:#232327;
+  --t1:#F5F5F4; --t2:#C9C9CE; --t3:#A1A1AA;
+  --ac:#FFFFFF; --ac-tx:#0A0A0B; --ac-pr:#E4E4E7;
+  --blue:#7FB2E5; --blue-tx:#9CC4EC; --blue-soft:#1B2A3A;
+  --sage:#8FAE93; --sage-soft:#1E2B22;
+  --danger:#E07B5A; --warn:#D9A44A;
+  --sh1:0 1px 2px rgba(0,0,0,.4); --sh2:0 4px 16px rgba(0,0,0,.45); --sh3:0 12px 32px rgba(0,0,0,.55);
+  --scrim:rgba(10,10,11,.55);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Inter,'IBM Plex Sans Arabic',system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--ssoft);color:var(--t1);transition:background .25s,color .25s}
+[dir="rtl"] body{font-family:'IBM Plex Sans Arabic',Inter,system-ui,sans-serif}
+/* ============ review chrome ============ */
+.hdr{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.mark{width:36px;height:36px;border-radius:11px;background:var(--ac);color:var(--ac-tx);display:grid;place-items:center;font-weight:800;font-size:20px}
+.hdr h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.hdr .sub{font-size:12px;color:var(--t3)}
+.ctl{display:flex;align-items:center;gap:8px;margin-inline-start:auto;flex-wrap:wrap}
+.seg{display:flex;background:var(--s2);border:1px solid var(--bd);border-radius:999px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--t2);font:inherit;font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;cursor:pointer;transition:all .15s}
+.seg button.on{background:var(--ac);color:var(--ac-tx)}
+.note{max-width:1180px;margin:26px auto 0;padding:0 28px;font-size:14px;color:var(--t2);line-height:1.75}
+.note b{color:var(--t1)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;background:var(--s2);border:1px solid var(--bd);color:var(--t2)}
+.chip.blue{background:var(--blue-soft);color:var(--blue-tx);border-color:transparent}
+.chip.sage{background:var(--sage-soft);color:var(--sage);border-color:transparent}
+/* ============ screen sections ============ */
+.wrap{max-width:1180px;margin:0 auto;padding:28px}
+.sec{margin:44px 0}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.sec-h h2{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.sec-h .n{font-size:13px;font-weight:700;color:var(--t3);letter-spacing:.08em}
+.sec p.d{font-size:14px;color:var(--t2);line-height:1.7;margin-bottom:20px;max-width:70ch}
+.stage{display:grid;gap:22px}
+.stage.cols2{grid-template-columns:1fr 1fr}
+@media(max-width:900px){.stage.cols2{grid-template-columns:1fr}}
+.frame{border:1px solid var(--bd);border-radius:18px;overflow:hidden;background:var(--bg);box-shadow:var(--sh2)}
+.frame .tag{padding:10px 16px;font-size:12px;font-weight:600;color:var(--t3);border-bottom:1px solid var(--bdsoft);display:flex;justify-content:space-between;align-items:center}
+.frame .tag .b{font-weight:700;color:var(--t1)}
+/* ============ app mock primitives ============ */
+.app{background:var(--bg);color:var(--t1)}
+.nav{height:64px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--bd)}
+.nav .wm{font-weight:800;font-size:18px;letter-spacing:-.02em}
+.nav .sp{flex:1}
+.nav .ic{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--s2);color:var(--t2);font-size:16px;cursor:pointer;transition:transform .15s}
+.nav .ic:hover{transform:scale(1.06)}
+.nav .ic:active{transform:scale(.96)}
+.nav .av{width:38px;height:38px;border-radius:50%;background:#3a3a3e;color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px}
+.rail{display:flex;gap:4px;padding:10px 20px;border-bottom:1px solid var(--bdsoft);overflow-x:auto}
+.rail button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:var(--t2);padding:9px 15px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:all .15s}
+.rail button.on{background:var(--s2);color:var(--t1)}
+.hero{padding:40px 24px 28px;max-width:560px}
+.kick{font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--t3);text-transform:uppercase;margin-bottom:14px}
+[dir="rtl"] .kick{letter-spacing:.02em}
+.hero h2{font-size:34px;font-weight:800;letter-spacing:-.025em;line-height:1.18;margin-bottom:12px}
+.hero p{font-size:15px;color:var(--t2);line-height:1.7;margin-bottom:22px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:0;font:inherit;font-weight:600;font-size:15px;padding:13px 24px;border-radius:12px;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-p{background:var(--ac);color:var(--ac-tx)}
+.btn-p:hover{box-shadow:var(--sh2);transform:translateY(-1px)}
+.btn-p:active{transform:scale(.98)}
+.btn-s{background:var(--s1);color:var(--t1);border:1px solid var(--bd)}
+.btn-s:hover{border-color:var(--t3)}
+.search{margin:0 20px 6px;display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid transparent;border-radius:14px;padding:13px 16px;color:var(--t3);font-size:14px;transition:border .15s}
+.search:focus-within{border-color:var(--blue)}
+.search input{border:0;background:transparent;font:inherit;flex:1;color:var(--t1);outline:none}
+.spaces{display:flex;gap:12px;padding:18px 20px;overflow-x:auto}
+.spc{min-width:128px;border:1px solid var(--bd);border-radius:16px;padding:16px 14px;background:var(--s1);cursor:pointer;transition:transform .15s,box-shadow .15s}
+.spc:hover{transform:translateY(-2px);box-shadow:var(--sh2)}
+.spc .e{font-size:24px;margin-bottom:8px}
+.spc h4{font-size:14px;font-weight:700;margin-bottom:3px}
+.spc span{font-size:12px;color:var(--t3)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;padding:6px 20px 26px}
+.mcard{border:1px solid var(--bd);border-radius:16px;overflow:hidden;background:var(--s1);box-shadow:var(--sh1);transition:transform .18s,box-shadow .18s;cursor:pointer}
+.mcard:hover{transform:translateY(-3px);box-shadow:var(--sh2)}
+.mph{height:130px;position:relative;display:grid;place-items:end start;padding:12px;color:#fff;font-size:12px;font-weight:600}
+.mph::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,var(--scrim),transparent 55%)}
+.mph span{position:relative;z-index:1}
+.mph.g1{background:linear-gradient(135deg,#26262b,#4b4b52)}
+.mph.g2{background:linear-gradient(135deg,#333338,#5c5c64)}
+.mph.g3{background:linear-gradient(135deg,#1e1e22,#43434b)}
+.mph.g4{background:linear-gradient(135deg,#2b2b30,#565660)}
+.mbody{padding:14px 16px}
+.mbody h4{font-size:15px;font-weight:700;margin-bottom:5px;letter-spacing:-.01em}
+.mbody .meta{font-size:12px;color:var(--t3);display:flex;gap:8px;align-items:center}
+.pill{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--s2);color:var(--t2)}
+.pill.b{background:var(--blue-soft);color:var(--blue-tx)}
+.pill.s{background:var(--sage-soft);color:var(--sage)}
+/* timeline */
+.tl{padding:22px 20px 30px;max-width:640px}
+.tl-day{margin-bottom:26px}
+.tl-day>h5{font-size:12px;font-weight:700;color:var(--t3);letter-spacing:.06em;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.tl-day.today>h5 .dot{width:8px;height:8px;border-radius:50%;background:var(--blue)}
+.tl-item{display:flex;gap:14px;margin-bottom:12px}
+.tl-rail{width:2px;background:var(--bd);border-radius:2px;flex-shrink:0;margin:6px 0}
+.tl-card{flex:1;border:1px solid var(--bd);border-radius:14px;background:var(--s1);padding:14px 16px;box-shadow:var(--sh1);transition:transform .15s}
+.tl-card:hover{transform:translateX(-2px)}
+[dir="ltr"] .tl-card:hover{transform:translateX(2px)}
+.tl-card h4{font-size:14.5px;font-weight:700;margin-bottom:4px}
+.tl-card p{font-size:13px;color:var(--t2);line-height:1.6}
+/* detail */
+.det{max-width:680px;padding-bottom:30px}
+.det-hero{height:300px;position:relative;display:grid;place-items:end start;padding:24px;color:#fff;background:linear-gradient(135deg,#232327,#4e4e56)}
+.det-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(5,5,6,.72),transparent 60%)}
+.det-hero .in{position:relative;z-index:1}
+.det-hero h2{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-bottom:8px}
+.det-hero .meta{font-size:13px;opacity:.85}
+.det-body{padding:22px 22px 0}
+.det-body .txt{font-size:15.5px;line-height:1.85;color:var(--t1);margin-bottom:20px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px}
+.fact{background:var(--s2);border-radius:12px;padding:12px 14px}
+.fact .k{font-size:11px;font-weight:700;color:var(--t3);letter-spacing:.04em;margin-bottom:4px}
+.fact .v{font-size:14px;font-weight:600}
+/* chat */
+.chat{max-width:620px;padding:20px;display:flex;flex-direction:column;gap:12px;min-height:380px}
+.bub{max-width:82%;padding:13px 16px;border-radius:18px;font-size:14.5px;line-height:1.7}
+.bub.u{background:var(--ac);color:var(--ac-tx);align-self:flex-end;border-end-end-radius:6px}
+.bub.a{background:var(--s1);border:1px solid var(--bd);align-self:flex-start;border-end-start-radius:6px;box-shadow:var(--sh1)}
+.bub.a .ai{font-size:11px;font-weight:700;color:var(--blue-tx);letter-spacing:.05em;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.sug{display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start}
+.sug button{border:1px solid var(--bd);background:var(--s1);font:inherit;font-size:13px;font-weight:600;color:var(--t1);padding:9px 15px;border-radius:999px;cursor:pointer;transition:all .15s}
+.sug button:hover{border-color:var(--blue);color:var(--blue-tx)}
+.cin{display:flex;gap:10px;padding:14px 20px 22px;border-top:1px solid var(--bdsoft)}
+.cin .box{flex:1;display:flex;align-items:center;gap:10px;background:var(--s1);border:1px solid var(--bd);border-radius:999px;padding:6px 8px 6px 18px;box-shadow:var(--sh1)}
+[dir="ltr"] .cin .box{padding:6px 18px 6px 8px}
+.cin input{border:0;background:transparent;font:inherit;flex:1;outline:none;color:var(--t1);font-size:14.5px}
+.send{width:44px;height:44px;border-radius:50%;border:0;background:var(--ac);color:var(--ac-tx);font-size:18px;cursor:pointer;display:grid;place-items:center;transition:transform .15s}
+.send:hover{transform:scale(1.06)}.send:active{transform:scale(.94)}
+.mic{width:44px;height:44px;border-radius:50%;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-size:18px;cursor:pointer;display:grid;place-items:center}
+/* family */
+.fam{padding:22px 20px 30px;max-width:640px}
+.fam-head{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.fam-head .big{width:56px;height:56px;border-radius:18px;background:var(--sage-soft);display:grid;place-items:center;font-size:26px}
+.fam-head h3{font-size:19px;font-weight:700}
+.fam-head p{font-size:13px;color:var(--t2)}
+.members{display:grid;gap:10px;margin-bottom:22px}
+.mem{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--bd);border-radius:14px;background:var(--s1)}
+.mem .av2{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:15px;color:#fff}
+.mem h4{font-size:14.5px;font-weight:700}
+.mem span{font-size:12px;color:var(--t3)}
+.mem .r{margin-inline-start:auto}
+/* brand sheet */
+.sheet{padding:30px 24px;max-width:760px}
+.wm{font-size:52px;font-weight:800;letter-spacing:-.03em;margin:6px 0 2px}
+.wm.ar{font-size:56px;letter-spacing:0}
+.tagline{font-size:15px;color:var(--t2);margin-bottom:26px}
+.icons{display:flex;gap:18px;margin-bottom:26px;flex-wrap:wrap}
+.appicon{width:96px;height:96px;border-radius:26px;display:grid;place-items:center;box-shadow:var(--sh2)}
+.appicon.a{background:var(--ac);color:var(--ac-tx);font-size:44px;font-weight:800}
+.appicon.b{background:var(--s2);border:1px solid var(--bd);font-size:40px}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:26px}
+.sw{border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.sw .c{height:56px}
+.sw .t{padding:8px 10px;font-size:11px;font-weight:600;color:var(--t2)}
+.sw .t b{display:block;color:var(--t1);font-size:12px}
+.type{margin-bottom:8px}
+.type .s{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.type .n{font-size:12px;color:var(--t3);margin-top:4px}
+/* mobile */
+.mobile{max-width:390px;margin:0 auto;border-radius:34px;border:10px solid #1a1a1c;overflow:hidden;box-shadow:var(--sh3)}
+.mobile .nav{height:56px}
+.mobile .hero h2{font-size:27px}
+.foot{max-width:1180px;margin:0 auto;padding:26px 28px 60px;color:var(--t3);font-size:13px;line-height:1.8;border-top:1px solid var(--bd)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="brand"><div class="mark" id="hdrMark">م</div>
+    <div><h1 id="hdrT">Mawjood · مراجعة الاتجاه البصري v1.2</h1><div class="sub" id="hdrS">Modern Minimal AI + Human Memories — monochrome-first</div></div>
+  </div>
+  <div class="ctl">
+    <div class="seg" id="segL"><button data-l="ar" class="on">العربية</button><button data-l="en">English</button></div>
+    <div class="seg" id="segT"><button data-t="light" class="on">☀︎ <span>فاتح</span></button><button data-t="dark">☾ <span>داكن</span></button></div>
+  </div>
+</header>
+
+<div class="note" id="noteBox"></div>
+<div class="wrap" id="stages"></div>
+<div class="foot" id="footBox"></div>
+
+<script>
+let L='ar', TH='light';
+const ar=()=>L==='ar';
+const T={
+ ar:{title:'Mawjood · مراجعة الاتجاه البصري v1.2',sub:'Modern Minimal AI + Human Memories — أحادي اللون أولاً',
+  note:'<b>اتجاه مُراجَع v1.2</b> — استبدال لوحة الدفء (التراكوتا/الكريمي/الذهبي) بجمالية منتج ذكاء اصطناعي عصرية فاخرة <b>أحادية اللون أولاً</b>: أبيض، أسود قريب، رماديات محايدة. الأزرار الأساسية سوداء (فاتح) / بيضاء (داكن). لمسات ثانوية مقيّدة: أزرق ناعم + مريمية هادئة. الهوية العاطفية (العائلة، الانتماء، الذكريات) تُحمَل عبر التصوير والسرد والنصوص — لا عبر الزخرفة.',
+  brand:'الهوية والشعار',brandD:'شعار معاصر، أيقونتا تطبيق أحاديتا اللون، ولوحة v1.2.',
+  home:'الرئيسية',homeD:'تحية هادئة، بحث، تسجيل بارز بزر أسود، المساحات، وأحدث الذكريات — نظيف بلا ازدحام.',
+  timeline:'الخط الزمني',timelineD:'أرشيف زمني نظيف؛ علامة "اليوم" بالأزرق الناعم بدل الذهبي.',
+  detail:'تفاصيل الذكرى',detailD:'صورة بطولية، النص، الحقائق المستخرجة، والذكريات المرتبطة.',
+  ai:'المساعد الذكي',aiD:'محادثة مبنية على ذكرياتك؛ تمييز الذكاء بالأزرق الناعم، ومدخل "اسأل خزنتك".',
+  family:'مساحة العائلة',familyD:'الأعضاء والدعوات والمحتوى المشترك — هوية المريمية الهادئة.',
+  desktop:'سطح المكتب',mobile:'جوال',foot:'حزمة مراجعة فقط — ليست كود تطبيق. الألوان النهائية والشعار والشاشات المصقولة بانتظار اعتماد المالك. لا دمج، لا نشر، لا D1.'},
+ en:{title:'Mawjood · Visual Direction Review v1.2',sub:'Modern Minimal AI + Human Memories — monochrome-first',
+  note:'<b>Revised direction v1.2</b> — the warm palette (terracotta/cream/gold) is replaced with a modern, premium, <b>monochrome-first</b> AI product aesthetic: white, near-black, neutral grays. Primary buttons black (light) / white (dark). Restrained secondary accents: soft blue + muted sage. Emotional identity (family, belonging, memories) is carried through photography, storytelling, and copy — not ornament.',
+  brand:'Brand & logo',brandD:'Contemporary wordmark, two monochrome app-icon directions, and the v1.2 palette.',
+  home:'Home',homeD:'Calm greeting, search, prominent black record button, spaces, and latest memories — clean, uncluttered.',
+  timeline:'Timeline',timelineD:'Clean chronological archive; the "Today" marker in soft blue instead of gold.',
+  detail:'Memory detail',detailD:'Hero photo, narrative text, extracted facts, and related memories.',
+  ai:'AI assistant',aiD:'Conversation grounded in your memories; AI accents in soft blue, plus the "Ask your vault" entry.',
+  family:'Family space',familyD:'Members, invites, and shared content — quiet sage identity.',
+  desktop:'Desktop',mobile:'Mobile',foot:'Review package only — not application code. Final colors, logo, and polished screens await owner approval. No merge, no deploy, no D1.'}};
+
+const chip=(c,t)=>`<span class="chip ${c}">${t}</span>`;
+function noteHTML(){const t=T[L];return `${t.note}<div class="chips">${chip('','⬛/⬜ monochrome-first')}${chip('','Aa Inter + IBM Plex Sans Arabic')}${chip('blue',(ar()?'أزرق ناعم':'soft blue')+' · sparing')}${chip('sage',(ar()?'مريمية هادئة':'muted sage')+' · sparing')}${chip('',ar()?'بدون تراكوتا/ذهبي':'no terracotta/gold')}</div>`;}
+
+function navHTML(){const a=ar();
+ return `<div class="nav"><div class="wm">${a?'موجود':'Mawjood'}</div><div class="sp"></div>
+ <div class="ic">🔍</div><div class="ic">🔔</div><div class="av">${a?'ر':'R'}</div></div>
+ <div class="rail"><button class="on">${a?'الرئيسية':'Home'}</button><button>${a?'الخط الزمني':'Timeline'}</button><button>${a?'المساعد':'Assistant'}</button><button>${a?'العائلة':'Family'}</button><button>${a?'الخزنة':'Vault'}</button></div>`;}
+
+function brandMock(){const a=ar();
+ const sw=(c,n,h)=>`<div class="sw"><div class="c" style="background:${c}"></div><div class="t"><b>${n}</b>${h}</div></div>`;
+ return `<div class="app"><div class="sheet">
+ <div class="kick">${a?'الهوية':'Brand'}</div>
+ <div class="wm ${a?'ar':''}">${a?'موجود':'Mawjood'}</div>
+ <div class="tagline">${a?'ذكرياتك، حاضرة دائماً.':'Your memories, always present.'}</div>
+ <div class="icons">
+   <div><div class="appicon a">${a?'م':'M'}</div><div class="type"><div class="n">${a?'أ: حرف أحادي':'A: monogram'}</div></div></div>
+   <div><div class="appicon b">◈</div><div class="type"><div class="n">${a?'ب: علامة الذاكرة':'B: memory mark'}</div></div></div>
+ </div>
+ <div class="kick" style="margin-top:6px">${a?'لوحة v1.2':'v1.2 palette'}</div>
+ <div class="swatches">
+  ${sw('#FFFFFF','bg','#FFFFFF / #0A0A0B')}${sw('#F5F5F6','surface-2','#F5F5F6 / #1C1C1F')}
+  ${sw('#0A0A0B','accent','#0A0A0B / #FFFFFF')}${sw('#3B82C4','blue · sparing','#3B82C4 / #7FB2E5')}
+  ${sw('#5E7E63','sage · sparing','#5E7E63 / #8FAE93')}${sw('#E7E7EA','border','#E7E7EA / #2A2A2E')}
+ </div>
+ <div class="type"><div class="s">${a?'ذكريات العائلة، محفوظة بعناية':'Family memories, kept with care'}</div><div class="n">Display — Inter 800 / IBM Plex Sans Arabic 700 · tight tracking</div></div>
+ <div class="type"><div style="font-size:16px;line-height:1.8">${a?'نص واجهة معاصر ومقروء بالعربية والإنجليزية، بلا خطوط عتيقة.':'Contemporary, readable UI text in Arabic and English — no vintage serifs.'}</div><div class="n">Body — Inter 400 / IBM Plex Sans Arabic 400</div></div>
+ </div></div>`;}
+
+function homeMock(mode){const a=ar();
+ const cards=[
+  {t:a?'عيد ميلاد سارة':'Sara\u2019s birthday',m:a?'أمس · العائلة':'Yesterday · Family',c:'g1',p:a?'العائلة':'Family',pc:'s'},
+  {t:a?'وصفة الكنافة':'Knafeh recipe',m:a?'قبل يومين · خاص':'2 days ago · Private',c:'g2',p:a?'خاص':'Private',pc:''},
+  {t:a?'رحلة الشاطئ':'Beach trip',m:a?'الأسبوع الماضي · العائلة':'Last week · Family',c:'g3',p:a?'العائلة':'Family',pc:'s'}];
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="hero"><div class="kick">${a?'مساء الخير':'Good evening'}</div>
+ <h2>${a?'كل ذكرياتك في مكان واحد.':'Every memory, in one place.'}</h2>
+ <p>${a?'سجّل لحظة بصوتك، ودع موجود يحفظها وينظّمها ويذكّرك بها.':'Capture a moment by voice — Mawjood keeps it, organizes it, and brings it back.'}</p>
+ <div class="row"><button class="btn btn-p">🎙 ${a?'تسجيل ذكرى':'Record a memory'}</button><button class="btn btn-s">${a?'اسأل ذكرياتك':'Ask your memories'}</button></div></div>
+ <div class="search">🔍<input placeholder="${a?'ابحث في ذكرياتك…':'Search your memories…'}"></div>
+ <div class="spaces">
+  ${[{e:'🔒',t:a?'خاص':'Private',s:a?'١٢٤ ذكرى':'124 memories'},{e:'👨‍👩‍👧',t:a?'العائلة':'Family',s:a?'٨٦ ذكرى':'86 memories'},{e:'💼',t:a?'العمل':'Work',s:a?'٣١ ذكرى':'31 memories'}].map(s=>`<div class="spc"><div class="e">${s.e}</div><h4>${s.t}</h4><span>${s.s}</span></div>`).join('')}
+ </div>
+ <div class="cards">${cards.map(c=>`<div class="mcard"><div class="mph ${c.c}"><span>📷</span></div><div class="mbody"><h4>${c.t}</h4><div class="meta"><span>${c.m}</span><span class="pill ${c.pc}">${c.p}</span></div></div></div>`).join('')}</div>
+ </div></div>`;}
+
+function timelineMock(mode){const a=ar();
+ const day=(t,items,today)=>`<div class="tl-day${today?' today':''}"><h5>${today?'<span class="dot"></span>':''}${t}</h5>${items.map(i=>`<div class="tl-item"><div class="tl-rail"></div><div class="tl-card"><h4>${i.t}</h4><p>${i.p}</p></div></div>`).join('')}</div>`;
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="tl">
+ ${day(a?'اليوم':'Today',[{t:a?'قهوة الصباح مع أحمد':'Morning coffee with Ahmad',p:a?'سجّلت ملاحظة صوتية · ٨:١٢ ص':'Voice note · 8:12 AM'}],true)}
+ ${day(a?'أمس':'Yesterday',[{t:a?'عيد ميلاد سارة':'Sara\u2019s birthday',p:a?'١٢ صورة · مساحة العائلة':'12 photos · Family space'},{t:a?'قائمة التسوق':'Shopping list',p:a?'٧ عناصر مستخرجة':'7 items extracted'}])}
+ ${day(a?'الأسبوع الماضي':'Last week',[{t:a?'رحلة الشاطئ':'Beach trip',p:a?'٢٤ صورة · ٣ ذكريات مرتبطة':'24 photos · 3 related memories'}])}
+ </div></div></div>`;}
+
+function detailMock(mode){const a=ar();
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="det">
+ <div class="det-hero"><div class="in"><div class="kick" style="color:#d4d4d8">${a?'مساحة العائلة':'Family space'}</div><h2>${a?'عيد ميلاد سارة':'Sara\u2019s birthday'}</h2><div class="meta">${a?'١١ أكتوبر ٢٠٢٦ · ١٢ صورة':'Oct 11, 2026 · 12 photos'}</div></div></div>
+ <div class="det-body">
+ <p class="txt">${a?'احتفلنا بعيد ميلاد سارة في حديقة البيت. أحمد أحضر الكعكة، والأم جهّزت الكنافة. سارة أطفأت الشموع وتمنّت أمنية — لم تخبرنا بها.':'We celebrated Sara\u2019s birthday in the garden. Ahmad brought the cake; Mom made knafeh. Sara blew out the candles and made a wish — she wouldn\u2019t tell us.'}</p>
+ <div class="facts">
+  <div class="fact"><div class="k">${a?'الأشخاص':'People'}</div><div class="v">${a?'سارة، أحمد، الأم':'Sara, Ahmad, Mom'}</div></div>
+  <div class="fact"><div class="k">${a?'المكان':'Place'}</div><div class="v">${a?'حديقة البيت':'Home garden'}</div></div>
+  <div class="fact"><div class="k">${a?'التاريخ':'Date'}</div><div class="v">${a?'١١ أكتوبر ٢٠٢٦':'Oct 11, 2026'}</div></div>
+ </div>
+ <div class="kick">${a?'ذكريات مرتبطة':'Related memories'}</div>
+ <div class="cards" style="padding:12px 0 0">
+  <div class="mcard"><div class="mph g4"><span>📷</span></div><div class="mbody"><h4>${a?'عيد ميلاد سارة ٢٠٢٥':'Sara\u2019s birthday 2025'}</h4><div class="meta"><span class="pill b">${a?'ذات صلة':'Related'}</span></div></div></div>
+  <div class="mcard"><div class="mph g2"><span>📷</span></div><div class="mbody"><h4>${a?'وصفة كعكة الأم':'Mom\u2019s cake recipe'}</h4><div class="meta"><span class="pill b">${a?'ذات صلة':'Related'}</span></div></div></div>
+ </div>
+ </div></div></div></div>`;}
+
+function aiMock(mode){const a=ar();
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="chat">
+  <div class="bub u">${a?'وين حطيت جواز السفر؟':'Where did I put the passport?'}</div>
+  <div class="bub a"><div class="ai">✦ ${a?'موجود':'Mawjood'}</div>${a?'جواز سفرك في الدرج العلوي من مكتب غرفة النوم — سجّلت ذلك في ٣ سبتمبر.':'Your passport is in the top drawer of the bedroom desk — you recorded that on Sep 3.'}</div>
+  <div class="bub u">${a?'ذكّرني قبل رحلة الجمعة':'Remind me before Friday\u2019s trip'}</div>
+  <div class="bub a"><div class="ai">✦ ${a?'موجود':'Mawjood'}</div>${a?'تم — سأذكّرك الخميس ٧ مساءً بتجهيز الشنط وجواز السفر.':'Done — I\u2019ll remind you Thursday 7 PM to pack and take the passport.'}</div>
+  <div class="sug"><button>${a?'لخّص أسبوعي':'Summarize my week'}</button><button>${a?'وين مفاتيح السيارة؟':'Where are the car keys?'}</button></div>
+ </div>
+ <div class="cin"><div class="box"><button class="mic">🎙</button><input placeholder="${a?'اسأل عن أي ذكرى…':'Ask about any memory…'}"><button class="send">↑</button></div></div>
+ <div style="padding:0 20px 22px"><button class="btn btn-s" style="width:100%;justify-content:center">🔐 ${a?'اسأل خزنتك':'Ask your vault'}</button></div>
+ </div></div>`;}
+
+function familyMock(mode){const a=ar();
+ const members=a?[{n:'رزق',r:'مدير',i:'ر'},{n:'الأم',r:'عضو',i:'ا'},{n:'أحمد',r:'عضو',i:'أ'},{n:'سارة',r:'عضو',i:'س'}]:[{n:'Rezeq',r:'Admin',i:'R'},{n:'Mom',r:'Member',i:'M'},{n:'Ahmad',r:'Member',i:'A'},{n:'Sara',r:'Member',i:'S'}];
+ const cols=['#3f3f46','#52525b','#71717a','#3b3b40'];
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="fam">
+ <div class="fam-head"><div class="big">👨‍👩‍👧</div><div><h3>${a?'مساحة العائلة':'Family space'}</h3><p>${a?'٤ أعضاء · ٨٦ ذكرى مشتركة':'4 members · 86 shared memories'}</p></div><div style="flex:1"></div><button class="btn btn-p" style="padding:10px 18px;font-size:14px">${a?'دعوة':'Invite'}</button></div>
+ <div class="members">${members.map((m,i)=>`<div class="mem"><div class="av2" style="background:${cols[i]}">${m.i}</div><div><h4>${m.n}</h4><span>${m.r}</span></div><div class="r"><span class="pill s">${a?'نشط':'Active'}</span></div></div>`).join('')}</div>
+ <div class="kick">${a?'مشترك مؤخراً':'Recently shared'}</div>
+ <div class="cards" style="padding:12px 0 0">
+  <div class="mcard"><div class="mph g1"><span>📷</span></div><div class="mbody"><h4>${a?'عيد ميلاد سارة':'Sara\u2019s birthday'}</h4><div class="meta"><span>${a?'أمس':'Yesterday'}</span><span class="pill s">${a?'العائلة':'Family'}</span></div></div></div>
+  <div class="mcard"><div class="mph g3"><span>📝</span></div><div class="mbody"><h4>${a?'قائمة التسوق الأسبوعية':'Weekly shopping list'}</h4><div class="meta"><span>${a?'١٢ عنصر':'12 items'}</span><span class="pill s">${a?'العائلة':'Family'}</span></div></div></div>
+ </div>
+ </div></div></div>`;}
+
+const builders={brand:()=>brandMock()};
+const order=['brand','home','timeline','detail','ai','family'];
+
+function screenMock(k,m){return k==='home'?homeMock(m):k==='timeline'?timelineMock(m):k==='detail'?detailMock(m):k==='ai'?aiMock(m):familyMock(m);}
+
+function render(){
+ const t=T[L];document.documentElement.lang=L;document.documentElement.dir=ar()?'rtl':'ltr';
+ document.documentElement.dataset.theme=TH;document.title=t.title;
+ document.getElementById('hdrT').textContent=t.title;document.getElementById('hdrS').textContent=t.sub;
+ document.getElementById('hdrMark').textContent=ar()?'م':'M';
+ document.getElementById('noteBox').innerHTML=noteHTML();
+ document.querySelectorAll('#segL button').forEach(b=>b.classList.toggle('on',b.dataset.l===L));
+ document.querySelectorAll('#segT button').forEach(b=>b.classList.toggle('on',b.dataset.t===TH));
+ document.querySelectorAll('#segT button span')[0].textContent=ar()?'فاتح':'Light';
+ document.querySelectorAll('#segT button span')[1].textContent=ar()?'داكن':'Dark';
+ document.getElementById('stages').innerHTML=order.map((k,i)=>{
+  const single=k==='brand';
+  return `<div class="sec"><div class="sec-h"><span class="n">0${i+1}</span><h2>${t[k]}</h2></div><p class="d">${t[k+'D']}</p>
+  <div class="stage${single?'':' cols2'}">
+   ${single?`<div class="frame"><div class="tag"><span class="b">${t.brand}</span></div>${brandMock()}</div>`
+   :['desktop','mobile'].map(m=>`<div class="frame"><div class="tag"><span class="b">${t[k]}</span><span>${m==='desktop'?t.desktop:t.mobile}</span></div>${screenMock(k,m)}</div>`).join('')}
+  </div></div>`;}).join('');
+ document.getElementById('footBox').textContent=t.foot;
+}
+document.getElementById('segL').addEventListener('click',e=>{if(e.target.dataset.l){L=e.target.dataset.l;render();}});
+document.getElementById('segT').addEventListener('click',e=>{if(e.target.dataset.t){TH=e.target.dataset.t;render();}});
+render();
+</script>
+</body>
+</html>

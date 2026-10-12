@@ -24,6 +24,106 @@ Each entry records:
 
 ---
 
+## 2026-10-12 — Mission MAWJOOD D0.5: Complete Product Spec & Execution Blueprint (SPEC COMPLETE)
+
+- **Date:** 2026-10-12 ~13:55 UTC
+- **Deliverables:** 23 final documents under `docs/autonomous/d05/` (18 core + 5 brand),
+  synthesized from 8 workstream drafts (~3,450 lines) via 6 synthesis agents.
+- **Quality review (parent, independent):** docs-only scope verified; C1 resolved
+  (Stripe at D4); quotas all PROPOSED not finalized; photo Claim B kept
+  MEDIUM/unproven; brand direction is proposal-only (approval gate doc 23);
+  18+ applied consistently (20 docs); no invented owner approvals; no app code changes.
+- **Branch:** `d0.5/product-spec` @ `b30df965` (ledger-only; v1.2 content verified 9/9 at `23066225`) (pushed; PR #13 Draft).
+- **CI:** 9/9 PASS on exact HEAD `23066225` (verified 2026-10-12 ~15:15 UTC).
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/13 (Draft, docs-only).
+- **Visual review package (v1.2):** `docs/autonomous/d05/review-package/index.html`
+  (on the branch) — monochrome-first rebuild, 5 screens × desktop/mobile × AR/EN × light/dark + wordmark/icon.
+- **D1:** NOT started — awaiting explicit owner authorization after D0.5 spec review.
+
+## 2026-10-12 — Mission MAWJOOD D0.5: Complete Product Spec & Execution Blueprint (IN-PROGRESS)
+
+- **Date:** 2026-10-12 ~13:45 UTC
+- **Mission / task ID:** MAWJOOD D0.5 (owner-dispatched 2026-10-12 09:31 EDT; D0 approved+merged)
+- **Branch:** `d0.5/product-spec` (branched from main @ `8be1f8e`)
+- **Base SHA:** `8be1f8ead99d944b8230435b994c4ff2beaf790b` (D0 merged; owner-verified)
+- **Scope:** Complete implementation-ready product specification + engineering
+  execution blueprint. 18 versioned documents under `docs/autonomous/d05/`.
+  Planning/architecture/documentation ONLY — zero application code changes.
+  Bans: no feature implementation, no prod data changes, no deploys, no merges,
+  no billing activation, no D1. PR stays Draft.
+- **Owner decisions (all 9 approved, mandatory):** (1) durable memories, no
+  auto-deletion; (2) quotas designed, never delete existing, no invented numbers;
+  (3) Stripe in scope; (4) vault gate off until billing ready; (5) 18+ only;
+  (6) trash 30-day; (7) no destructive decay; (8) indexes/janitors design+test
+  only; (9) ai-provider-core conditional on 3 gates.
+- **Method:** Spec workstreams via coordinator subagent (7 workstreams dispatched
+  2026-10-12 ~13:50 UTC); parent synthesizes the 18 documents + independent
+  quality review. **Owner addition 2026-10-12 ~13:35 UTC: 8th workstream — Brand
+  Identity & Premium Frontend Design** (brand strategy, 3 visual directions with
+  recommendation, design tokens, frontend blueprint, Figma-ready specs for 5 key
+  screens, brand approval gate; final docs 19–23; no silent direction choice,
+  no code changes).
+- **Recovery anchor:** `8be1f8e` (main HEAD at D0.5 start); branch is docs-only.
+- **Review verdict:** pending (owner review of D0.5 spec required before D1).
+- **CI evidence:** pending (Draft PR + CI on PR HEAD after documents written).
+- **PR URL:** TBD (to be opened after specification documents are complete).
+
+## 2026-10-12 — D0.5 FINAL VERIFICATION: e2e-auth CI failure root-caused + fixed; v1.2 accepted as baseline (RECORDED)
+
+- **Owner acceptance:** v1.2 "Modern Minimal AI + Human Memories" accepted as the design baseline.
+- **CI failure investigated (run 38263560994, HEAD `b30df965`, job e2e-auth):**
+  logs show step 4 `supabase/setup-cli@v1` with `version: latest` failed with
+  "Failed to resolve latest Supabase CLI release: rate limit exceeded". The tests
+  never ran; the later "Stop local Supabase" failure is a cascade (exit 127).
+  **Verdict: environment/infrastructure failure — NOT a code regression, NOT a test defect.**
+  (The failing commit was docs-only; the same suite passed 9/9 at `23066225`.)
+- **Smallest justified correction:** pinned the CLI in `.github/workflows/ci.yml`
+  (`version: latest` → `version: 2.120.0`, latest stable as of 2026-10-06). Pinning
+  skips the rate-limited latest-resolution API call and improves reproducibility.
+  No tests, assertions, or security gates touched.
+- **v1.2 consistency pass:** fixed stale direction references in
+  `D05_EXECUTIVE_SUMMARY.md`, `FRONTEND_EXPERIENCE_AND_FIGMA_SPECS.md`, and
+  `OPEN_DECISIONS_AND_OWNER_APPROVALS.md` (OD-38 RESOLVED = v1.2 baseline; OD-39 logo/final
+  hex/polished screens still OPEN); `BRAND_STRATEGY_AND_POSITIONING.md` v1.1 alignment note.
+- **Still open:** final logo artwork; unresolved commercial decisions. No merge, no deploy, no D1.
+
+## 2026-10-12 — Owner Decision #11: Visual direction REVISED to v1.2 "Modern Minimal AI + Human Memories" (RECORDED)
+
+- **Date:** 2026-10-12 ~10:22 EDT / ~14:22 UTC
+- **Revision:** Owner reviewed the v1.1 mockups and directed a full revision: REPLACE
+  the warm terracotta/cream/gold palette with a modern, premium, monochrome-first
+  AI product aesthetic. Supersedes Decision #10's A+B palette (preserved as reviewed-but-superseded).
+- **v1.2 binding:** white / near-black / neutral grays primary · light = white bg + soft gray surfaces + dark type · dark = near-black bg + charcoal surfaces + soft-white type · primary buttons black (light) / white (dark) · restrained soft blue + muted sage sparingly · NO dominant terracotta, brown, gold, vintage paper · contemporary AR/EN type (Inter + IBM Plex Sans Arabic; no vintage serif display) · clean nav, excellent spacing, refined cards, subtle shadows, premium microinteractions · emotional identity via photography/storytelling/copy · no generic dashboards, excessive gradients, clutter · WCAG 2.2 AA, RTL/LTR, responsive, reduced-motion.
+- **Recorded in:** `VISUAL_IDENTITY_DIRECTIONS.md` (v1.2, revision record),
+  `DESIGN_TOKENS_AND_COMPONENTS.md` (v1.2, full monochrome token table + component updates),
+  `BRAND_APPROVAL_GATE.md` (v1.2, §7 revision record; gate still ACTIVE).
+- **Revised review package:** `docs/autonomous/d05/review-package/index.html` rebuilt with
+  v1.2 tokens — same 5 screens × desktop/mobile × AR-RTL/EN-LTR × light/dark + wordmark/icon.
+- **Still requires owner review:** final colors, typography lock-in, logo, polished screens. No app code, no merge, no D1.
+
+## 2026-10-12 — Owner Decision #10: Brand direction approved — A+B fusion (RECORDED, SUPERSEDED by #11)
+
+- **Date:** 2026-10-12 ~10:05 EDT / ~14:05 UTC
+- **Decision:** Direction A — "Warm Archive" selected as Mawjood's official visual
+  foundation, enhanced with Direction B's contemporary calmness and softness.
+  Emotional identity: calm, warm, trustworthy, family-centered; premium, elegant,
+  modern, emotionally engaging; never dated, cluttered, childish, or generic SaaS.
+- **Binding fusion:** retain A's ivory/ink/terracotta/editorial photography;
+  adopt B's clean layouts, softness, comfortable spacing, restrained sage accents;
+  contemporary readable AR/EN type, expressive display only where appropriate;
+  polished light/dark; real photography focus; responsive; subtle motion with
+  reduced-motion respect; WCAG 2.2 AA.
+- **Recorded in:** `VISUAL_IDENTITY_DIRECTIONS.md` (v1.1, approval record),
+  `DESIGN_TOKENS_AND_COMPONENTS.md` (v1.1, A+B fused tokens incl. sage roles,
+  softened spacing/radii), `BRAND_APPROVAL_GATE.md` (v1.1, §7 approval record).
+- **Visual review package:** high-fidelity HTML mockups at
+  `docs/autonomous/d05/review-package/index.html` — 5 screens (home, timeline,
+  detail, AI assistant, family space) × desktop/mobile × AR-RTL/EN-LTR ×
+  light/dark toggle, plus wordmark + app icon directions. Review-only, not app code.
+- **Still requires owner review:** final logo artwork, polished mockups, remaining
+  brand details. No frontend application code until approved.
+- **Bans honored:** PR #13 stays Draft; no D1; no deploy; no billing activation.
+
 ## 2026-10-12 — Owner: all 9 D0→D0.5 decisions APPROVED (RECORDED)
 
 - **Date:** 2026-10-12 ~09:20 EDT / ~13:20 UTC
