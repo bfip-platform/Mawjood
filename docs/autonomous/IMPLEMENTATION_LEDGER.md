@@ -24,6 +24,45 @@ Each entry records:
 
 ---
 
+## 2026-10-12 — Owner: all 9 D0→D0.5 decisions APPROVED (RECORDED)
+
+- **Date:** 2026-10-12 ~09:20 EDT / ~13:20 UTC
+- **Scope of approval:** Product planning ONLY — not production migrations,
+  deployment, billing activation, or application-code changes.
+- **Decisions:** (1) Durable saved memories — no auto-deletion by age, plan
+  downgrade, or quota overflow; redesign decay, pruneFacts, forget_fact.
+  (2) Free/Plus quotas designed in D0.5; existing memories preserved on
+  overflow; no numeric quotas invented (evidence-based options for owner
+  approval). (3) Stripe complete billing design in commercial scope.
+  (4) Vault paid-gate stays off until billing+entitlements ready.
+  (5) 18+ only at launch (approved earlier same day). (6) Trash keeps 30-day
+  recovery; no flip to zero. (7) No scheduled destructive decay; non-destructive
+  maintenance may be designed. (8) Indexes+janitors approved for design/testing
+  only; never delete saved memories via cleanup. (9) ai-provider-core conditional
+  on compatibility/security/regression gates.
+- **Recorded in:** `D0_TO_D05_HANDOFF.md` (full 9-decision set + details),
+  `D0_EXECUTIVE_REPORT.md`, ledger (this entry), `RECOVERY_CHECKPOINT_D0.md`.
+- **D0.5:** NOT started — awaiting explicit owner authorization.
+
+## 2026-10-12 — Owner Decision #5: 18+ only at launch (RECORDED)
+
+- **Date:** 2026-10-12 ~05:10 UTC
+- **Decision:** Mawjood launches for users aged 18 and older only. No child
+  accounts or child-specific features at launch. Enforce 18+ during registration;
+  reflect in Terms and Privacy Policy. Preserve architectural extensibility for
+  future parent-managed child accounts. No implementation of children's accounts
+  now; future minor support needs separate product/legal/security/owner approval.
+- **Recorded in:** `docs/autonomous/d0/D0_TO_D05_HANDOFF.md` (Decision #5 table +
+  full text + D0.5 implications), `docs/autonomous/d0/D0_EXECUTIVE_REPORT.md`.
+- **Evidence reconciliations (same commit):**
+  (1) Photo exploit — split into Claim A (code defect: CONFIRMED/HIGH) and
+  Claim B (E2E exploit chain: MEDIUM, pending scratch repro).
+  (2) AI E2E coverage — 5 E2E tests cover auth/notes/isolation/nav only; zero
+  automated coverage of chat/extract/memory-learn/ask/transcribe; prior
+  "verified" labels downgraded to "insufficiently tested" (manual verification only).
+- **Branch:** `d0/discovery-audit` @ `69aa2832` (pushed; PR #12 stays Draft).
+- **CI:** 9/9 PASS on exact HEAD `69aa2832` (verified 2026-10-12 ~06:00 UTC).
+
 ## 2026-10-12 — Mission MAWJOOD D0: Full Project Discovery & Audit (COMPLETE)
 
 - **Date:** 2026-10-12 ~04:10 UTC

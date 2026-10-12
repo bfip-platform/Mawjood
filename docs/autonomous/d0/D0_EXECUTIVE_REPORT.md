@@ -35,11 +35,11 @@ Comprehensive read-only audit of the entire Mawjood codebase at the merged D-1/D
 - **MEDIUM:** exploit chains, impact magnitudes, factory-side maturity
 - **LOW/unverifiable:** all production state (migrations applied, secrets, crons, table sizes, `verify_jwt`, redirect allowlist)
 
-## Unresolved (need owner/dashboard)
+## Unresolved (need dashboard/runtime — not owner decisions)
 
-Memory-consolidate fate · Plus memory quota · Stripe scope · vault paid-gate flip · `trash_retention_days` flip · redirect URLs · crons · secrets · `ops_events` monitoring · token/PAT revocation (still outstanding from D-1.1)
+Redirect URLs · scheduled crons · secrets present · storage policies applied · `verify_jwt` per function · prod table sizes · `ops_events` monitoring · admin audit-trail immutability · `admin.html` serving path · push credentials · contrast/a11y/browser-compat passes · fresh `npm audit` · scratch-project repro of photo escalation (Claim B) · token/PAT revocation (still outstanding from D-1.1)
 
-**Decided 2026-10-12 (Decision #5): 18+ only at launch** — no child accounts or child-specific features; enforce during registration; reflect in Terms + Privacy Policy; preserve architectural extensibility for future parent-managed child accounts; future minor support needs separate product/legal/security/owner approval.
+**All 9 owner decisions APPROVED 2026-10-12:** (1) durable saved memories — no auto-deletion by age/downgrade/quota; redesign decay, pruneFacts, forget_fact; (2) Free/Plus quotas designed in D0.5, existing memories preserved on overflow (no numeric quotas invented — evidence-based options for owner approval); (3) Stripe in commercial scope; (4) vault paid-gate stays off until billing+entitlements ready; (5) 18+ only at launch; (6) trash keeps 30-day recovery; (7) no scheduled destructive decay; (8) indexes+janitors approved for design/testing only, never delete saved memories; (9) ai-provider-core conditional on compatibility/security/regression gates. These authorize planning only — not prod migrations, deployment, billing activation, or app-code changes.
 
 ## Proposed D0.5 priorities
 

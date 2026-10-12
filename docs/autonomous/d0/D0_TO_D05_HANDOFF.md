@@ -5,35 +5,45 @@
 
 ## Entry criteria for D0.5
 
-- [ ] Owner approves D0 findings (this document set)
-- [ ] Owner decisions on the 9 items below
-- [ ] Draft PR merged by owner (or D0.5 branches from this HEAD)
+- [x] Owner approves D0 findings (approved 2026-10-12 — full 9-decision set)
+- [x] Owner decisions on all 9 items (complete — see above)
+- [ ] Draft PR #12 merged by owner (PR is ready for merge — see readiness note below)
 
-## Owner decisions required
+## Owner decisions — COMPLETE SET APPROVED 2026-10-12
 
-| # | Decision | Status | Blocks |
-|---|---|---|---|
-| 1 | `memory-consolidate`: disable decay / tier-aware redesign / keep-as-is | ⏳ Pending | Any durable-memory claim |
-| 2 | Intended Plus memory quota (none exists) | ⏳ Pending | Entitlement design |
-| 3 | Stripe: still postponed or in scope? | ⏳ Pending | All billing work |
-| 4 | Vault paid-gate LAUNCH flip | ⏳ Pending | Vault launch |
-| 5 | Age-gate / children's-data posture | ✅ **DECIDED 2026-10-12: 18+ only at launch** | Legal docs |
-| 6 | `trash_retention_days` 30→0 launch flip | ⏳ Pending | Trash UX |
-| 7 | Schedule `memory-consolidate` or remove "nightly" claim | ⏳ Pending | Ops honesty |
-| 8 | Approve index additions + retention janitor (repo-modifying) | ⏳ Pending | Perf work |
-| 9 | ai-provider-core GPT-5/Groq quirk coverage | ⏳ Pending | ADOPT scope |
+All nine decisions approved by the owner. These authorize **product planning only** — not production migrations, deployment, billing activation, or application-code changes. Do not invent numeric Free/Plus quotas; propose evidence-based options for owner approval during D0.5.
 
-### Decision #5 — Age eligibility (APPROVED 2026-10-12)
+| # | Decision | Status |
+|---|---|---|
+| 1 | **Durable saved memories:** no automatic deletion by age, plan downgrade, or quota overflow. Redesign decay, pruneFacts, and forget_fact to prevent silent data loss. | ✅ APPROVED 2026-10-12 |
+| 2 | **Free/Plus quotas:** design explicit creation and storage limits during D0.5. Existing saved memories must be preserved when limits are exceeded. | ✅ APPROVED 2026-10-12 |
+| 3 | **Stripe:** include complete subscription and billing design in the commercial product scope. | ✅ APPROVED 2026-10-12 |
+| 4 | **Vault paid gate:** do not activate until billing and entitlement enforcement are ready. | ✅ APPROVED 2026-10-12 |
+| 5 | **Launch age eligibility:** 18+ only. Future child accounts require separate approval. | ✅ APPROVED 2026-10-12 (earlier) |
+| 6 | **Trash:** retain a 30-day recovery period; do not flip to zero at launch. | ✅ APPROVED 2026-10-12 |
+| 7 | **Memory consolidation:** no scheduled destructive decay. Non-destructive maintenance may be designed. | ✅ APPROVED 2026-10-12 |
+| 8 | **Database indexes and retention janitors:** approved for design and testing, not production execution. Never delete saved memories through cleanup jobs. | ✅ APPROVED 2026-10-12 |
+| 9 | **ai-provider-core:** conditional adoption after compatibility, security, and regression verification. | ✅ APPROVED 2026-10-12 |
 
-**Mawjood launches for users aged 18 and older only.**
+### Decision details
 
-- No child accounts or child-specific features at launch.
-- Enforce the 18+ eligibility requirement during registration and reflect it in Terms and Privacy Policy.
-- Preserve architectural extensibility for future parent-managed child accounts and appropriate consent, privacy, and safety controls.
-- Do not implement or activate children's accounts now.
-- Future support for minors requires separate product, legal, security, and owner approval.
+**#1 — Durable saved memories (APPROVED):** Saved memories are never automatically deleted — not by age, not by plan downgrade, not by quota overflow. D0.5 must redesign three code paths: (a) the 90-day importance-1 decay in `memory-consolidate`, (b) the 200-fact cap in `pruneFacts` (cap must block new saves or require explicit user choice — never silent-delete), (c) `forget_fact`'s substring over-deletion (exact/mkey-scoped matching or confirm-listing; route through trash/undo).
 
-**D0.5 implications:** registration flow must include an 18+ eligibility gate (self-declaration at minimum; document the chosen mechanism); Terms + Privacy Policy must state the 18+ requirement; data model must not preclude future parent-managed child accounts (no schema changes now — extensibility only).
+**#2 — Free/Plus quotas (APPROVED):** D0.5 designs explicit creation and storage limits per tier. Hard rule: exceeding a limit blocks new creation — existing saved memories are never deleted to satisfy a quota. Numeric values are NOT set here; D0.5 proposes evidence-based options (from `ai_events` cost data, storage measurements) for owner approval.
+
+**#3 — Stripe (APPROVED):** Complete subscription and billing design is in scope for the commercial product: Checkout, webhooks, customer portal, plan changes, proration, dunning, invoices. Design in D0.5; no billing activation until owner approves the design and explicitly authorizes go-live.
+
+**#4 — Vault paid gate (APPROVED):** The `LAUNCH:` flip stays off. Vault remains available as designed until billing AND entitlement enforcement are both ready and owner-approved.
+
+**#5 — Age eligibility (APPROVED earlier 2026-10-12):** 18+ only at launch — no child accounts or child-specific features; enforce during registration; reflect in Terms and Privacy Policy; preserve architectural extensibility for future parent-managed child accounts; future minor support needs separate product/legal/security/owner approval.
+
+**#6 — Trash retention (APPROVED):** Keep the 30-day recovery period. Do not flip `trash_retention_days` to zero at launch. Users get a full 30-day undo window on deleted content.
+
+**#7 — Memory consolidation (APPROVED):** No scheduled destructive decay job. The "nightly" consolidation concept is retired as a destructive operation. D0.5 may design non-destructive maintenance (e.g., importance re-scoring, duplicate detection surfacing candidates to the user) — nothing that deletes without explicit user action.
+
+**#8 — Indexes and janitors (APPROVED for design/testing):** The pg_trgm + `items.note_id` + `(space_id, kind)` indexes and the telemetry retention janitor (`rate_limits`, `ai_events`, `ops_events`) are approved for design and testing in D0.5. Not approved for production execution yet. Absolute rule: no cleanup job ever deletes saved memories.
+
+**#9 — ai-provider-core (APPROVED conditional):** Adoption is approved conditional on three gates: (a) compatibility verification (Groq + OpenAI paths, GPT-5-mini quirks covered), (b) security review of the core, (c) regression verification against existing `_shared/ai.ts` behavior. Assessment only in D0.5 planning; integration follows the gates.
 
 ## Prioritized work queue
 
