@@ -33,9 +33,11 @@ Each entry records:
   (Stripe at D4); quotas all PROPOSED not finalized; photo Claim B kept
   MEDIUM/unproven; brand direction is proposal-only (approval gate doc 23);
   18+ applied consistently (20 docs); no invented owner approvals; no app code changes.
-- **Branch:** `d0.5/product-spec` @ `20048202` (pushed; PR #13 Draft).
-- **CI:** 9/9 PASS on exact HEAD `20048202` (verified 2026-10-12 ~14:30 UTC).
+- **Branch:** `d0.5/product-spec` @ `4ccd8ce4` (pushed; PR #13 Draft).
+- **CI:** 9/9 PASS on exact HEAD `4ccd8ce4` (verified 2026-10-12 ~15:00 UTC).
 - **PR URL:** https://github.com/bfip-platform/Mawjood/pull/13 (Draft, docs-only).
+- **Visual review package:** `docs/autonomous/d05/review-package/index.html`
+  (on the branch) — 5 screens × desktop/mobile × AR/EN × light/dark + wordmark/icon.
 - **D1:** NOT started — awaiting explicit owner authorization after D0.5 spec review.
 
 ## 2026-10-12 — Mission MAWJOOD D0.5: Complete Product Spec & Execution Blueprint (IN-PROGRESS)
@@ -66,7 +68,21 @@ Each entry records:
 - **CI evidence:** pending (Draft PR + CI on PR HEAD after documents written).
 - **PR URL:** TBD (to be opened after specification documents are complete).
 
-## 2026-10-12 — Owner Decision #10: Brand direction approved — A+B fusion (RECORDED)
+## 2026-10-12 — Owner Decision #11: Visual direction REVISED to v1.2 "Modern Minimal AI + Human Memories" (RECORDED)
+
+- **Date:** 2026-10-12 ~10:22 EDT / ~14:22 UTC
+- **Revision:** Owner reviewed the v1.1 mockups and directed a full revision: REPLACE
+  the warm terracotta/cream/gold palette with a modern, premium, monochrome-first
+  AI product aesthetic. Supersedes Decision #10's A+B palette (preserved as reviewed-but-superseded).
+- **v1.2 binding:** white / near-black / neutral grays primary · light = white bg + soft gray surfaces + dark type · dark = near-black bg + charcoal surfaces + soft-white type · primary buttons black (light) / white (dark) · restrained soft blue + muted sage sparingly · NO dominant terracotta, brown, gold, vintage paper · contemporary AR/EN type (Inter + IBM Plex Sans Arabic; no vintage serif display) · clean nav, excellent spacing, refined cards, subtle shadows, premium microinteractions · emotional identity via photography/storytelling/copy · no generic dashboards, excessive gradients, clutter · WCAG 2.2 AA, RTL/LTR, responsive, reduced-motion.
+- **Recorded in:** `VISUAL_IDENTITY_DIRECTIONS.md` (v1.2, revision record),
+  `DESIGN_TOKENS_AND_COMPONENTS.md` (v1.2, full monochrome token table + component updates),
+  `BRAND_APPROVAL_GATE.md` (v1.2, §7 revision record; gate still ACTIVE).
+- **Revised review package:** `docs/autonomous/d05/review-package/index.html` rebuilt with
+  v1.2 tokens — same 5 screens × desktop/mobile × AR-RTL/EN-LTR × light/dark + wordmark/icon.
+- **Still requires owner review:** final colors, typography lock-in, logo, polished screens. No app code, no merge, no D1.
+
+## 2026-10-12 — Owner Decision #10: Brand direction approved — A+B fusion (RECORDED, SUPERSEDED by #11)
 
 - **Date:** 2026-10-12 ~10:05 EDT / ~14:05 UTC
 - **Decision:** Direction A — "Warm Archive" selected as Mawjood's official visual

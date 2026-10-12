@@ -1,10 +1,31 @@
 # D0.5 — Visual Identity Directions
 
-**Version:** 1.1 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec`
-**Status:** ✅ **OWNER-APPROVED 2026-10-12: Direction A — "Warm Archive", enhanced with Direction B's contemporary calmness and softness.** See approval record below. Final logo artwork, polished mockups, and remaining brand details still require owner review (per approval gate).
-**Positioning anchor:** *"A beautiful, trusted place for your personal and family memories."* (see `BRAND_STRATEGY_AND_POSITIONING.md`)
+**Version:** 1.2 · **Date:** 2026-10-12 · **Branch:** `d0.5/product-spec`
+**Status:** ✅ **OWNER-REVISED 2026-10-12: "Modern Minimal AI + Human Memories"** — monochrome-first premium aesthetic. This revision SUPERSEDES the v1.1 Warm Archive + B fusion palette. Final colors, typography, logo, and polished screens remain subject to visual review and approval.
+**Positioning anchor:** *"A beautiful, trusted place for your personal and family memories."*
 
-## Owner approval record (2026-10-12)
+## Owner revision record — v1.2 "Modern Minimal AI + Human Memories" (2026-10-12)
+
+After reviewing the v1.1 mockups, the owner directed a significant revision: replace the warm terracotta/cream-heavy palette with a modern, premium, monochrome-first AI product aesthetic.
+
+**v1.2 requirements (owner-specified, binding):**
+1. Primary colors: white, near-black, subtle neutral grays.
+2. Light mode: white backgrounds, soft gray surfaces, dark typography.
+3. Dark mode: near-black backgrounds, charcoal surfaces, soft-white typography.
+4. Primary buttons: black in light mode, white in dark mode.
+5. Secondary accents: restrained soft blue + muted sage, used sparingly.
+6. REMOVE: dominant terracotta, brown, gold, vintage paper styling.
+7. Contemporary Arabic and English typography.
+8. Clean navigation, excellent spacing, refined cards, subtle shadows, premium microinteractions.
+9. Emotional identity (family, belonging, memories) carried by photography, storytelling, thoughtful copy, human-centered UX — not by vintage styling.
+10. Avoid generic dashboard styling, excessive gradients, visual clutter.
+11. Maintain accessibility (WCAG 2.2 AA), RTL/LTR, responsiveness, reduced-motion support.
+
+**What carries forward from v1.1:** the emotional positioning, memory-first IA, human-centered UX patterns, Figma-ready screen specs structure, and the approval-gate process. Only the visual surface (palette, type expression, button treatment) changes.
+
+The v1.1 Warm Archive direction below is preserved as the superseded reviewed option for reference.
+
+## Owner approval record (2026-10-12) — SUPERSEDED by v1.2 revision
 
 **Selected:** Direction A — Warm Archive, fused with Direction B's qualities.
 
@@ -20,7 +41,7 @@
 7. Subtle transitions + meaningful microinteractions, respecting reduced-motion.
 8. WCAG 2.2 AA contrast and accessibility throughout.
 
-The three directions below are preserved as the reviewed options. Direction A is now the official foundation; its token values in `DESIGN_TOKENS_AND_COMPONENTS.md` have been updated to the approved A+B fusion (v1.1).
+The three directions below are preserved as the reviewed options. **On 2026-10-12 ~10:22 EDT the owner reviewed the v1.1 mockups and superseded this approval with the v1.2 direction "Modern Minimal AI + Human Memories" (monochrome-first premium AI aesthetic).** The v1.1 A+B fusion palette (terracotta/ivory/gold) must not be used as the working palette. Working tokens are in `DESIGN_TOKENS_AND_COMPONENTS.md` v1.2.
 
 Each direction is a complete, internally consistent system: palette (hex), typography (Arabic + Latin), shapes, imagery, iconography, UI characteristics — plus honest pros/cons.
 

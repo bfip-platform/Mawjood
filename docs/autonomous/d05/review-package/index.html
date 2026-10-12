@@ -1,389 +1,361 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl" id="root">
+<html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mawjood — Visual Design Review Package (Direction A+B Approved)</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Mawjood — v1.2 Visual Direction Review · Modern Minimal AI + Human Memories</title>
 <style>
-/* ============ MAWJOOD A+B FUSION TOKENS (v1.1 approved) ============ */
-:root{
-  --bg:#FAF6EE; --surface-1:#FFFFFF; --surface-2:#F3EDE1; --surface-soft:#F7F1E5;
-  --border:#E7DECF; --border-soft:#EFE7D6;
-  --text-1:#211A13; --text-2:#5C5245; --text-3:#75664F;
-  --accent:#B4471F; --accent-ink:#8C3415; --accent-pressed:#8C3415;
-  --sage:#5F7A5E; --sage-soft:#E4EADF; --sage-dark:#8FAE8D;
-  --gold:#C9963C; --success:#3E7C4F; --danger:#B3372C;
-  --focus-ring:#8C3415; --scrim:rgba(33,26,19,.45);
-  --shadow-1:0 1px 2px rgba(33,26,19,.06); --shadow-2:0 4px 16px rgba(33,26,19,.08); --shadow-3:0 12px 32px rgba(33,26,19,.14);
-  --font-ui:'Inter','IBM Plex Sans Arabic',system-ui,sans-serif;
-  --font-display:'Fraunces','Noto Naskh Arabic',serif;
-  --font-ar-ui:'IBM Plex Sans Arabic','Inter',system-ui,sans-serif;
-  --font-ar-display:'Noto Naskh Arabic','Fraunces',serif;
+/* ============ v1.2 TOKENS — monochrome-first ============ */
+:root, [data-theme="light"]{
+  --bg:#FFFFFF; --s1:#FFFFFF; --s2:#F5F5F6; --ssoft:#F9F9FA;
+  --bd:#E7E7EA; --bdsoft:#F0F0F2;
+  --t1:#0A0A0B; --t2:#52525B; --t3:#71717A;
+  --ac:#0A0A0B; --ac-tx:#FFFFFF; --ac-pr:#3F3F46;
+  --blue:#3B82C4; --blue-tx:#2F6FA8; --blue-soft:#EAF2FB;
+  --sage:#5E7E63; --sage-soft:#EDF3EE;
+  --danger:#C23B2E; --warn:#9A6B1A;
+  --sh1:0 1px 2px rgba(10,10,11,.05); --sh2:0 4px 16px rgba(10,10,11,.07); --sh3:0 12px 32px rgba(10,10,11,.12);
+  --scrim:rgba(10,10,11,.45);
 }
 [data-theme="dark"]{
-  --bg:#16120D; --surface-1:#221B13; --surface-2:#2A2117; --surface-soft:#262017;
-  --border:#3A2F22; --border-soft:#33291D;
-  --text-1:#F4EDE1; --text-2:#C4B7A3; --text-3:#A89A83;
-  --accent:#E07B4A; --accent-ink:#E07B4A; --accent-pressed:#C96A38;
-  --sage:#8FAE8D; --sage-soft:#2C362B;
-  --gold:#D9A94F; --success:#7CBF8A; --danger:#E07B5A;
-  --focus-ring:#E07B4A; --scrim:rgba(10,8,5,.55);
-  --shadow-1:0 1px 2px rgba(0,0,0,.35); --shadow-2:0 4px 16px rgba(0,0,0,.45); --shadow-3:0 12px 32px rgba(0,0,0,.55);
+  --bg:#0A0A0B; --s1:#141416; --s2:#1C1C1F; --ssoft:#18181B;
+  --bd:#2A2A2E; --bdsoft:#232327;
+  --t1:#F5F5F4; --t2:#C9C9CE; --t3:#A1A1AA;
+  --ac:#FFFFFF; --ac-tx:#0A0A0B; --ac-pr:#E4E4E7;
+  --blue:#7FB2E5; --blue-tx:#9CC4EC; --blue-soft:#1B2A3A;
+  --sage:#8FAE93; --sage-soft:#1E2B22;
+  --danger:#E07B5A; --warn:#D9A44A;
+  --sh1:0 1px 2px rgba(0,0,0,.4); --sh2:0 4px 16px rgba(0,0,0,.45); --sh3:0 12px 32px rgba(0,0,0,.55);
+  --scrim:rgba(10,10,11,.55);
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text-1);font-family:var(--font-ui);line-height:1.5;transition:background .3s,color .3s}
-[dir="rtl"] body, [dir="rtl"] .mock{font-family:var(--font-ar-ui)}
-/* ============ REVIEW CHROME ============ */
-.review-bar{position:sticky;top:0;z-index:100;background:var(--surface-1);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;box-shadow:var(--shadow-1)}
-.review-bar h1{font-family:var(--font-display);font-size:20px;font-weight:600}
-[dir="rtl"] .review-bar h1{font-family:var(--font-ar-display)}
-.review-bar .controls{display:flex;gap:8px;margin-inline-start:auto;flex-wrap:wrap}
-.seg{display:flex;background:var(--surface-2);border-radius:12px;padding:3px;gap:2px}
-.seg button{border:0;background:transparent;color:var(--text-2);font:inherit;font-size:13px;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;transition:all .15s}
-.seg button.on{background:var(--surface-1);color:var(--text-1);box-shadow:var(--shadow-1)}
-.seg button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
-.stage{max-width:1280px;margin:0 auto;padding:40px 24px}
-.stage-head{margin-bottom:28px}
-.stage-head .kicker{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:8px}
-.stage-head h2{font-family:var(--font-display);font-size:32px;font-weight:600;line-height:1.25;margin-bottom:8px}
-[dir="rtl"] .stage-head h2{font-family:var(--font-ar-display);line-height:1.65}
-.stage-head p{color:var(--text-2);max-width:640px;font-size:15px}
-.mock-grid{display:grid;gap:32px}
-.mock-frame{background:var(--surface-1);border:1px solid var(--border);border-radius:20px;overflow:hidden;box-shadow:var(--shadow-2)}
-.mock-frame .frame-label{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
-.mock-frame .frame-label b{font-size:14px}
-.mock-frame .frame-label span{font-size:12px;color:var(--text-3)}
-.mock-viewport{background:var(--bg);display:flex;justify-content:center;padding:32px;min-height:400px}
-.mock-viewport.mobile .phone{width:375px}
-.mock{background:var(--bg);border-radius:12px;overflow:hidden;position:relative}
-/* desktop mock */
-.mock.desktop{width:100%;max-width:1024px;min-height:640px;border:1px solid var(--border);box-shadow:var(--shadow-2)}
-/* phone mock */
-.phone{width:375px;min-height:720px;border:1px solid var(--border);border-radius:36px;overflow:hidden;box-shadow:var(--shadow-3);background:var(--bg);position:relative;flex-shrink:0}
-.phone .notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:120px;height:28px;background:var(--text-1);border-radius:16px;z-index:5;opacity:.9}
-/* ============ APP UI PRIMITIVES ============ */
-.app{font-size:15px;color:var(--text-1)}
-.app-topbar{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface-1)}
-.app-topbar .wordmark{font-family:var(--font-display);font-weight:700;font-size:22px;color:var(--accent-ink)}
-[dir="rtl"] .app-topbar .wordmark{font-family:var(--font-ar-display)}
-.avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--gold));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
-.searchbar{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text-3);font-size:14px;display:flex;gap:10px;align-items:center}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:13px 22px;font:inherit;font-weight:600;font-size:15px;cursor:pointer;transition:transform .15s,box-shadow .15s}
-.btn-primary{background:var(--accent);color:#fff;box-shadow:var(--shadow-1)}
-.btn-primary:active{transform:scale(.97)}
-.btn-secondary{background:var(--sage-soft);color:var(--sage)}
-.btn-ghost{background:transparent;color:var(--text-2)}
-.chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);padding:7px 14px;border-radius:999px;font-size:13px;font-weight:600;color:var(--text-2)}
-.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.card{background:var(--surface-1);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:var(--shadow-1)}
-.mem-card{background:var(--surface-1);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow-1);transition:transform .2s,box-shadow .2s}
-.mem-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
-.mem-photo{height:150px;background:linear-gradient(135deg,#D9C7A7,#B49B78 45%,#8FAE8D 130%);position:relative;display:flex;align-items:flex-end}
-.mem-photo.alt{background:linear-gradient(135deg,#C9A96A,#B4471F 120%)}
-.mem-photo.alt2{background:linear-gradient(135deg,#8FAE8D,#5F7A5E 120%)}
-.mem-photo .cap{position:absolute;inset-inline:0;bottom:0;padding:24px 14px 10px;background:linear-gradient(transparent,var(--scrim));color:#fff;font-size:12px;font-weight:600}
-.mem-body{padding:14px 16px}
-.mem-body h4{font-size:15px;font-weight:600;margin-bottom:4px}
-.mem-body .meta{font-size:12px;color:var(--text-3)}
-.space-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--sage-soft);color:var(--sage)}
-.space-badge.private{background:var(--surface-2);color:var(--text-2)}
-.timeline-date{display:flex;align-items:center;gap:12px;margin:26px 0 14px}
-.timeline-date .line{flex:1;height:1px;background:var(--border)}
-.timeline-date b{font-size:13px;color:var(--text-3);font-weight:700;background:var(--surface-soft);padding:5px 14px;border-radius:999px;border:1px solid var(--border-soft)}
-.chat-bubble{max-width:78%;padding:13px 17px;border-radius:18px;font-size:14.5px;line-height:1.6}
-.chat-bubble.ai{background:var(--surface-1);border:1px solid var(--border);border-start-start-radius:6px}
-.chat-bubble.user{background:var(--accent);color:#fff;border-start-end-radius:6px;margin-inline-start:auto}
-.voice-btn{width:64px;height:64px;border-radius:50%;background:var(--accent);color:#fff;border:0;font-size:26px;cursor:pointer;box-shadow:var(--shadow-2);display:flex;align-items:center;justify-content:center;transition:transform .15s}
-.voice-btn:active{transform:scale(.93)}
-.bottom-nav{display:flex;border-top:1px solid var(--border);background:var(--surface-1);padding:10px 8px calc(10px + env(safe-area-inset-bottom))}
-.bottom-nav a{flex:1;text-align:center;font-size:11px;color:var(--text-3);text-decoration:none;font-weight:600;display:flex;flex-direction:column;gap:3px;align-items:center;padding:4px}
-.bottom-nav a.on{color:var(--accent-ink)}
-.bottom-nav .ico{font-size:20px}
-.sheet-handle{width:40px;height:4px;border-radius:2px;background:var(--border);margin:10px auto}
-.section-title{font-size:17px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
-.section-title a{font-size:13px;color:var(--accent-ink);text-decoration:none;font-weight:600}
-.gold-note{border-inline-start:3px solid var(--gold);background:var(--surface-soft);padding:12px 16px;border-radius:0 12px 12px 0;font-size:13.5px;color:var(--text-2)}
-[dir="ltr"] .gold-note{border-radius:12px 0 0 12px;border-inline-start:0;border-inline-end:3px solid var(--gold)}
-/* wordmark */
-.wordmark-demo{display:flex;gap:40px;align-items:center;flex-wrap:wrap;padding:32px}
-.wm{font-family:var(--font-ar-display);font-size:56px;font-weight:700;color:var(--text-1)}
-.wm .dot{color:var(--accent)}
-.wm-latin{font-family:var(--font-display);font-size:44px;font-weight:600;letter-spacing:-.01em}
-.app-icon{width:120px;height:120px;border-radius:28px;background:linear-gradient(145deg,var(--accent) 0%,#8C3415 100%);display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-3);position:relative;overflow:hidden}
-.app-icon::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 20%,rgba(255,255,255,.25),transparent 55%)}
-.app-icon span{font-family:var(--font-ar-display);font-size:64px;font-weight:700;color:#fff;position:relative}
-.app-icon.alt{background:linear-gradient(145deg,#5F7A5E,#3E5A3D)}
-.hidden{display:none!important}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+body{font-family:Inter,'IBM Plex Sans Arabic',system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--ssoft);color:var(--t1);transition:background .25s,color .25s}
+[dir="rtl"] body{font-family:'IBM Plex Sans Arabic',Inter,system-ui,sans-serif}
+/* ============ review chrome ============ */
+.hdr{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.mark{width:36px;height:36px;border-radius:11px;background:var(--ac);color:var(--ac-tx);display:grid;place-items:center;font-weight:800;font-size:20px}
+.hdr h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.hdr .sub{font-size:12px;color:var(--t3)}
+.ctl{display:flex;align-items:center;gap:8px;margin-inline-start:auto;flex-wrap:wrap}
+.seg{display:flex;background:var(--s2);border:1px solid var(--bd);border-radius:999px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--t2);font:inherit;font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;cursor:pointer;transition:all .15s}
+.seg button.on{background:var(--ac);color:var(--ac-tx)}
+.note{max-width:1180px;margin:26px auto 0;padding:0 28px;font-size:14px;color:var(--t2);line-height:1.75}
+.note b{color:var(--t1)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;background:var(--s2);border:1px solid var(--bd);color:var(--t2)}
+.chip.blue{background:var(--blue-soft);color:var(--blue-tx);border-color:transparent}
+.chip.sage{background:var(--sage-soft);color:var(--sage);border-color:transparent}
+/* ============ screen sections ============ */
+.wrap{max-width:1180px;margin:0 auto;padding:28px}
+.sec{margin:44px 0}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.sec-h h2{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.sec-h .n{font-size:13px;font-weight:700;color:var(--t3);letter-spacing:.08em}
+.sec p.d{font-size:14px;color:var(--t2);line-height:1.7;margin-bottom:20px;max-width:70ch}
+.stage{display:grid;gap:22px}
+.stage.cols2{grid-template-columns:1fr 1fr}
+@media(max-width:900px){.stage.cols2{grid-template-columns:1fr}}
+.frame{border:1px solid var(--bd);border-radius:18px;overflow:hidden;background:var(--bg);box-shadow:var(--sh2)}
+.frame .tag{padding:10px 16px;font-size:12px;font-weight:600;color:var(--t3);border-bottom:1px solid var(--bdsoft);display:flex;justify-content:space-between;align-items:center}
+.frame .tag .b{font-weight:700;color:var(--t1)}
+/* ============ app mock primitives ============ */
+.app{background:var(--bg);color:var(--t1)}
+.nav{height:64px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--bd)}
+.nav .wm{font-weight:800;font-size:18px;letter-spacing:-.02em}
+.nav .sp{flex:1}
+.nav .ic{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--s2);color:var(--t2);font-size:16px;cursor:pointer;transition:transform .15s}
+.nav .ic:hover{transform:scale(1.06)}
+.nav .ic:active{transform:scale(.96)}
+.nav .av{width:38px;height:38px;border-radius:50%;background:#3a3a3e;color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px}
+.rail{display:flex;gap:4px;padding:10px 20px;border-bottom:1px solid var(--bdsoft);overflow-x:auto}
+.rail button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:var(--t2);padding:9px 15px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:all .15s}
+.rail button.on{background:var(--s2);color:var(--t1)}
+.hero{padding:40px 24px 28px;max-width:560px}
+.kick{font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--t3);text-transform:uppercase;margin-bottom:14px}
+[dir="rtl"] .kick{letter-spacing:.02em}
+.hero h2{font-size:34px;font-weight:800;letter-spacing:-.025em;line-height:1.18;margin-bottom:12px}
+.hero p{font-size:15px;color:var(--t2);line-height:1.7;margin-bottom:22px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:0;font:inherit;font-weight:600;font-size:15px;padding:13px 24px;border-radius:12px;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-p{background:var(--ac);color:var(--ac-tx)}
+.btn-p:hover{box-shadow:var(--sh2);transform:translateY(-1px)}
+.btn-p:active{transform:scale(.98)}
+.btn-s{background:var(--s1);color:var(--t1);border:1px solid var(--bd)}
+.btn-s:hover{border-color:var(--t3)}
+.search{margin:0 20px 6px;display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid transparent;border-radius:14px;padding:13px 16px;color:var(--t3);font-size:14px;transition:border .15s}
+.search:focus-within{border-color:var(--blue)}
+.search input{border:0;background:transparent;font:inherit;flex:1;color:var(--t1);outline:none}
+.spaces{display:flex;gap:12px;padding:18px 20px;overflow-x:auto}
+.spc{min-width:128px;border:1px solid var(--bd);border-radius:16px;padding:16px 14px;background:var(--s1);cursor:pointer;transition:transform .15s,box-shadow .15s}
+.spc:hover{transform:translateY(-2px);box-shadow:var(--sh2)}
+.spc .e{font-size:24px;margin-bottom:8px}
+.spc h4{font-size:14px;font-weight:700;margin-bottom:3px}
+.spc span{font-size:12px;color:var(--t3)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;padding:6px 20px 26px}
+.mcard{border:1px solid var(--bd);border-radius:16px;overflow:hidden;background:var(--s1);box-shadow:var(--sh1);transition:transform .18s,box-shadow .18s;cursor:pointer}
+.mcard:hover{transform:translateY(-3px);box-shadow:var(--sh2)}
+.mph{height:130px;position:relative;display:grid;place-items:end start;padding:12px;color:#fff;font-size:12px;font-weight:600}
+.mph::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,var(--scrim),transparent 55%)}
+.mph span{position:relative;z-index:1}
+.mph.g1{background:linear-gradient(135deg,#26262b,#4b4b52)}
+.mph.g2{background:linear-gradient(135deg,#333338,#5c5c64)}
+.mph.g3{background:linear-gradient(135deg,#1e1e22,#43434b)}
+.mph.g4{background:linear-gradient(135deg,#2b2b30,#565660)}
+.mbody{padding:14px 16px}
+.mbody h4{font-size:15px;font-weight:700;margin-bottom:5px;letter-spacing:-.01em}
+.mbody .meta{font-size:12px;color:var(--t3);display:flex;gap:8px;align-items:center}
+.pill{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--s2);color:var(--t2)}
+.pill.b{background:var(--blue-soft);color:var(--blue-tx)}
+.pill.s{background:var(--sage-soft);color:var(--sage)}
+/* timeline */
+.tl{padding:22px 20px 30px;max-width:640px}
+.tl-day{margin-bottom:26px}
+.tl-day>h5{font-size:12px;font-weight:700;color:var(--t3);letter-spacing:.06em;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.tl-day.today>h5 .dot{width:8px;height:8px;border-radius:50%;background:var(--blue)}
+.tl-item{display:flex;gap:14px;margin-bottom:12px}
+.tl-rail{width:2px;background:var(--bd);border-radius:2px;flex-shrink:0;margin:6px 0}
+.tl-card{flex:1;border:1px solid var(--bd);border-radius:14px;background:var(--s1);padding:14px 16px;box-shadow:var(--sh1);transition:transform .15s}
+.tl-card:hover{transform:translateX(-2px)}
+[dir="ltr"] .tl-card:hover{transform:translateX(2px)}
+.tl-card h4{font-size:14.5px;font-weight:700;margin-bottom:4px}
+.tl-card p{font-size:13px;color:var(--t2);line-height:1.6}
+/* detail */
+.det{max-width:680px;padding-bottom:30px}
+.det-hero{height:300px;position:relative;display:grid;place-items:end start;padding:24px;color:#fff;background:linear-gradient(135deg,#232327,#4e4e56)}
+.det-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(5,5,6,.72),transparent 60%)}
+.det-hero .in{position:relative;z-index:1}
+.det-hero h2{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-bottom:8px}
+.det-hero .meta{font-size:13px;opacity:.85}
+.det-body{padding:22px 22px 0}
+.det-body .txt{font-size:15.5px;line-height:1.85;color:var(--t1);margin-bottom:20px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px}
+.fact{background:var(--s2);border-radius:12px;padding:12px 14px}
+.fact .k{font-size:11px;font-weight:700;color:var(--t3);letter-spacing:.04em;margin-bottom:4px}
+.fact .v{font-size:14px;font-weight:600}
+/* chat */
+.chat{max-width:620px;padding:20px;display:flex;flex-direction:column;gap:12px;min-height:380px}
+.bub{max-width:82%;padding:13px 16px;border-radius:18px;font-size:14.5px;line-height:1.7}
+.bub.u{background:var(--ac);color:var(--ac-tx);align-self:flex-end;border-end-end-radius:6px}
+.bub.a{background:var(--s1);border:1px solid var(--bd);align-self:flex-start;border-end-start-radius:6px;box-shadow:var(--sh1)}
+.bub.a .ai{font-size:11px;font-weight:700;color:var(--blue-tx);letter-spacing:.05em;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.sug{display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start}
+.sug button{border:1px solid var(--bd);background:var(--s1);font:inherit;font-size:13px;font-weight:600;color:var(--t1);padding:9px 15px;border-radius:999px;cursor:pointer;transition:all .15s}
+.sug button:hover{border-color:var(--blue);color:var(--blue-tx)}
+.cin{display:flex;gap:10px;padding:14px 20px 22px;border-top:1px solid var(--bdsoft)}
+.cin .box{flex:1;display:flex;align-items:center;gap:10px;background:var(--s1);border:1px solid var(--bd);border-radius:999px;padding:6px 8px 6px 18px;box-shadow:var(--sh1)}
+[dir="ltr"] .cin .box{padding:6px 18px 6px 8px}
+.cin input{border:0;background:transparent;font:inherit;flex:1;outline:none;color:var(--t1);font-size:14.5px}
+.send{width:44px;height:44px;border-radius:50%;border:0;background:var(--ac);color:var(--ac-tx);font-size:18px;cursor:pointer;display:grid;place-items:center;transition:transform .15s}
+.send:hover{transform:scale(1.06)}.send:active{transform:scale(.94)}
+.mic{width:44px;height:44px;border-radius:50%;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-size:18px;cursor:pointer;display:grid;place-items:center}
+/* family */
+.fam{padding:22px 20px 30px;max-width:640px}
+.fam-head{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.fam-head .big{width:56px;height:56px;border-radius:18px;background:var(--sage-soft);display:grid;place-items:center;font-size:26px}
+.fam-head h3{font-size:19px;font-weight:700}
+.fam-head p{font-size:13px;color:var(--t2)}
+.members{display:grid;gap:10px;margin-bottom:22px}
+.mem{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--bd);border-radius:14px;background:var(--s1)}
+.mem .av2{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:15px;color:#fff}
+.mem h4{font-size:14.5px;font-weight:700}
+.mem span{font-size:12px;color:var(--t3)}
+.mem .r{margin-inline-start:auto}
+/* brand sheet */
+.sheet{padding:30px 24px;max-width:760px}
+.wm{font-size:52px;font-weight:800;letter-spacing:-.03em;margin:6px 0 2px}
+.wm.ar{font-size:56px;letter-spacing:0}
+.tagline{font-size:15px;color:var(--t2);margin-bottom:26px}
+.icons{display:flex;gap:18px;margin-bottom:26px;flex-wrap:wrap}
+.appicon{width:96px;height:96px;border-radius:26px;display:grid;place-items:center;box-shadow:var(--sh2)}
+.appicon.a{background:var(--ac);color:var(--ac-tx);font-size:44px;font-weight:800}
+.appicon.b{background:var(--s2);border:1px solid var(--bd);font-size:40px}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:26px}
+.sw{border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.sw .c{height:56px}
+.sw .t{padding:8px 10px;font-size:11px;font-weight:600;color:var(--t2)}
+.sw .t b{display:block;color:var(--t1);font-size:12px}
+.type{margin-bottom:8px}
+.type .s{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.type .n{font-size:12px;color:var(--t3);margin-top:4px}
+/* mobile */
+.mobile{max-width:390px;margin:0 auto;border-radius:34px;border:10px solid #1a1a1c;overflow:hidden;box-shadow:var(--sh3)}
+.mobile .nav{height:56px}
+.mobile .hero h2{font-size:27px}
+.foot{max-width:1180px;margin:0 auto;padding:26px 28px 60px;color:var(--t3);font-size:13px;line-height:1.8;border-top:1px solid var(--bd)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
-<body data-theme="light">
-<div class="review-bar">
-  <h1 id="rb-title">موجود — حزمة مراجعة التصميم</h1>
-  <div class="controls">
-    <div class="seg" id="seg-screen"></div>
-    <div class="seg" id="seg-lang">
-      <button data-lang="ar" class="on">العربية</button><button data-lang="en">English</button>
-    </div>
-    <div class="seg" id="seg-theme">
-      <button data-theme="light" class="on">☀️</button><button data-theme="dark">🌙</button>
-    </div>
+<body>
+<header class="hdr">
+  <div class="brand"><div class="mark" id="hdrMark">م</div>
+    <div><h1 id="hdrT">Mawjood · مراجعة الاتجاه البصري v1.2</h1><div class="sub" id="hdrS">Modern Minimal AI + Human Memories — monochrome-first</div></div>
   </div>
-</div>
-<div id="stages"></div>
+  <div class="ctl">
+    <div class="seg" id="segL"><button data-l="ar" class="on">العربية</button><button data-l="en">English</button></div>
+    <div class="seg" id="segT"><button data-t="light" class="on">☀︎ <span>فاتح</span></button><button data-t="dark">☾ <span>داكن</span></button></div>
+  </div>
+</header>
+
+<div class="note" id="noteBox"></div>
+<div class="wrap" id="stages"></div>
+<div class="foot" id="footBox"></div>
+
 <script>
-const S = {lang:'ar', theme:'light'};
-const T = {
- ar:{brand:'الهوية والشعار',home:'الرئيسية',timeline:'الخط الزمني',detail:'تفاصيل الذكرى',ai:'المساعد الذكي',family:'مساحة العائلة',
-     desktop:'سطح المكتب',mobile:'الجوال',light:'فاتح',dark:'داكن'},
- en:{brand:'Brand & Wordmark',home:'Home Dashboard',timeline:'Memory Timeline',detail:'Memory Detail',ai:'AI Assistant',family:'Family Space',
-     desktop:'Desktop',mobile:'Mobile',light:'Light',dark:'Dark'}
-};
-const screens=['brand','home','timeline','detail','ai','family'];
-let cur='brand';
-function buildSeg(){
-  const el=document.getElementById('seg-screen'); el.innerHTML='';
-  screens.forEach(s=>{const b=document.createElement('button');b.textContent=T[S.lang][s];b.dataset.s=s;
-    if(s===cur)b.classList.add('on');b.onclick=()=>{cur=s;buildSeg();render();};el.appendChild(b);});
-}
-function setLang(l){S.lang=l;document.documentElement.lang=l;document.documentElement.dir=l==='ar'?'rtl':'ltr';
-  document.querySelectorAll('#seg-lang button').forEach(b=>b.classList.toggle('on',b.dataset.lang===l));
-  document.getElementById('rb-title').textContent=l==='ar'?'موجود — حزمة مراجعة التصميم':'Mawjood — Visual Design Review Package';
-  buildSeg();render();}
-function setTheme(t){S.theme=t;document.documentElement.dataset.theme=t;
-  document.querySelectorAll('#seg-theme button').forEach(b=>b.classList.toggle('on',b.dataset.theme===t));}
-document.querySelectorAll('#seg-lang button').forEach(b=>b.onclick=()=>setLang(b.dataset.lang));
-document.querySelectorAll('#seg-theme button').forEach(b=>b.onclick=()=>setTheme(b.dataset.theme));
-/* ================= MOCKUP BUILDERS ================= */
-function mockShell(inner, label, sub, mode){
-  return `<div class="mock-frame"><div class="frame-label"><b>${label}</b><span>${sub}</span></div>
-  <div class="mock-viewport ${mode==='mobile'?'mobile':''}">${inner}</div></div>`;
-}
-function phone(inner){return `<div class="phone"><div class="notch"></div><div class="app" style="padding-top:44px;height:100%;display:flex;flex-direction:column">${inner}</div></div>`;}
-function bottomNav(on, L){
-  const items=L==='ar'?[['🏠','الرئيسية','home'],['💬','المساعد','ai'],['👨‍👩‍👧','العائلة','family'],['⚙️','الإعدادات','set']]
-                      :[['🏠','Home','home'],['💬','Assistant','ai'],['👨‍👩‍👧','Family','family'],['⚙️','Settings','set']];
-  return `<div class="bottom-nav">${items.map(i=>`<a class="${i[2]===on?'on':''}"><span class="ico">${i[0]}</span>${i[1]}</a>`).join('')}</div>`;
-}
-/* ---- BRAND ---- */
-function brandMock(L){
-  const ar=L==='ar';
-  const inner=`
-  <div class="mock desktop"><div class="app" style="padding:40px">
-    <div class="wordmark-demo">
-      <div><div class="wm">موجود<span class="dot">.</span></div>
-        <div style="color:var(--text-3);font-size:13px;margin-top:8px">${ar?'الشعار العربي — خط نسخ مع نقطة تراكوتا':'Arabic wordmark — Naskh with terracotta dot'}</div></div>
-      <div><div class="wm-latin">Mawjood<span style="color:var(--accent)">.</span></div>
-        <div style="color:var(--text-3);font-size:13px;margin-top:8px">${ar?'الشعار اللاتيني — Fraunces':'Latin wordmark — Fraunces'}</div></div>
-      <div style="display:flex;gap:20px">
-        <div style="text-align:center"><div class="app-icon"><span>م</span></div>
-          <div style="color:var(--text-3);font-size:13px;margin-top:10px">${ar?'أيقونة التطبيق — حرف م':'App icon — meem'}</div></div>
-        <div style="text-align:center"><div class="app-icon alt"><span>◫</span></div>
-          <div style="color:var(--text-3);font-size:13px;margin-top:10px">${ar?'بديل — رف الأرشيف':'Alt — archive shelf'}</div></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:8px"><div class="section-title">${ar?'لوحة الألوان المعتمدة':'Approved palette'}</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-      ${[['#FAF6EE','Ivory'],['#211A13','Ink'],['#B4471F','Terracotta'],['#8C3415','Terracotta deep'],['#5F7A5E','Sage'],['#E4EADF','Sage soft'],['#C9963C','Gold'],['#F3EDE1','Paper deep']].map(c=>
-      `<div style="text-align:center"><div style="width:64px;height:64px;border-radius:14px;background:${c[0]};border:1px solid var(--border)"></div><div style="font-size:11px;color:var(--text-3);margin-top:6px">${c[1]}<br><span dir="ltr">${c[0]}</span></div></div>`).join('')}
-      </div></div>
-  </div></div>`;
-  return mockShell(inner, ar?'الهوية والشعار':'Brand & wordmark', ar?'اتجاه معتمد: أرشيف دافئ + هدوء معاصر':'Approved: Warm Archive + contemporary calm', 'desktop');
-}
-/* ---- HOME ---- */
-function homeMock(L,mode){
-  const ar=L==='ar';
-  const greet=ar?'مساء الخير، رزق':'Good evening, Rezeq';
-  const sub=ar?'لديك ٣ ذكريات جديدة هذا الأسبوع':'3 new memories this week';
-  const searchPh=ar?'ابحث في ذكرياتك…':'Search your memories…';
-  const spaces=ar?[['🔒','الخاصة','١٢٤'],['👨‍👩‍👧','العائلة','٨٦'],['💼','العمل','٣٧']]:[['🔒','Private','124'],['👨‍👩‍👧','Family','86'],['💼','Work','37']];
-  const recentTitle=ar?'أحدث الذكريات':'Recent memories';
-  const viewAll=ar?'عرض الكل':'View all';
-  const mems=ar?[{t:'عشاء العائلة يوم الجمعة',m:'منذ يومين · العائلة',c:''},{t:'وصفة الكبة من أمي',m:'منذ ٤ أيام · الخاصة',c:'alt'},{t:'اجتماع الموردين',m:'الأسبوع الماضي · العمل',c:'alt2'}]
-               :[{t:'Friday family dinner',m:'2 days ago · Family',c:''},{t:"Mom's kibbeh recipe",m:'4 days ago · Private',c:'alt'},{t:'Supplier meeting',m:'Last week · Work',c:'alt2'}];
-  const body=`
-    <div class="app-topbar"><div class="wordmark">${ar?'موجود':'Mawjood'}</div><span style="color:var(--gold)">.</span>
-      <div style="margin-inline-start:auto;display:flex;gap:10px;align-items:center"><span class="chip">✨ ${ar?'اسأل':'Ask'}</span><div class="avatar">ر</div></div></div>
-    <div style="padding:20px;flex:1;overflow:hidden">
-      <h2 style="font-family:${ar?'var(--font-ar-display)':'var(--font-display)'};font-size:${mode==='mobile'?'26px':'34px'};font-weight:600;line-height:1.4;margin-bottom:6px">${greet}</h2>
-      <p style="color:var(--text-2);font-size:14px;margin-bottom:18px">${sub}</p>
-      <div class="searchbar">🔍 ${searchPh}</div>
-      <div style="display:flex;gap:10px;margin:18px 0;${mode==='mobile'?'flex-direction:column':''}">
-        <button class="btn btn-primary" style="flex:1">🎙️ ${ar?'تسجيل ذكرى':'Record memory'}</button>
-        <button class="btn btn-secondary">✨ ${ar?'اسأل المساعد':'Ask assistant'}</button>
-      </div>
-      <div class="section-title">${ar?'المساحات':'Spaces'} <a href="#">${viewAll}</a></div>
-      <div style="display:flex;gap:12px;margin-bottom:22px">
-        ${spaces.map(s=>`<div class="card" style="flex:1;text-align:center;padding:16px 8px"><div style="font-size:26px">${s[0]}</div><div style="font-weight:700;font-size:14px;margin-top:6px">${s[1]}</div><div style="font-size:12px;color:var(--text-3)">${s[2]} ${ar?'ذكرى':'memories'}</div></div>`).join('')}
-      </div>
-      <div class="section-title">${recentTitle} <a href="#">${viewAll}</a></div>
-      <div style="display:grid;grid-template-columns:repeat(${mode==='mobile'?'1':'3'},1fr);gap:14px">
-        ${mems.map(m=>`<div class="mem-card"><div class="mem-photo ${m.c}"><div class="cap">${m.m}</div></div><div class="mem-body"><h4>${m.t}</h4><div class="meta">${m.m}</div></div></div>`).join('')}
-      </div>
-    </div>
-    ${mode==='mobile'?bottomNav('home',L):''}`;
-  const inner=mode==='mobile'?phone(body):`<div class="mock desktop">${body}</div>`;
-  return mockShell(inner, T[S.lang][ 'home'], `${T[S.lang][mode]} · ${L==='ar'?'RTL':'LTR'}`, mode);
-}
-/* ---- TIMELINE ---- */
-function timelineMock(L,mode){
-  const ar=L==='ar';
-  const title=ar?'الخط الزمني':'Timeline';
-  const filters=ar?['الكل','صور','صوت','ملاحظات']:['All','Photos','Voice','Notes'];
-  const groups=ar?[
-    {d:'اليوم',items:[{t:'تسجيل صوتي — أفكار المشروع',m:'🎙️ ٢:٣٤ · الخاصة',c:'alt'},{t:'صورة — غروب الشاطئ',m:'📷 العائلة',c:''}]},
-    {d:'أمس',items:[{t:'ملاحظة — قائمة التسوق',m:'📝 العائلة',c:'alt2'}]},
-    {d:'الأسبوع الماضي',items:[{t:'ذكرى مُعادة — رحلة الصيف',m:'⭐ قبل سنة · الخاصة',c:'',gold:1}]}]
-  :[
-    {d:'Today',items:[{t:'Voice note — project ideas',m:'🎙️ 2:34 · Private',c:'alt'},{t:'Photo — beach sunset',m:'📷 Family',c:''}]},
-    {d:'Yesterday',items:[{t:'Note — shopping list',m:'📝 Family',c:'alt2'}]},
-    {d:'Last week',items:[{t:'Resurfaced — summer trip',m:'⭐ A year ago · Private',c:'',gold:1}]}];
-  const body=`
-    <div class="app-topbar"><div class="wordmark">${ar?'موجود':'Mawjood'}</div><span style="color:var(--gold)">.</span>
-      <div style="margin-inline-start:auto"><div class="avatar">ر</div></div></div>
-    <div style="padding:20px;flex:1;overflow:hidden">
-      <h2 style="font-size:24px;font-weight:700;margin-bottom:14px">${title}</h2>
-      <div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-        ${filters.map((f,i)=>`<span class="chip ${i===0?'on':''}">${f}</span>`).join('')}
-      </div>
-      ${groups.map(g=>`
-        <div class="timeline-date"><span class="line"></span><b>${g.d}</b><span class="line"></span></div>
-        <div style="display:grid;gap:12px">
-        ${g.items.map(it=>`
-          ${it.gold?`<div class="gold-note">✨ ${ar?'ذكرى من هذا اليوم قبل سنة':'A memory from this day, a year ago'}</div>`:''}
-          <div class="mem-card" style="display:flex;gap:0">
-            <div class="mem-photo ${it.c}" style="width:110px;height:auto;min-height:96px;flex-shrink:0"></div>
-            <div class="mem-body" style="flex:1"><h4>${it.t}</h4><div class="meta">${it.m}</div></div>
-          </div>`).join('')}
-        </div>`).join('')}
-    </div>
-    ${mode==='mobile'?bottomNav('home',L):''}`;
-  const inner=mode==='mobile'?phone(body):`<div class="mock desktop">${body}</div>`;
-  return mockShell(inner, T[S.lang]['timeline'], `${T[S.lang][mode]} · ${L==='ar'?'RTL':'LTR'}`, mode);
-}
-/* ---- DETAIL ---- */
-function detailMock(L,mode){
-  const ar=L==='ar';
-  const title=ar?'عشاء العائلة يوم الجمعة':'Friday family dinner';
-  const meta=ar?'١٠ أكتوبر ٢٠٢٦ · مساحة العائلة':'Oct 10, 2026 · Family space';
-  const body_=ar?'اجتمعنا كلنا على العشاء. أحمد حكى عن مشروعه الجديد، والأولاد انبسطوا كتير. لازم نكررها كل أسبوع.':'We all gathered for dinner. Ahmad talked about his new project, and the kids had a great time. We should do this every week.';
-  const extT=ar?'مُستخرج تلقائياً':'Auto-extracted';
-  const items=ar?['📦 أغراض: هدية لأحمد','✅ مهمة: احجز مطعم للجمعة الجاية','📍 مكان: بيت العائلة']:['📦 Item: gift for Ahmad','✅ Task: book restaurant for next Friday','📍 Place: family home'];
-  const rel=ar?'ذكريات مرتبطة':'Related memories';
-  const body=`
-    <div class="app-topbar"><div class="wordmark">${ar?'موجود':'Mawjood'}</div><span style="color:var(--gold)">.</span>
-      <div style="margin-inline-start:auto;display:flex;gap:8px"><button class="btn btn-ghost" style="padding:8px">✏️</button><button class="btn btn-ghost" style="padding:8px">🗑️</button></div></div>
-    <div style="flex:1;overflow:hidden">
-      <div class="mem-photo" style="height:${mode==='mobile'?'220px':'300px'}"><div class="cap" style="font-size:14px">${meta}</div></div>
-      <div style="padding:22px 20px">
-        <span class="space-badge">👨‍👩‍👧 ${ar?'العائلة':'Family'}</span>
-        <h2 style="font-family:${ar?'var(--font-ar-display)':'var(--font-display)'};font-size:26px;font-weight:600;margin:12px 0 6px;line-height:1.5">${title}</h2>
-        <p style="color:var(--text-3);font-size:13px;margin-bottom:16px">${meta}</p>
-        <p style="font-size:15.5px;line-height:1.9;color:var(--text-1);margin-bottom:20px">${body_}</p>
-        <div class="section-title">${extT}</div>
-        <div class="card" style="margin-bottom:20px">${items.map(i=>`<div style="padding:9px 0;border-bottom:1px solid var(--border-soft);font-size:14.5px">${i}</div>`).join('').replace(/<\/div>$/,'')}</div>
-        <div class="section-title">${rel}</div>
-        <div style="display:flex;gap:12px;overflow:hidden">
-          <div class="mem-card" style="min-width:150px"><div class="mem-photo alt" style="height:90px"></div><div class="mem-body"><h4 style="font-size:13px">${ar?'رحلة الصيف':'Summer trip'}</h4></div></div>
-          <div class="mem-card" style="min-width:150px"><div class="mem-photo alt2" style="height:90px"></div><div class="mem-body"><h4 style="font-size:13px">${ar?'عيد ميلاد سارة':'Sara’s birthday'}</h4></div></div>
-        </div>
-      </div>
-    </div>
-    ${mode==='mobile'?bottomNav('home',L):''}`;
-  const inner=mode==='mobile'?phone(body):`<div class="mock desktop">${body}</div>`;
-  return mockShell(inner, T[S.lang]['detail'], `${T[S.lang][mode]} · ${L==='ar'?'RTL':'LTR'}`, mode);
-}
-/* ---- AI ---- */
-function aiMock(L,mode){
-  const ar=L==='ar';
-  const title=ar?'المساعد الذكي':'AI Assistant';
-  const sug=ar?['وين حطيت جواز السفر؟','شو اشترينا الأسبوع الماضي؟','ذكرني بموعد الدكتور']:['Where did I put my passport?','What did we buy last week?','Remind me of the doctor appointment'];
-  const msgs=ar?[
-    {r:'user',t:'وين حطيت جواز السفر؟'},
-    {r:'ai',t:'جواز سفرك في الدرج العلوي للمكتب، حسب ملاحظة ٣ أكتوبر. 📍 <b>المكتب — الدرج العلوي</b>'}]
-  :[
-    {r:'user',t:'Where did I put my passport?'},
-    {r:'ai',t:'Your passport is in the top desk drawer, per your Oct 3 note. 📍 <b>Desk — top drawer</b>'}];
-  const ph=ar?'اسأل عن ذكرياتك…':'Ask about your memories…';
-  const body=`
-    <div class="app-topbar"><div class="wordmark">${ar?'موجود':'Mawjood'}</div><span style="color:var(--gold)">.</span>
-      <div style="margin-inline-start:auto"><span class="chip">🔒 ${ar?'اسأل خزنتك':'Ask your vault'}</span></div></div>
-    <div style="padding:20px;flex:1;overflow:hidden;display:flex;flex-direction:column">
-      <h2 style="font-family:${ar?'var(--font-ar-display)':'var(--font-display)'};font-size:24px;font-weight:600;margin-bottom:4px">${title}</h2>
-      <p style="color:var(--text-2);font-size:13.5px;margin-bottom:16px">${ar?'مبني على ذكرياتك — الخاص والعائلة':'Grounded in your memories — private & family'}</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
-        ${sug.map(s=>`<span class="chip">${s}</span>`).join('')}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
-        ${msgs.map(m=>`<div class="chat-bubble ${m.r}">${m.t}</div>`).join('')}
-      </div>
-      <div style="margin-top:auto;display:flex;gap:10px;align-items:center">
-        <div class="searchbar" style="flex:1">${ph}</div>
-        <button class="voice-btn" style="width:52px;height:52px;font-size:20px">🎙️</button>
-      </div>
-    </div>
-    ${mode==='mobile'?bottomNav('ai',L):''}`;
-  const inner=mode==='mobile'?phone(body):`<div class="mock desktop">${body}</div>`;
-  return mockShell(inner, T[S.lang]['ai'], `${T[S.lang][mode]} · ${L==='ar'?'RTL':'LTR'}`, mode);
-}
-/* ---- FAMILY ---- */
-function familyMock(L,mode){
-  const ar=L==='ar';
-  const title=ar?'مساحة العائلة':'Family Space';
-  const members=ar?['رزق','الأم','أحمد','سارة']:['Rezeq','Mom','Ahmad','Sara'];
-  const invite=ar?'دعوة عضو':'Invite member';
-  const shared=ar?'مشترك مؤخراً':'Recently shared';
-  const items=ar?[{t:'قائمة التسوق الأسبوعية',m:'📝 ١٢ عنصر · سارة',c:'alt2'},{t:'صور الرحلة',m:'📷 ٢٤ صورة · أحمد',c:''}]
-               :[{t:'Weekly shopping list',m:'📝 12 items · Sara',c:'alt2'},{t:'Trip photos',m:'📷 24 photos · Ahmad',c:''}];
-  const body=`
-    <div class="app-topbar"><div class="wordmark">${ar?'موجود':'Mawjood'}</div><span style="color:var(--gold)">.</span>
-      <div style="margin-inline-start:auto"><button class="btn btn-secondary" style="padding:9px 16px;font-size:13px">＋ ${invite}</button></div></div>
-    <div style="padding:20px;flex:1;overflow:hidden">
-      <div class="card" style="margin-bottom:18px;background:var(--sage-soft);border-color:transparent">
-        <div style="display:flex;align-items:center;gap:14px">
-          <div style="font-size:40px">👨‍👩‍👧</div>
-          <div><h2 style="font-size:20px;font-weight:700">${title}</h2>
-          <p style="color:var(--text-2);font-size:13px">${members.length} ${ar?'أعضاء':'members'}</p></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:14px">
-          ${members.map((m,i)=>`<div style="text-align:center"><div class="avatar" style="${i>0?'background:var(--sage)':''}">${m[0]}</div><div style="font-size:11px;color:var(--text-2);margin-top:4px">${m}</div></div>`).join('')}
-          <div style="text-align:center"><div class="avatar" style="background:var(--surface-2);color:var(--text-3);border:2px dashed var(--border)">＋</div></div>
-        </div>
-      </div>
-      <div class="section-title">${shared}</div>
-      <div style="display:grid;gap:12px">
-        ${items.map(it=>`<div class="mem-card" style="display:flex"><div class="mem-photo ${it.c}" style="width:96px;min-height:84px;flex-shrink:0"></div><div class="mem-body" style="flex:1"><h4>${it.t}</h4><div class="meta">${it.m}</div></div></div>`).join('')}
-      </div>
-    </div>
-    ${mode==='mobile'?bottomNav('family',L):''}`;
-  const inner=mode==='mobile'?phone(body):`<div class="mock desktop">${body}</div>`;
-  return mockShell(inner, T[S.lang]['family'], `${T[S.lang][mode]} · ${L==='ar'?'RTL':'LTR'}`, mode);
-}
-/* ================= RENDER ================= */
+let L='ar', TH='light';
+const ar=()=>L==='ar';
+const T={
+ ar:{title:'Mawjood · مراجعة الاتجاه البصري v1.2',sub:'Modern Minimal AI + Human Memories — أحادي اللون أولاً',
+  note:'<b>اتجاه مُراجَع v1.2</b> — استبدال لوحة الدفء (التراكوتا/الكريمي/الذهبي) بجمالية منتج ذكاء اصطناعي عصرية فاخرة <b>أحادية اللون أولاً</b>: أبيض، أسود قريب، رماديات محايدة. الأزرار الأساسية سوداء (فاتح) / بيضاء (داكن). لمسات ثانوية مقيّدة: أزرق ناعم + مريمية هادئة. الهوية العاطفية (العائلة، الانتماء، الذكريات) تُحمَل عبر التصوير والسرد والنصوص — لا عبر الزخرفة.',
+  brand:'الهوية والشعار',brandD:'شعار معاصر، أيقونتا تطبيق أحاديتا اللون، ولوحة v1.2.',
+  home:'الرئيسية',homeD:'تحية هادئة، بحث، تسجيل بارز بزر أسود، المساحات، وأحدث الذكريات — نظيف بلا ازدحام.',
+  timeline:'الخط الزمني',timelineD:'أرشيف زمني نظيف؛ علامة "اليوم" بالأزرق الناعم بدل الذهبي.',
+  detail:'تفاصيل الذكرى',detailD:'صورة بطولية، النص، الحقائق المستخرجة، والذكريات المرتبطة.',
+  ai:'المساعد الذكي',aiD:'محادثة مبنية على ذكرياتك؛ تمييز الذكاء بالأزرق الناعم، ومدخل "اسأل خزنتك".',
+  family:'مساحة العائلة',familyD:'الأعضاء والدعوات والمحتوى المشترك — هوية المريمية الهادئة.',
+  desktop:'سطح المكتب',mobile:'جوال',foot:'حزمة مراجعة فقط — ليست كود تطبيق. الألوان النهائية والشعار والشاشات المصقولة بانتظار اعتماد المالك. لا دمج، لا نشر، لا D1.'},
+ en:{title:'Mawjood · Visual Direction Review v1.2',sub:'Modern Minimal AI + Human Memories — monochrome-first',
+  note:'<b>Revised direction v1.2</b> — the warm palette (terracotta/cream/gold) is replaced with a modern, premium, <b>monochrome-first</b> AI product aesthetic: white, near-black, neutral grays. Primary buttons black (light) / white (dark). Restrained secondary accents: soft blue + muted sage. Emotional identity (family, belonging, memories) is carried through photography, storytelling, and copy — not ornament.',
+  brand:'Brand & logo',brandD:'Contemporary wordmark, two monochrome app-icon directions, and the v1.2 palette.',
+  home:'Home',homeD:'Calm greeting, search, prominent black record button, spaces, and latest memories — clean, uncluttered.',
+  timeline:'Timeline',timelineD:'Clean chronological archive; the "Today" marker in soft blue instead of gold.',
+  detail:'Memory detail',detailD:'Hero photo, narrative text, extracted facts, and related memories.',
+  ai:'AI assistant',aiD:'Conversation grounded in your memories; AI accents in soft blue, plus the "Ask your vault" entry.',
+  family:'Family space',familyD:'Members, invites, and shared content — quiet sage identity.',
+  desktop:'Desktop',mobile:'Mobile',foot:'Review package only — not application code. Final colors, logo, and polished screens await owner approval. No merge, no deploy, no D1.'}};
+
+const chip=(c,t)=>`<span class="chip ${c}">${t}</span>`;
+function noteHTML(){const t=T[L];return `${t.note}<div class="chips">${chip('','⬛/⬜ monochrome-first')}${chip('','Aa Inter + IBM Plex Sans Arabic')}${chip('blue',(ar()?'أزرق ناعم':'soft blue')+' · sparing')}${chip('sage',(ar()?'مريمية هادئة':'muted sage')+' · sparing')}${chip('',ar()?'بدون تراكوتا/ذهبي':'no terracotta/gold')}</div>`;}
+
+function navHTML(){const a=ar();
+ return `<div class="nav"><div class="wm">${a?'موجود':'Mawjood'}</div><div class="sp"></div>
+ <div class="ic">🔍</div><div class="ic">🔔</div><div class="av">${a?'ر':'R'}</div></div>
+ <div class="rail"><button class="on">${a?'الرئيسية':'Home'}</button><button>${a?'الخط الزمني':'Timeline'}</button><button>${a?'المساعد':'Assistant'}</button><button>${a?'العائلة':'Family'}</button><button>${a?'الخزنة':'Vault'}</button></div>`;}
+
+function brandMock(){const a=ar();
+ const sw=(c,n,h)=>`<div class="sw"><div class="c" style="background:${c}"></div><div class="t"><b>${n}</b>${h}</div></div>`;
+ return `<div class="app"><div class="sheet">
+ <div class="kick">${a?'الهوية':'Brand'}</div>
+ <div class="wm ${a?'ar':''}">${a?'موجود':'Mawjood'}</div>
+ <div class="tagline">${a?'ذكرياتك، حاضرة دائماً.':'Your memories, always present.'}</div>
+ <div class="icons">
+   <div><div class="appicon a">${a?'م':'M'}</div><div class="type"><div class="n">${a?'أ: حرف أحادي':'A: monogram'}</div></div></div>
+   <div><div class="appicon b">◈</div><div class="type"><div class="n">${a?'ب: علامة الذاكرة':'B: memory mark'}</div></div></div>
+ </div>
+ <div class="kick" style="margin-top:6px">${a?'لوحة v1.2':'v1.2 palette'}</div>
+ <div class="swatches">
+  ${sw('#FFFFFF','bg','#FFFFFF / #0A0A0B')}${sw('#F5F5F6','surface-2','#F5F5F6 / #1C1C1F')}
+  ${sw('#0A0A0B','accent','#0A0A0B / #FFFFFF')}${sw('#3B82C4','blue · sparing','#3B82C4 / #7FB2E5')}
+  ${sw('#5E7E63','sage · sparing','#5E7E63 / #8FAE93')}${sw('#E7E7EA','border','#E7E7EA / #2A2A2E')}
+ </div>
+ <div class="type"><div class="s">${a?'ذكريات العائلة، محفوظة بعناية':'Family memories, kept with care'}</div><div class="n">Display — Inter 800 / IBM Plex Sans Arabic 700 · tight tracking</div></div>
+ <div class="type"><div style="font-size:16px;line-height:1.8">${a?'نص واجهة معاصر ومقروء بالعربية والإنجليزية، بلا خطوط عتيقة.':'Contemporary, readable UI text in Arabic and English — no vintage serifs.'}</div><div class="n">Body — Inter 400 / IBM Plex Sans Arabic 400</div></div>
+ </div></div>`;}
+
+function homeMock(mode){const a=ar();
+ const cards=[
+  {t:a?'عيد ميلاد سارة':'Sara\u2019s birthday',m:a?'أمس · العائلة':'Yesterday · Family',c:'g1',p:a?'العائلة':'Family',pc:'s'},
+  {t:a?'وصفة الكنافة':'Knafeh recipe',m:a?'قبل يومين · خاص':'2 days ago · Private',c:'g2',p:a?'خاص':'Private',pc:''},
+  {t:a?'رحلة الشاطئ':'Beach trip',m:a?'الأسبوع الماضي · العائلة':'Last week · Family',c:'g3',p:a?'العائلة':'Family',pc:'s'}];
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="hero"><div class="kick">${a?'مساء الخير':'Good evening'}</div>
+ <h2>${a?'كل ذكرياتك في مكان واحد.':'Every memory, in one place.'}</h2>
+ <p>${a?'سجّل لحظة بصوتك، ودع موجود يحفظها وينظّمها ويذكّرك بها.':'Capture a moment by voice — Mawjood keeps it, organizes it, and brings it back.'}</p>
+ <div class="row"><button class="btn btn-p">🎙 ${a?'تسجيل ذكرى':'Record a memory'}</button><button class="btn btn-s">${a?'اسأل ذكرياتك':'Ask your memories'}</button></div></div>
+ <div class="search">🔍<input placeholder="${a?'ابحث في ذكرياتك…':'Search your memories…'}"></div>
+ <div class="spaces">
+  ${[{e:'🔒',t:a?'خاص':'Private',s:a?'١٢٤ ذكرى':'124 memories'},{e:'👨‍👩‍👧',t:a?'العائلة':'Family',s:a?'٨٦ ذكرى':'86 memories'},{e:'💼',t:a?'العمل':'Work',s:a?'٣١ ذكرى':'31 memories'}].map(s=>`<div class="spc"><div class="e">${s.e}</div><h4>${s.t}</h4><span>${s.s}</span></div>`).join('')}
+ </div>
+ <div class="cards">${cards.map(c=>`<div class="mcard"><div class="mph ${c.c}"><span>📷</span></div><div class="mbody"><h4>${c.t}</h4><div class="meta"><span>${c.m}</span><span class="pill ${c.pc}">${c.p}</span></div></div></div>`).join('')}</div>
+ </div></div>`;}
+
+function timelineMock(mode){const a=ar();
+ const day=(t,items,today)=>`<div class="tl-day${today?' today':''}"><h5>${today?'<span class="dot"></span>':''}${t}</h5>${items.map(i=>`<div class="tl-item"><div class="tl-rail"></div><div class="tl-card"><h4>${i.t}</h4><p>${i.p}</p></div></div>`).join('')}</div>`;
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="tl">
+ ${day(a?'اليوم':'Today',[{t:a?'قهوة الصباح مع أحمد':'Morning coffee with Ahmad',p:a?'سجّلت ملاحظة صوتية · ٨:١٢ ص':'Voice note · 8:12 AM'}],true)}
+ ${day(a?'أمس':'Yesterday',[{t:a?'عيد ميلاد سارة':'Sara\u2019s birthday',p:a?'١٢ صورة · مساحة العائلة':'12 photos · Family space'},{t:a?'قائمة التسوق':'Shopping list',p:a?'٧ عناصر مستخرجة':'7 items extracted'}])}
+ ${day(a?'الأسبوع الماضي':'Last week',[{t:a?'رحلة الشاطئ':'Beach trip',p:a?'٢٤ صورة · ٣ ذكريات مرتبطة':'24 photos · 3 related memories'}])}
+ </div></div></div>`;}
+
+function detailMock(mode){const a=ar();
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="det">
+ <div class="det-hero"><div class="in"><div class="kick" style="color:#d4d4d8">${a?'مساحة العائلة':'Family space'}</div><h2>${a?'عيد ميلاد سارة':'Sara\u2019s birthday'}</h2><div class="meta">${a?'١١ أكتوبر ٢٠٢٦ · ١٢ صورة':'Oct 11, 2026 · 12 photos'}</div></div></div>
+ <div class="det-body">
+ <p class="txt">${a?'احتفلنا بعيد ميلاد سارة في حديقة البيت. أحمد أحضر الكعكة، والأم جهّزت الكنافة. سارة أطفأت الشموع وتمنّت أمنية — لم تخبرنا بها.':'We celebrated Sara\u2019s birthday in the garden. Ahmad brought the cake; Mom made knafeh. Sara blew out the candles and made a wish — she wouldn\u2019t tell us.'}</p>
+ <div class="facts">
+  <div class="fact"><div class="k">${a?'الأشخاص':'People'}</div><div class="v">${a?'سارة، أحمد، الأم':'Sara, Ahmad, Mom'}</div></div>
+  <div class="fact"><div class="k">${a?'المكان':'Place'}</div><div class="v">${a?'حديقة البيت':'Home garden'}</div></div>
+  <div class="fact"><div class="k">${a?'التاريخ':'Date'}</div><div class="v">${a?'١١ أكتوبر ٢٠٢٦':'Oct 11, 2026'}</div></div>
+ </div>
+ <div class="kick">${a?'ذكريات مرتبطة':'Related memories'}</div>
+ <div class="cards" style="padding:12px 0 0">
+  <div class="mcard"><div class="mph g4"><span>📷</span></div><div class="mbody"><h4>${a?'عيد ميلاد سارة ٢٠٢٥':'Sara\u2019s birthday 2025'}</h4><div class="meta"><span class="pill b">${a?'ذات صلة':'Related'}</span></div></div></div>
+  <div class="mcard"><div class="mph g2"><span>📷</span></div><div class="mbody"><h4>${a?'وصفة كعكة الأم':'Mom\u2019s cake recipe'}</h4><div class="meta"><span class="pill b">${a?'ذات صلة':'Related'}</span></div></div></div>
+ </div>
+ </div></div></div></div>`;}
+
+function aiMock(mode){const a=ar();
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="chat">
+  <div class="bub u">${a?'وين حطيت جواز السفر؟':'Where did I put the passport?'}</div>
+  <div class="bub a"><div class="ai">✦ ${a?'موجود':'Mawjood'}</div>${a?'جواز سفرك في الدرج العلوي من مكتب غرفة النوم — سجّلت ذلك في ٣ سبتمبر.':'Your passport is in the top drawer of the bedroom desk — you recorded that on Sep 3.'}</div>
+  <div class="bub u">${a?'ذكّرني قبل رحلة الجمعة':'Remind me before Friday\u2019s trip'}</div>
+  <div class="bub a"><div class="ai">✦ ${a?'موجود':'Mawjood'}</div>${a?'تم — سأذكّرك الخميس ٧ مساءً بتجهيز الشنط وجواز السفر.':'Done — I\u2019ll remind you Thursday 7 PM to pack and take the passport.'}</div>
+  <div class="sug"><button>${a?'لخّص أسبوعي':'Summarize my week'}</button><button>${a?'وين مفاتيح السيارة؟':'Where are the car keys?'}</button></div>
+ </div>
+ <div class="cin"><div class="box"><button class="mic">🎙</button><input placeholder="${a?'اسأل عن أي ذكرى…':'Ask about any memory…'}"><button class="send">↑</button></div></div>
+ <div style="padding:0 20px 22px"><button class="btn btn-s" style="width:100%;justify-content:center">🔐 ${a?'اسأل خزنتك':'Ask your vault'}</button></div>
+ </div></div>`;}
+
+function familyMock(mode){const a=ar();
+ const members=a?[{n:'رزق',r:'مدير',i:'ر'},{n:'الأم',r:'عضو',i:'ا'},{n:'أحمد',r:'عضو',i:'أ'},{n:'سارة',r:'عضو',i:'س'}]:[{n:'Rezeq',r:'Admin',i:'R'},{n:'Mom',r:'Member',i:'M'},{n:'Ahmad',r:'Member',i:'A'},{n:'Sara',r:'Member',i:'S'}];
+ const cols=['#3f3f46','#52525b','#71717a','#3b3b40'];
+ const mob=mode==='mobile';
+ return `<div class="${mob?'mobile':''}"><div class="app">${navHTML()}
+ <div class="fam">
+ <div class="fam-head"><div class="big">👨‍👩‍👧</div><div><h3>${a?'مساحة العائلة':'Family space'}</h3><p>${a?'٤ أعضاء · ٨٦ ذكرى مشتركة':'4 members · 86 shared memories'}</p></div><div style="flex:1"></div><button class="btn btn-p" style="padding:10px 18px;font-size:14px">${a?'دعوة':'Invite'}</button></div>
+ <div class="members">${members.map((m,i)=>`<div class="mem"><div class="av2" style="background:${cols[i]}">${m.i}</div><div><h4>${m.n}</h4><span>${m.r}</span></div><div class="r"><span class="pill s">${a?'نشط':'Active'}</span></div></div>`).join('')}</div>
+ <div class="kick">${a?'مشترك مؤخراً':'Recently shared'}</div>
+ <div class="cards" style="padding:12px 0 0">
+  <div class="mcard"><div class="mph g1"><span>📷</span></div><div class="mbody"><h4>${a?'عيد ميلاد سارة':'Sara\u2019s birthday'}</h4><div class="meta"><span>${a?'أمس':'Yesterday'}</span><span class="pill s">${a?'العائلة':'Family'}</span></div></div></div>
+  <div class="mcard"><div class="mph g3"><span>📝</span></div><div class="mbody"><h4>${a?'قائمة التسوق الأسبوعية':'Weekly shopping list'}</h4><div class="meta"><span>${a?'١٢ عنصر':'12 items'}</span><span class="pill s">${a?'العائلة':'Family'}</span></div></div></div>
+ </div>
+ </div></div></div>`;}
+
+const builders={brand:()=>brandMock()};
+const order=['brand','home','timeline','detail','ai','family'];
+
+function screenMock(k,m){return k==='home'?homeMock(m):k==='timeline'?timelineMock(m):k==='detail'?detailMock(m):k==='ai'?aiMock(m):familyMock(m);}
+
 function render(){
-  const st=document.getElementById('stages'); const L=S.lang; const ar=L==='ar';
-  const descs={
-   brand:ar?['الهوية والشعار المعتمدة','الاتجاه A — أرشيف دافئ + هدوء B المعاصر. الشعار، الأيقونة، ولوحة الألوان المعتمدة.']:['',''],
-   home:ar?['الرئيسية — لوحة التحكم','تحية دافئة، بحث، تسجيل صوتي بارز، المساحات، وأحدث الذكريات.']:['',''],
-   timeline:ar?['الخط الزمني','أرشيف زمني بروح رف الذكريات، فلاتر، ولحظة "ذكرى مُعادة" بلون ذهبي.']:['',''],
-   detail:ar?['تفاصيل الذكرى','صورة بطولية، النص، العناصر المستخرجة، والذكريات المرتبطة.']:['',''],
-   ai:ar?['المساعد الذكي','محادثة مبنية على ذكرياتك، اقتراحات، ومدخل "اسأل خزنتك".']:['',''],
-   family:ar?['مساحة العائلة','الأعضاء، الدعوات، والمحتوى المشترك — بهوية المريمية الهادئة.']:['','']};
-  const builders={brand:()=>brandMock(L),home:()=>homeMock(L,'desktop')+homeMock(L,'mobile'),
-    timeline:()=>timelineMock(L,'desktop')+timelineMock(L,'mobile'),detail:()=>detailMock(L,'desktop')+detailMock(L,'mobile'),
-    ai:()=>aiMock(L,'desktop')+aiMock(L,'mobile'),family:()=>familyMock(L,'desktop')+familyMock(L,'mobile')};
-  const d=descs[cur];
-  st.innerHTML=`<div class="stage"><div class="stage-head"><div class="kicker">${ar?'حزمة المراجعة البصرية':'Visual review package'} · ${cur==='brand'?(ar?'معتمد':'Approved'):(ar?'اتجاه A+B':'A+B direction')}</div>
-    <h2>${T[L][cur]}</h2><p>${d[1]||''}</p></div>
-    <div class="mock-grid">${builders[cur]()}</div>
-    <div class="card" style="margin-top:32px"><div class="section-title">${ar?'ملاحظات المراجعة':'Review notes'}</div>
-    <p style="font-size:14px;color:var(--text-2)">${ar?'هذه نماذج عالية الدقة للمراجعة فقط — ليست كود التطبيق. بدّل اللغة والوضع (فاتح/داكن) من الأعلى لرؤية كل الحالات. الشعار النهائي والتفاصيل المصقولة بانتظار مراجعتك.':'These are high-fidelity review mockups only — not app code. Toggle language and theme above to see all states. Final logo artwork and polished details await your review.'}</p></div></div>`;
-  window.scrollTo({top:0});
+ const t=T[L];document.documentElement.lang=L;document.documentElement.dir=ar()?'rtl':'ltr';
+ document.documentElement.dataset.theme=TH;document.title=t.title;
+ document.getElementById('hdrT').textContent=t.title;document.getElementById('hdrS').textContent=t.sub;
+ document.getElementById('hdrMark').textContent=ar()?'م':'M';
+ document.getElementById('noteBox').innerHTML=noteHTML();
+ document.querySelectorAll('#segL button').forEach(b=>b.classList.toggle('on',b.dataset.l===L));
+ document.querySelectorAll('#segT button').forEach(b=>b.classList.toggle('on',b.dataset.t===TH));
+ document.querySelectorAll('#segT button span')[0].textContent=ar()?'فاتح':'Light';
+ document.querySelectorAll('#segT button span')[1].textContent=ar()?'داكن':'Dark';
+ document.getElementById('stages').innerHTML=order.map((k,i)=>{
+  const single=k==='brand';
+  return `<div class="sec"><div class="sec-h"><span class="n">0${i+1}</span><h2>${t[k]}</h2></div><p class="d">${t[k+'D']}</p>
+  <div class="stage${single?'':' cols2'}">
+   ${single?`<div class="frame"><div class="tag"><span class="b">${t.brand}</span></div>${brandMock()}</div>`
+   :['desktop','mobile'].map(m=>`<div class="frame"><div class="tag"><span class="b">${t[k]}</span><span>${m==='desktop'?t.desktop:t.mobile}</span></div>${screenMock(k,m)}</div>`).join('')}
+  </div></div>`;}).join('');
+ document.getElementById('footBox').textContent=t.foot;
 }
-buildSeg();render();
+document.getElementById('segL').addEventListener('click',e=>{if(e.target.dataset.l){L=e.target.dataset.l;render();}});
+document.getElementById('segT').addEventListener('click',e=>{if(e.target.dataset.t){TH=e.target.dataset.t;render();}});
+render();
 </script>
 </body>
 </html>
