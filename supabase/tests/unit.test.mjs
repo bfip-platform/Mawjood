@@ -838,3 +838,15 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
+  it('GUARD: the demo-seed button and panel are dev-only (__DEV__ gate)', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('{__DEV__ && showDemo && ('), 'the demo panel render is __DEV__-gated');
+    const toggleIdx = app.indexOf('setShowDemo((v) => !v)');
+    const gateIdx = app.lastIndexOf('{__DEV__ && (', toggleIdx);
+    assert.ok(gateIdx > -1 && toggleIdx - gateIdx < 300, 'the 🧪 toggle button sits inside a __DEV__ block');
+    // The seed capability itself remains for dev use (engine method untouched).
+    assert.ok(app.includes('engine.seedDemoData'), 'seedDemoData still wired for dev builds');
+  });
+});
