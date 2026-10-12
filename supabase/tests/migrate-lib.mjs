@@ -143,6 +143,14 @@ export const ASSERTIONS = [
           where conname = 'pending_actions_action_type_check'`,
   },
   {
+    name: 'D3 search indexes exist (0043)',
+    sql: `select (
+            (select count(*) from pg_indexes where schemaname = 'public'
+             and indexname in ('items_title_trgm','items_details_trgm','notes_transcript_trgm','items_note_id_idx','items_space_kind_status_idx')) = 5
+            and exists (select 1 from pg_extension where extname = 'pg_trgm')
+          ) as ok`,
+  },
+  {
     name: 'pending_actions status accepts executing — atomic claim state (0037)',
     sql: `select (pg_get_constraintdef(oid) like '%executing%') as ok from pg_constraint
           where conname = 'pending_actions_status_check'`,

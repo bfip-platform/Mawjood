@@ -838,3 +838,105 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D3 PR-A — janitor allowlist, scrubber, index migration (T-D3-1/2/3)', async () => {
+  const { JANITOR_ALLOWLIST, JANITOR_NEVER, isJanitorTarget, janitorCutoff, runJanitor } =
+    await import('../functions/_shared/janitor.ts');
+  const { scrubSentryEvent, scrubString } = await import('../functions/_shared/sentry-scrub.ts');
+
+  it('the janitor allowlist is exactly the three telemetry tables', () => {
+    assert.deepEqual(JANITOR_ALLOWLIST.map((t) => t.table).sort(), ['ai_events', 'ops_events', 'rate_limits']);
+    for (const t of JANITOR_NEVER) assert.equal(isJanitorTarget(t), false, `${t} must never be a janitor target`);
+    assert.equal(isJanitorTarget('items'), false);
+    assert.equal(isJanitorTarget('pending_actions'), false);
+  });
+
+  it('cutoffs: rate_limits 2d, ai/ops events 90d', () => {
+    const now = new Date('2026-10-12T00:00:00Z');
+    const byTable = Object.fromEntries(JANITOR_ALLOWLIST.map((t) => [t.table, janitorCutoff(t, now)]));
+    assert.equal(byTable['rate_limits'], '2026-10-10T00:00:00.000Z');
+    assert.equal(byTable['ai_events'], '2026-07-14T00:00:00.000Z');
+    assert.equal(byTable['ops_events'], '2026-07-14T00:00:00.000Z');
+  });
+
+  it('runJanitor dry-run counts but deletes NOTHING; execute deletes only allowlisted rows', async () => {
+    const mkDb = () => ({
+      rate_limits: [{ window_start: '2026-10-01T00:00:00Z' }, { window_start: '2026-10-12T00:00:00Z' }],
+      ai_events: [{ id: 1, created_at: '2026-01-01T00:00:00Z' }, { id: 2, created_at: '2026-10-12T00:00:00Z' }],
+      ops_events: [{ id: 1, created_at: '2026-01-01T00:00:00Z' }],
+      items: [{ id: 'keep-me', created_at: '2020-01-01T00:00:00Z' }],
+    });
+    const fakeFor = (db) => ({
+      from(table) {
+        const filters = [];
+        let op = 'select';
+        const rows = () => (db[table] ?? []).filter((r) => filters.every(([c, v]) => r[c] < v));
+        const b = {
+          select(_c, o) { if (o?.head) { b._head = true; } return b; },
+          lt(c, v) { filters.push([c, v]); return b; },
+          order() { return b; },
+          limit() { return b; },
+          in(_c, vals) { b._in = vals; return b; },
+          delete() { op = 'delete'; return b; },
+          then(res) {
+            if (op === 'delete') {
+              if (b._in) db[table] = db[table].filter((r) => !b._in.includes(r.id));
+              else db[table] = db[table].filter((r) => !rows().includes(r));
+              return res({ error: null });
+            }
+            const m = rows();
+            return res(b._head ? { data: null, count: m.length, error: null } : { data: m, error: null });
+          },
+        };
+        return b;
+      },
+    });
+    const now = new Date('2026-10-12T00:00:00Z');
+    const db1 = mkDb();
+    const dry = await runJanitor(fakeFor(db1), { execute: false, now });
+    assert.ok(dry.every((r) => r.deleted === 0), 'dry-run deletes nothing');
+    assert.equal(dry.find((r) => r.table === 'ai_events').would_delete, 1);
+    assert.equal(db1.ai_events.length, 2, 'dry-run left rows intact');
+    const db2 = mkDb();
+    const wet = await runJanitor(fakeFor(db2), { execute: true, now });
+    assert.equal(db2.ai_events.length, 1, 'only the stale ai_event is gone');
+    assert.equal(db2.ops_events.length, 0);
+    assert.equal(db2.rate_limits.length, 1);
+    assert.equal(db2.items.length, 1, 'user data is structurally unreachable');
+    assert.ok(wet.every((r) => r.deleted <= r.would_delete));
+  });
+
+  it('GUARD: the janitor function is double-gated and reports to ops', () => {
+    const fn = readFileSync(new URL('../functions/telemetry-janitor/index.ts', import.meta.url), 'utf8');
+    assert.ok(fn.includes("searchParams.get('execute') === '1'"), 'execute requires the query flag');
+    assert.ok(fn.includes("Deno.env.get('JANITOR_ENABLED') === '1'"), 'execute requires the env kill-switch');
+    assert.ok(fn.includes('execute = wantExecute && enabled'), 'both gates must agree');
+    assert.ok(!fn.includes("from('items')") && !fn.includes("from('notes')"), 'the function never names user tables');
+  });
+
+  it('scrubber: credentials, JWTs, emails, URL queries and user objects never survive', () => {
+    const ev = scrubSentryEvent({
+      message: 'failed for user a.b@example.com with Bearer abc.def.ghi',
+      user: { id: 'u1', email: 'a.b@example.com' },
+      request: { url: 'https://x.supabase.co/storage/v1/object/sign/item-photos/u/p.jpg?token=SECRET', data: { note: 'حليب' }, headers: { authorization: 'Bearer abc' } },
+      extra: { api_key: 'sk-123', nested: { jwt: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature' }, keep: 'plain' },
+    });
+    const s = JSON.stringify(ev);
+    assert.ok(!s.includes('a.b@example.com'), 'emails stripped');
+    assert.ok(!s.includes('SECRET') && !s.includes('sk-123'), 'secrets stripped');
+    assert.ok(!s.includes('eyJhbGciOiJIUzI1NiJ9'), 'JWTs stripped');
+    assert.equal(ev.user, undefined, 'user object removed');
+    assert.equal(ev.request.data, undefined, 'request body removed');
+    assert.equal(ev.extra.keep, 'plain', 'innocuous fields survive');
+    assert.ok(scrubString('x'.repeat(500)).length <= 300, 'strings are capped');
+  });
+
+  it('GUARD: migration 0043 carries the measured index set + pg_trgm', () => {
+    const mig = readFileSync(new URL('../migrations/0043_d3_search_indexes.sql', import.meta.url), 'utf8');
+    for (const name of ['items_title_trgm', 'items_details_trgm', 'notes_transcript_trgm', 'items_note_id_idx', 'items_space_kind_status_idx']) {
+      assert.ok(mig.includes(name), `${name} present`);
+    }
+    assert.ok(mig.includes('create extension if not exists pg_trgm'), 'pg_trgm enabled');
+    assert.ok(mig.includes('gin_trgm_ops'), 'trigram GIN opclass used');
+  });
+});
