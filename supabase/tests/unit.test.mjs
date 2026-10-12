@@ -928,13 +928,24 @@ describe('D2 durable memory — dedup auditability, retention separation (spec �
     assert.equal(await mergeFacts(fake, keep, keep), false);
   });
 
-  it('GUARD: chat exposes the duplicate tools; ids validated against the caller\u2019s own facts', () => {
+  it('GUARD: chat exposes the duplicate tools; MERGE IS PREVIEW-ONLY (owner delete-safety ruling)', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
     assert.ok(chat.includes("case 'list_memory_duplicates'"), 'list_memory_duplicates dispatched');
     assert.ok(chat.includes("case 'merge_memories'"), 'merge_memories dispatched');
     assert.ok(chat.includes('memory not found in your private space'), 'ids are validated against the caller\u2019s own facts');
+    // F1: the model tool may ONLY create a preview — the merge itself
+    // runs in the deterministic fast path after the user sends the code.
+    const toolStart = chat.indexOf('async function toolMergeMemories');
+    const toolRegion = chat.slice(toolStart, toolStart + 2400);
+    assert.ok(toolRegion.includes('createMergePreview'), 'the tool creates a preview');
+    assert.ok(toolRegion.includes('needs_confirmation: true'), 'the tool returns a confirmation code');
+    assert.ok(!toolRegion.includes('mergeFacts('), 'the tool must NEVER execute the merge itself');
+    assert.ok(!toolRegion.includes('trashFact'), 'the tool must never trash anything');
+    assert.ok(chat.includes(".in('action_type', ['forget_memory', 'merge_memory'])"), 'the fast path serves both rails');
+    assert.ok(chat.includes('executeConfirmedMerge(admin, claimed)'), 'merge executes only after validate + atomic claim');
     const brain = readFileSync(new URL('../functions/_shared/app-brain.ts', import.meta.url), 'utf8');
-    assert.ok(brain.includes('never merge silently'), 'the model contract forbids silent merges');
+    assert.ok(brain.includes('PREVIEW-ONLY like forget_fact'), 'the model contract states preview-only');
+    assert.ok(brain.includes('NEVER confirm on the user'), 'no model-side confirmation');
   });
 
   it('GUARD: consolidate dry-run writes nothing and every run reports to ops_events (§6.3)', () => {
@@ -964,5 +975,68 @@ describe('D2 durable memory — dedup auditability, retention separation (spec �
     assert.ok(region.includes("status: 'trashed'"), 'replaced facts are trashed');
     assert.ok(region.includes("trash_reason: 'replaced_by_restatement'"), 'the trash reason is recorded');
     assert.ok(!region.includes(".from('items').delete()"), 'no hard delete of a memory row remains in the client memory path');
+  });
+});
+
+describe('D2 merge rail — preview-only merge on the forget confirmation machinery (review F1)', async () => {
+  const { createMergePreview, executeConfirmedMerge, validateForgetConfirmation, claimForgetPreview, loadFacts } =
+    await import('../functions/_shared/memory.ts');
+  const UID = 'user-1';
+  const dupA = () => ({ id: 'a', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:a', importance: 2 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' });
+  const dupB = () => ({ id: 'b', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:b', importance: 4 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z' });
+
+  it('preview issues a code and trashes NOTHING; non-duplicate pairs are refused', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    assert.ok(p && /^\d{6}$/.test(p.confirm_code), 'a 6-digit code is issued');
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'preview alone changes no memory');
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(row.action_type, 'merge_memory');
+    const notDup = await createMergePreview(supa, UID, 'S1', facts[0], { ...facts[1], id: 'z', details: 'نص مختلف' });
+    assert.equal(notDup, null, 'a pair that is not an identical-text duplicate gets no code');
+  });
+
+  it('full rail: validate + claim + execute merges with provenance and trashes the loser', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, true);
+    // loadFacts is newest-first: facts[0] (id 'b', the keeper) survives;
+    // facts[1] (id 'a', the loser) is trashed with provenance on 'b'.
+    const a = supa._db.items.find((i) => i.id === 'a');
+    const b = supa._db.items.find((i) => i.id === 'b');
+    assert.equal(a.status, 'trashed');
+    assert.equal(a.meta.trash_reason, 'merged_duplicate');
+    assert.equal(b.meta.previous_versions.length, 1);
+    assert.equal(b.meta.previous_versions[0].from_id, 'a');
+    assert.equal(b.meta.importance, 5, 'max(4,2)+1 capped at 5');
+    assert.equal(supa._db.pending_actions.find((r) => r.id === p.action_id).status, 'executed');
+  });
+
+  it('execution refuses when a fact changed since the preview (no longer duplicates)', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    supa._db.items.find((i) => i.id === 'b').details = 'اتعدلت بعد المعاينة';
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'nothing was trashed');
+  });
+
+  it('execution refuses an UNCLAIMED row — validation alone never merges', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const res = await executeConfirmedMerge(supa, row); // still 'pending'
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'));
   });
 });

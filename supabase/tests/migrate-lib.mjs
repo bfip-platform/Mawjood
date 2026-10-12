@@ -143,6 +143,11 @@ export const ASSERTIONS = [
           where conname = 'pending_actions_action_type_check'`,
   },
   {
+    name: 'pending_actions accepts merge_memory (0041)',
+    sql: `select (pg_get_constraintdef(oid) like '%merge_memory%') as ok from pg_constraint
+          where conname = 'pending_actions_action_type_check'`,
+  },
+  {
     name: 'pending_actions status accepts executing — atomic claim state (0037)',
     sql: `select (pg_get_constraintdef(oid) like '%executing%') as ok from pg_constraint
           where conname = 'pending_actions_status_check'`,

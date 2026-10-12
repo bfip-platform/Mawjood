@@ -548,11 +548,14 @@ export async function purgeExpiredTrashedFacts(
 export interface PendingForgetRow {
   id: string;
   user_id: string;
+  action_type?: string;
   status: string;
   expires_at: string;
   payload: {
     fact_ids?: string[];
     fact_texts?: string[];
+    keep_id?: string;
+    loser_id?: string;
     memory_space_id?: string;
     confirm_code?: string;
   };
@@ -726,6 +729,84 @@ export async function executeConfirmedForget(
     .eq('id', row.id)
     .eq('status', 'executing');
   return { trashed };
+}
+
+/**
+ * Create a pending MERGE preview (D2, review fix F1). Merging moves the
+ * loser to trash, so it obeys the owner's delete-safety ruling exactly
+ * like forgetting: the model may only PREVIEW — execution happens solely
+ * when the user sends «نفّذ <code>» as their own message. The pair is
+ * re-verified server-side as a genuine duplicate (identical normalized
+ * text) before a code is issued. Trashes NOTHING.
+ */
+export async function createMergePreview(
+  supa: Supa,
+  userId: string,
+  spaceId: string,
+  keep: MemoryRow,
+  loser: MemoryRow,
+): Promise<{ action_id: string; confirm_code: string } | null> {
+  if (keep.id === loser.id) return null;
+  if (normAr(factLine(keep)) !== normAr(factLine(loser))) return null;
+  await supa
+    .from('pending_actions')
+    .update({ status: 'superseded' })
+    .eq('user_id', userId)
+    .eq('action_type', 'merge_memory')
+    .eq('status', 'pending');
+  const confirm_code = newForgetCode();
+  const id = crypto.randomUUID();
+  const { error } = await supa.from('pending_actions').insert({
+    id,
+    user_id: userId,
+    action_type: 'merge_memory',
+    payload: {
+      keep_id: keep.id,
+      loser_id: loser.id,
+      fact_texts: [factLine(keep), factLine(loser)],
+      memory_space_id: spaceId,
+      confirm_code,
+    },
+    approvals: 0,
+    required_approvals: 1,
+    status: 'pending',
+  });
+  if (error) return null;
+  return { action_id: id, confirm_code };
+}
+
+/**
+ * Execute a CLAIMED merge preview: re-check live (both facts still open
+ * in the previewed space and STILL identical-text duplicates — if the
+ * user edited either since the preview, refuse), merge with provenance
+ * (mergeFacts), and finalize the row. Called ONLY from the deterministic
+ * confirmation path after validate + atomic claim — never from a model
+ * tool (owner delete-safety ruling, same as executeConfirmedForget).
+ */
+export async function executeConfirmedMerge(
+  supa: Supa,
+  row: PendingForgetRow,
+): Promise<{ merged: boolean; kept?: string }> {
+  if (row.status !== 'executing') return { merged: false };
+  const exp = expiryMs(row);
+  if (exp === null || exp <= Date.now()) return { merged: false };
+  const spaceId = String(row.payload?.memory_space_id ?? '');
+  const keepId = String(row.payload?.keep_id ?? '');
+  const loserId = String(row.payload?.loser_id ?? '');
+  if (!spaceId || !keepId || !loserId || keepId === loserId) return { merged: false };
+  const facts = await loadFacts(supa, spaceId);
+  const keep = facts.find((f) => f.id === keepId);
+  const loser = facts.find((f) => f.id === loserId);
+  if (!keep || !loser) return { merged: false };
+  if (normAr(factLine(keep)) !== normAr(factLine(loser))) return { merged: false };
+  const ok = await mergeFacts(supa, keep, loser);
+  if (!ok) return { merged: false };
+  await supa
+    .from('pending_actions')
+    .update({ status: 'executed' })
+    .eq('id', row.id)
+    .eq('status', 'executing');
+  return { merged: true, kept: factLine(keep) };
 }
 
 /** Find the user's private space id (memory lives there, owner-only). */
