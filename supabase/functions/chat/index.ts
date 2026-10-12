@@ -5,6 +5,7 @@ import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceT
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
+import { checkSpendCap, spendCapMessage } from '../_shared/spend.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
@@ -929,6 +930,11 @@ Deno.serve(async (req) => {
     admin = adminClient();
     requestId = newRequestId();
 
+    // 💸 daily AI spend cap (T-D2-4, fail-closed): computed once per
+    // request and enforced ONLY on the model-bound paths below (split
+    // call + agent loop). Deterministic fast paths never consult it.
+    const spend = await checkSpendCap(admin, userId);
+
     // 🧠 governance: verify the vault session (ownership proof, server-side)
     // + load the admin's rulebook. A failed vault check is a hard 403.
     const vaultCheck = await verifyVault(admin, userId, typeof vault_id === 'string' ? vault_id : null);
@@ -1267,7 +1273,7 @@ Deno.serve(async (req) => {
     // family purchase in one breath). Split deterministically: one model call
     // decides the parts, then we save each part directly.
     const sm = spaceMatches(t);
-    if (!inVault && sm.work && sm.family && ruleSpaceConfident(t) === null) {
+    if (spend.allowed && !inVault && sm.work && sm.family && ruleSpaceConfident(t) === null) {
       // deno-lint-ignore no-explicit-any
       const splitRes = await callModel(ai, [
         { role: 'system', content: SPLIT_SYSTEM },
@@ -1362,6 +1368,18 @@ Deno.serve(async (req) => {
 
     let answer = 'ما قدرت أفهم الطلب — جرّب تصيغه بطريقة ثانية.';
     const actions: string[] = [];
+    // 💸 spend-cap gate for the agent loop (the split call above is
+    // separately gated): a capped user gets a graceful answer, not an
+    // error — and no model call is made.
+    if (!spend.allowed) {
+      await logOps(admin, {
+        user_id: userId, request_id: requestId,
+        kind: 'spend_cap.hit', ok: false, detail: spend.reason ?? 'cap_reached',
+      });
+      return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions }), {
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
     // 🗂️ when propose_tab succeeds this turn, the client renders a proposal
     // card under the answer bubble (create / send-to-manager / dismiss).
     // deno-lint-ignore no-explicit-any

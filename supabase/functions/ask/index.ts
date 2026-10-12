@@ -9,6 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
+import { checkSpendCap, spendCapMessage } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 
 const cors = {
@@ -61,6 +62,19 @@ Deno.serve(async (req) => {
         kind: 'rate_limit.hit', ok: false, detail: `ask:${rl.window}`,
       });
       return new Response(JSON.stringify({ error: rateLimitMessage(true) }), {
+        status: 429,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 💸 daily AI spend cap (T-D2-4, fail-closed).
+    const spend = await checkSpendCap(admin, userId);
+    if (!spend.allowed) {
+      await logOps(admin, {
+        user_id: userId, request_id: requestId,
+        kind: 'spend_cap.hit', ok: false, detail: spend.reason ?? 'cap_reached',
+      });
+      return new Response(JSON.stringify({ error: spendCapMessage(true) }), {
         status: 429,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });

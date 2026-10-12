@@ -838,3 +838,71 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
+  const fakeSupa = (rows, error = null) => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          gte: () => ({
+            limit: async () => ({ data: rows, error }),
+          }),
+        }),
+      }),
+    }),
+  });
+
+  it('estimates cost from published rates; unknown models price at the premium fallback', async () => {
+    const { estimateCostUsd, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    // 1M in + 1M out on gpt-5-mini = 0.25 + 2.00
+    assert.equal(estimateCostUsd('gpt-5-mini', 1_000_000, 1_000_000), 2.25);
+    assert.equal(estimateCostUsd('gpt-4o-mini', 1_000_000, 0), 0.15);
+    assert.equal(estimateCostUsd('some-future-model', 1_000_000, 0), FALLBACK_RATE.input);
+    assert.equal(estimateCostUsd('gpt-5-mini', null, undefined), 0);
+    assert.equal(estimateCostUsd('gpt-5-mini', -5, -5), 0);
+  });
+
+  it('parses cap config: default $2, env override, kill-switch disables', async () => {
+    const { parseSpendCapUsd } = await import('../functions/_shared/spend.ts');
+    assert.equal(parseSpendCapUsd(undefined, undefined), 2.0);
+    assert.equal(parseSpendCapUsd('0.50', undefined), 0.5);
+    assert.equal(parseSpendCapUsd('garbage', undefined), 2.0);
+    assert.equal(parseSpendCapUsd('-3', undefined), 2.0);
+    assert.equal(parseSpendCapUsd('5', '1'), null);
+  });
+
+  it('allows under the cap, denies at/over it', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const cheap = [{ model: 'gpt-4o-mini', prompt_tokens: 1000, completion_tokens: 1000 }];
+    assert.equal((await checkSpendCap(fakeSupa(cheap), 'u1', 2.0)).allowed, true);
+    const heavy = [{ model: 'gpt-5-mini', prompt_tokens: 1_000_000, completion_tokens: 1_000_000 }];
+    const denied = await checkSpendCap(fakeSupa(heavy), 'u1', 2.0);
+    assert.equal(denied.allowed, false);
+    assert.equal(denied.reason, 'cap_reached');
+  });
+
+  it('FAIL-CLOSED: a telemetry query error denies the AI call', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const r = await checkSpendCap(fakeSupa(null, { message: 'db down' }), 'u1', 2.0);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, 'check_failed');
+  });
+
+  it('kill-switch (cap=null) allows without touching telemetry', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const r = await checkSpendCap(fakeSupa(null, { message: 'must not be queried' }), 'u1', null);
+    assert.equal(r.allowed, true);
+  });
+
+  it('GUARD: chat/ask/extract enforce the cap on their model paths', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    const ask = readFileSync(new URL('../functions/ask/index.ts', import.meta.url), 'utf8');
+    const extract = readFileSync(new URL('../functions/extract/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes('checkSpendCap(admin, userId)'), 'chat computes the cap once per request');
+    assert.ok(chat.includes('spend.allowed && !inVault'), 'chat split call is gated');
+    assert.ok(chat.includes("kind: 'spend_cap.hit'") && chat.includes('spendCapMessage(ar)'),
+      'chat agent loop returns the graceful cap answer');
+    assert.ok(ask.includes('checkSpendCap(admin, userId)'), 'ask is gated');
+    assert.ok(extract.includes('checkSpendCap(supabase, rlUser)'), 'extract is gated against the note owner');
+  });
+});
