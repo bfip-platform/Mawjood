@@ -103,7 +103,13 @@ Deno.serve(async (req) => {
     const { data: claimed, error: claimErr } = await admin.rpc('claim_invite_use', {
       p_invite_id: invite.id,
     });
-    if (claimErr) throw claimErr;
+    if (claimErr) {
+      // PR-B review N2: don't leave a membership behind when the claim
+      // itself failed (e.g. function not yet deployed) — roll back,
+      // then surface the error.
+      await admin.from('space_members').delete().eq('space_id', space.id).eq('user_id', user.id);
+      throw claimErr;
+    }
     if (claimed !== true) {
       // lost the race for the last use — roll back the membership
       await admin.from('space_members').delete().eq('space_id', space.id).eq('user_id', user.id);

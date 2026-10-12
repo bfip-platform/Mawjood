@@ -850,6 +850,7 @@ describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
     assert.equal(timingSafeEqual('s3cret-token', 's3cret-token'), true);
     assert.equal(timingSafeEqual('s3cret-token', 's3cret-tokem'), false);
     assert.equal(timingSafeEqual('s3cret-token', 's3cret'), false);
+    assert.equal(timingSafeEqual('', ''), false);
     assert.equal(timingSafeEqual('', 'x'), false);
     assert.equal(timingSafeEqual('x', ''), false);
   });
@@ -910,6 +911,9 @@ describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
     assert.ok(chat.includes("kind: 'eval_mode.impersonation'"), 'impersonation is written to the audit log');
     assert.ok(chat.includes('retryDelayMs(2 - retries)'), 'provider retries use exponential backoff');
     assert.ok(!chat.includes('setTimeout(r, 1500)'), 'the fixed 1.5s retry is gone');
+    // review N1: approve/cancel must never touch an executing row
+    const n1 = (chat.match(/execution in progress/g) ?? []).length;
+    assert.ok(n1 >= 3, 'execute/approve/cancel all refuse mid-execution rows');
   });
 
   it('GUARD: report-error stores only sanitized telemetry', () => {

@@ -605,6 +605,10 @@ async function toolApproveAction(admin: any, userId: string, gov: Governance | n
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
   if (row.status === 'cancelled') return { error: 'cancelled' };
+  // PR-B review N1: never touch a row mid-execution — approving an
+  // 'executing' row would flip it back to 'approved' and re-arm a
+  // second claim in toolExecuteAction.
+  if (row.status === 'executing') return { error: 'execution in progress' };
   if (row.status === 'expired' || new Date(row.expires_at).getTime() < Date.now()) {
     await admin.from('pending_actions').update({ status: 'expired' }).eq('id', action_id);
     return { error: 'expired — request a new action' };
@@ -615,7 +619,7 @@ async function toolApproveAction(admin: any, userId: string, gov: Governance | n
   const ready = approvals >= required;
   await admin.from('pending_actions').update({
     approvals, status: ready ? 'approved' : 'pending',
-  }).eq('id', action_id);
+  }).eq('id', action_id).eq('status', row.status);
   return {
     action_id, approvals, approvals_needed: required, ready,
     next: ready
@@ -631,7 +635,10 @@ async function toolCancelAction(admin: any, userId: string, args: { action_id?: 
   const { data: row } = await admin.from('pending_actions').select('id,status').eq('id', action_id).eq('user_id', userId).maybeSingle();
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
-  await admin.from('pending_actions').update({ status: 'cancelled' }).eq('id', action_id);
+  // PR-B review N1: an executing action can no longer be cancelled —
+  // the executor is already running and will mark it 'executed'.
+  if (row.status === 'executing') return { error: 'execution in progress' };
+  await admin.from('pending_actions').update({ status: 'cancelled' }).eq('id', action_id).eq('status', row.status);
   return { cancelled: true };
 }
 
