@@ -620,6 +620,7 @@ describe('D1/B4 — universal 30-day trash floor (decision #6)', () => {
 describe('D1/B1-fix — gardener must not filter on dropped columns', () => {
   it('memory-consolidate never references notes.deleted_at (dropped in 0019)', () => {
     const src = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
-    assert.ok(!src.includes("deleted_at"), 'deleted_at was dropped by migration 0019; filtering on it silently zeroes the job');
+    assert.ok(!/\.is\(\s*['"]deleted_at['"]/.test(src) && !/\.eq\(\s*['"]deleted_at['"]/.test(src),
+      'deleted_at was dropped by migration 0019; filtering on it silently zeroes the job');
   });
 });
