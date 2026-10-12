@@ -39,10 +39,12 @@ export function parseDeepLink(raw: unknown): DeepLinkIntent | null {
   // (mawjood://family/join), while https URLs keep it in the pathname.
   const parts = url.pathname.split('/').filter((s) => s.length > 0);
   const segments = isAppScheme && url.host ? [url.host, ...parts] : parts;
-  let path = segments.join('/');
-  // https only: tolerate ONE deployment-subpath segment (review N1 —
-  // the Pages trial serves the app under /Mawjood/).
-  if (isWeb && segments.length > 2) path = segments.slice(1).join('/');
+  // https only: also try dropping ONE leading segment — a deployment
+  // subpath (review N1: the Pages trial serves the app under /Mawjood/).
+  // The app scheme stays strict: no alternate candidates.
+  const candidates = [segments.join('/')];
+  if (isWeb && segments.length > 1) candidates.push(segments.slice(1).join('/'));
+  const path = candidates.find((c) => c === 'family/join' || c === 'join') ?? segments.join('/');
 
   if (path === 'family/join' || path === 'join') {
     const code = url.searchParams.get('code') ?? '';
