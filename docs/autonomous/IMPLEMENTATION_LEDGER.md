@@ -24,7 +24,69 @@ Each entry records:
 
 ---
 
-## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (IN-PROGRESS)
+## 2026-10-11 — Mission MAWJOOD D-1.1 continuation: e2e-auth magic-link failure (COMPLETE)
+
+- **Date:** 2026-10-11 ~16:30 EDT → 2026-10-12 ~03:00 EDT
+- **Mission / task ID:** MAWJOOD D-1.1 continuation (owner-authorized 2026-10-11 16:32 EDT)
+- **Branch:** `d1/governance-foundation`
+- **Final HEAD:** `c23facf0981d57275c272c0d1a143dd1fb6f0ecb` (verified remote via API)
+- **Scope:** Investigate the last failing job (`e2e-auth` "Authenticated journey tests") from CI
+  run 38117585282 (8/9 pass; `rls-audit` behavioral now PASS); reproduce, fix root cause
+  without weakening tests/security; push; rerun full CI on the exact final commit; update
+  ledger + recovery checkpoint. Bans: PR #2 Draft; no merge/deploy/prod-data/D0/D0.5.
+- **CI failure under diagnosis:** run 38117585282, completed/failure. All 4 Playwright tests
+  in `tests/e2e/auth-journey.spec.mjs` failed with 60s timeouts; primary error
+  "page.waitForTimeout: Target page, context or browser has been closed" at
+  `signInViaMagicLink` (spec line 62), i.e. right after the email-submit step. Supabase
+  stack, migrations, Mailpit (54324), and web build all succeeded — infra was fine.
+- **Root causes found & fixed (12 total, all test-harness or test-only app affordances —
+  ZERO app/backend security or logic defects):**
+  1. Fragile submit: `.last().click()` + `press('Enter')`, both with swallowed errors
+     (`.catch(() => {})`). Each burned its 30s actionability timeout on a
+     non-actionable target → 60s test timeout before Inbucket was ever polled.
+     → Explicit bilingual button match + `expect().toBeVisible()` gate.
+  2. No sent-state confirmation gate → fail-fast `expect('Check your email|تفقد
+     بريدك').toBeVisible()`.
+  3. Mailpit API shape: `GET /api/v1/messages` returns `{messages:[...]}`, not a
+     bare array; detail uses `.HTML`/`.Text`. → Handle both shapes; bounded poll.
+  4. UI default language is Arabic in fresh CI browsers → bilingual regexes.
+  5. `toBeHidden()` passes for non-existent elements → explicit `toHaveURL`
+     (app origin) gate after magic-link redirect.
+  6. Session persistence is async after redirect → poll `browserSession()` up to
+     30s instead of single read.
+  7. GoTrue per-IP email rate limiting throttled 2nd/3rd/4th magic-link emails →
+     tests 2–4 now use `signInWithPassword()` (admin API user creation, no email);
+     test 1 keeps the FULL real magic-link UI journey. CI job exposes
+     `MAWJOOD_TEST_SUPABASE_SERVICE_KEY`.
+  8. `div[role="button"]` matched ZERO elements: RN Web Pressable renders a plain
+     `<div>` without `role="button"` unless `accessibilityRole` is set. →
+     Added `testID="tab-home"` / `testID={"tab-space-"+type}` to space tab
+     Pressables (standard RN testID → `data-testid` on web; no visual/functional
+     change); spec uses `getByTestId()`.
+  9. Onboarding overlay blocked tab clicks → set `mawjood.welcomed.v1='1'` in
+     storage pre-boot (exactly what the app's own `finishWelcome()` writes).
+  10. Test 2 created a new space via API, but `pickSpace('private')` resolves
+      from the app's booted spaces list → used the default private space instead.
+  11. `ensureDefaultSpaces` is async → poll for default space existence.
+  12. Note `status` defaulted to non-ready → UI showed "⏳ processing…" not the
+      transcript → insert with `status='ready'`.
+- **Push:** all commits pushed via Git Data API replay; remote verified at
+  `c23facf0981d57275c272c0d1a143dd1fb6f0ecb` (local == remote, clean).
+  NOTE: `/tmp/d1_push_pat.py` is ephemeral (wiped between turns); recreated from
+  the recorded pattern when needed. The D-1.1 push credential is the user's
+  transient PAT (never stored); revoke reminder owed at D-1.1 close.
+- **CI rerun:** run 38196503661 on exact HEAD `c23facf0` — **ALL 9 JOBS PASS**
+  (ci, secret-scan, vuln-scan, rls-audit, auth-gates, e2e-smoke, e2e-auth,
+  standards, provenance). **D-1.1 COMPLETE.**
+- **Review verdict:** READY FOR OWNER — all CI green on exact HEAD; PR #2 Draft
+  untouched (owner merges directly).
+- **Decisions:**
+  - No fallback to direct `signInWithOtp` API call on UI-submit failure — a silent
+    fallback would weaken the test; the fail-fast gate makes a broken submit visible.
+  - Did not touch app/backend logic: all failures were test-harness fidelity or
+    test-only affordances (testIDs, storage flags). The single app-code change
+    (testID props) is a standard testability affordance with zero functional impact.
+- **PR URL:** https://github.com/bfip-platform/Mawjood/pull/2 (Draft; untouched).
 
 - **Date:** 2026-10-11 ~16:30–17:00 EDT
 - **Mission / task ID:** MAWJOOD D-1.1 continuation (owner-authorized 2026-10-11 16:32 EDT)
