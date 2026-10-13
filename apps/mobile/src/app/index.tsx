@@ -95,8 +95,10 @@ import {
   loadMemoryFacts,
   upsertMemoryFact,
   formatMemorySaved,
+  scanMemoryMaintenance,
   type MemoryClient,
   type MemoryFact,
+  type MemoryMaintenanceScan,
 } from '../lib/userMemory';
 import {
   parseTimelineQuery,
@@ -1880,6 +1882,13 @@ export default function HomeScreen() {
         setView('chat');
         setIsAnonymous(false);
         setAuthState('signed-out');
+        // D6 review N1: clear the maintenance scan so a second user in
+        // the same session never sees the first user's counts (and gets
+        // their own scan). The setters are declared later in this
+        // component; this handler only runs after render completes.
+        setMaintScan(null);
+        setMaintDismissed(false);
+        maintScanDoneRef.current = false;
       } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
         // magic-link return, or anonymous → permanent upgrade
         boot();
@@ -2641,6 +2650,30 @@ export default function HomeScreen() {
       return [];
     }
   }, [spaceIdByType, memoryClient]);
+
+  // ── D6 T-D6-1: memory-maintenance surfacing. A read-only scan of the
+  // private space (once per session) feeds a dismissible banner; acting
+  // on it happens in chat through the confirmation rails — this surface
+  // never writes or deletes anything.
+  const [maintScan, setMaintScan] = useState<MemoryMaintenanceScan | null>(null);
+  const [maintDismissed, setMaintDismissed] = useState(false);
+  const maintScanDoneRef = useRef(false);
+  useEffect(() => {
+    if (authState !== 'signed-in' || maintScanDoneRef.current) return;
+    (async () => {
+      try {
+        const pid = spaceIdByType('private');
+        if (!pid) return;
+        const rows = await memoryClient.listMemoryItems(pid);
+        setMaintScan(scanMemoryMaintenance(rows));
+        // Mark done only AFTER a successful scan (review N2) — a
+        // transient failure must not suppress the banner all session.
+        maintScanDoneRef.current = true;
+      } catch {
+        /* surfacing is best-effort — silence is the failure mode */
+      }
+    })();
+  }, [authState, spaceIdByType, memoryClient]);
 
   const maybeMemory = useCallback(
     async (text: string, noteId?: string): Promise<boolean> => {
@@ -4032,6 +4065,33 @@ export default function HomeScreen() {
       {isAnonymous && upgradeSent && (
         <View style={styles.upgradeBanner}>
           <Text style={styles.upgradeText}>{t('confirmEmailSent')}</Text>
+        </View>
+      )}
+
+      {/* ── D6 T-D6-1: memory maintenance surfacing (read-only scan;
+          the review itself happens in chat via the confirmation rails) ── */}
+      {maintScan && !maintDismissed && (maintScan.duplicateGroups > 0 || maintScan.reviewFlagged > 0) && (
+        <View style={styles.upgradeBanner}>
+          <Text style={styles.upgradeText}>
+            {tx('maintBanner', { dups: maintScan.duplicateGroups, review: maintScan.reviewFlagged })}
+          </Text>
+          <View style={styles.upgradeRow}>
+            <Pressable
+              onPress={() => { setMaintDismissed(true); onSendText(t('maintAsk')); }}
+              style={styles.upgradeBtn}
+              accessibilityRole="button"
+            >
+              <Text style={styles.upgradeBtnText}>{t('maintAsk')}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setMaintDismissed(true)}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('maintDismiss')}
+            >
+              <Text style={styles.ghostBtnText}>{t('maintDismiss')}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 

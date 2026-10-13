@@ -838,3 +838,38 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D6 PR-3 — maintenance surfacing (T-D6-1)', async () => {
+  const { scanMemoryMaintenance } = await import('../../apps/mobile/src/lib/userMemory.ts');
+  const row = (id, title, details, meta = {}) => ({ id, title, details, meta });
+
+  it('scan: identical normalized lines with distinct keys form a duplicate group; same-key rows do not', () => {
+    const rows = [
+      row('1', 'بيناديني', 'أبو كريم', { mkey: 'identity:name' }),
+      row('2', 'بيناديني', 'ابو كريم', { mkey: 'identity:nickname' }),
+      row('3', 'الخضرة عندي', 'بندورة', { mkey: 'meaning:veg' }),
+      row('4', 'الخضرة عندي', 'بندورة', { mkey: 'meaning:veg' }), // retry dup — same key
+      row('5', 'سيارتي', 'أودي', { mkey: 'fact:car', review_candidate: true }),
+    ];
+    const scan = scanMemoryMaintenance(rows);
+    assert.equal(scan.duplicateGroups, 1, 'only the name pair (hamza-variant lines, distinct keys) groups');
+    assert.equal(scan.reviewFlagged, 1);
+  });
+
+  it('scan is read-only by construction and the banner surface writes nothing', () => {
+    const lib = readFileSync(new URL('../../apps/mobile/src/lib/userMemory.ts', import.meta.url), 'utf8');
+    const start = lib.indexOf('export function scanMemoryMaintenance');
+    const scanBody = lib.slice(start, lib.indexOf('\nexport ', start + 10));
+    assert.ok(!/delete|update|insert|trash/i.test(scanBody), 'the scan performs no mutation calls');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('scanMemoryMaintenance(rows)'), 'banner is fed by the scan');
+    assert.ok(app.includes("onSendText(t('maintAsk'))"), 'acting on the banner goes through chat (the rails), not a local delete');
+  });
+
+  it('GUARD: maint i18n keys exist in both languages', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['maintBanner', 'maintAsk', 'maintDismiss']) {
+      assert.ok((i18n.split(`${k}:`).length - 1) >= 2, `${k} in AR + EN`);
+    }
+  });
+});
