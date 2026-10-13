@@ -6,7 +6,7 @@
 
 Covers the layers that decide safety, without any model in the loop:
 
-- **Journey scenarios** chaining subsystems end-to-end against the real engine modules with a stateful fake Supabase: learn-shaped upsert → recall → gardener maintenance (flags, never deletes) → forget preview → wrong/expired/forged confirmations refused → correct user confirmation → exactly the previewed facts trash → restore → re-forget → purge eligibility only after the trash-retention window.
+- **Journey scenarios** chaining subsystems end-to-end against the real engine modules with a stateful fake Supabase: learn-shaped upsert → recall → gardener maintenance (flags, never deletes) → forget preview → wrong-code refusal in the journey itself (expired/forged-row refusal is covered by the D1 describes in the same suite) → correct user confirmation → exactly the previewed facts trash → restore → re-forget → purge eligibility only after the trash-retention window.
 - **Injection regression pack (T-D6-4):** the corpus of attacker-controlled texts (consent forgery, instruction override, tool-call smuggling, impersonation) — each must fail the confirmation parser or be inert without a server-side pending row; plus structural invariants (no `trashFact` in chat; exactly two engine trash call sites).
 - **"No maintenance path deletes" (roadmap D6 exit gate):** `planMemoryMaintenance` output is asserted to contain only rescore/review actions, and `applyMemoryMaintenance` is asserted to leave every item's status untouched.
 

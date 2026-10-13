@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -855,14 +855,30 @@ describe('D6 — AI-E2E harness: journeys + injection regression pack (T-D6-3/4)
     assert.equal(supa._db.items[0].status, 'open', 'corpus payloads changed no state');
   });
 
-  it('STRUCTURAL INVARIANTS: chat cannot trash; engine trash call sites are exactly the two sanctioned ones', () => {
+  it('STRUCTURAL INVARIANTS: chat cannot trash; the tree-wide trashFact census is exactly the sanctioned callers', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
     assert.ok(!/trashFact\s*\(/.test(chat), 'chat/index.ts must never call trashFact');
-    const engine = readFileSync(new URL('../functions/_shared/memory.ts', import.meta.url), 'utf8');
-    const engineCalls = engine.match(/trashFact\s*\(/g) ?? [];
-    assert.equal(engineCalls.length, 2, 'engine: trashFact definition + the claimed executor call — no more');
-    const consolidate = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
-    assert.ok(consolidate.includes("trashFact(supa, drop, 'duplicate_retry')"), 'the §6.1 retry-duplicate exception is the only job-side trash');
+    // Tree-wide census (review N3): walk every function file — a future
+    // caller in a NEW file must fail this test loudly.
+    const callers = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.ts')) {
+          const src = readFileSync(p, 'utf8');
+          const hits = (src.match(/trashFact\s*\(/g) ?? []).length;
+          // the definition line counts once in memory.ts; calls elsewhere count fully
+          if (hits > 0) callers.push(`${p.split('/functions/')[1]}:${hits}`);
+        }
+      }
+    };
+    walk(new URL('../functions', import.meta.url).pathname);
+    assert.deepEqual(
+      callers.sort(),
+      ['_shared/memory.ts:2', 'memory-consolidate/index.ts:1'],
+      'trashFact may exist only as: engine definition + claimed executor (memory.ts ×2 incl. def) and the §6.1 call (consolidate ×1)',
+    );
   });
 
   it('JOURNEY: learn → recall → gardener (flags only) → forget via rail → restore → purge window', async () => {
