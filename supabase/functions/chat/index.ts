@@ -976,7 +976,10 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     // strip a thinking preamble if the model leaks one
     const clean = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     return clean ? { text: clean, usage: j.usage ?? null } : null;
-  } catch {
+  } catch (e) {
+    // A spend-cap denial is NOT a vision failure — rethrow so the call
+    // site returns the cap answer instead of the 'couldn't see' path.
+    if (e instanceof Error && e.message === '__SPEND_CAP__') throw e;
     return null;
   }
 }

@@ -1156,6 +1156,19 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     assert.ok(extract.includes('checkSpendCap(supabase, rlUser)') && extract.includes('chargeModelCall(supabase, rlUser'), 'extract pre-checks and charges per attempt against the note owner');
     const learn = readFileSync(new URL('../functions/memory-learn/index.ts', import.meta.url), 'utf8');
     assert.ok(learn.includes('chargeModelCall'), 'memory-learn (an AI path) is charged too');
+    // INVENTORY (owner correction round 2): EVERY edge function that
+    // calls a model endpoint charges the ledger — route, classify and
+    // memory-consolidate included. transcribe is the sole exclusion
+    // (per-audio-minute Whisper on the free tier, rate-limited, no
+    // token telemetry — disclosed in the audit register).
+    for (const fn of ['route', 'classify']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('chat/completions') && src.includes('chargeModelCall'), `${fn} charges its model call`);
+    }
+    const cons = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(cons.includes('chargeModelCall'), 'memory-consolidate charges its per-user episode call');
+    assert.ok(chat.includes("if (e instanceof Error && e.message === '__SPEND_CAP__') throw e;"),
+      'callVision rethrows cap denials instead of swallowing them as vision failures');
   });
 
   it('R1: the vision path is gated AND metered (it was neither)', () => {

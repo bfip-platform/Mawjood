@@ -1,6 +1,7 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { authUserId, json401, adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
+import { chargeModelCall } from '../_shared/spend.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -105,39 +106,48 @@ Deno.serve(async (req) => {
       const convo = hist
         .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.text}`)
         .join('\n');
-      const aiRes = await fetch(`${ai.base}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ai.key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(chatBody(ai, {
-          max_tokens: 200,
-          messages: [
-            { role: 'system', content: SYSTEM },
-            {
-              role: 'user',
-              content: `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`,
-            },
-          ],
-        })),
+      // 💸 atomic charge (0044), measured on the assembled payload. A
+      // denial skips the model call: routing falls back to the default
+      // space (the chat path re-routes with full context anyway).
+      const gate = await chargeModelCall(adminClient(), callerId, {
+        inputChars: SYSTEM.length + convo.length + t.length + 64,
+        maxOutTokens: 200,
       });
-      if (!aiRes.ok) {
-        const b = await aiRes.text();
-        throw new Error(`${ai.provider} ${aiRes.status}: ${b.slice(0, 120)}`);
-      }
-      const j = await aiRes.json();
-      const raw = (j.choices?.[0]?.message?.content ?? '').trim();
-      const clean = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '');
-      try {
-        const p = JSON.parse(clean);
-        if (['question', 'note', 'correction'].includes(p.action)) action = p.action;
-        if (['private', 'family', 'work'].includes(p.space_type)) space_type = p.space_type;
-      } catch {
-        const m = clean.match(/"(question|note|correction)"/);
-        if (m) action = m[1] as typeof action;
+      if (gate.allowed) {
+        const aiRes = await fetch(`${ai.base}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${ai.key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chatBody(ai, {
+            max_tokens: 200,
+            messages: [
+              { role: 'system', content: SYSTEM },
+              {
+                role: 'user',
+                content: `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`,
+              },
+            ],
+          })),
+        });
+        if (!aiRes.ok) {
+          const b = await aiRes.text();
+          throw new Error(`${ai.provider} ${aiRes.status}: ${b.slice(0, 120)}`);
+        }
+        const j = await aiRes.json();
+        const raw = (j.choices?.[0]?.message?.content ?? '').trim();
+        const clean = raw
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, '');
+        try {
+          const p = JSON.parse(clean);
+          if (['question', 'note', 'correction'].includes(p.action)) action = p.action;
+          if (['private', 'family', 'work'].includes(p.space_type)) space_type = p.space_type;
+        } catch {
+          const m = clean.match(/"(question|note|correction)"/);
+          if (m) action = m[1] as typeof action;
+        }
       }
     }
 

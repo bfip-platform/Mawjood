@@ -20,6 +20,7 @@
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { timingSafeEqual } from '../_shared/edge-auth.ts';
+import { chargeModelCall } from '../_shared/spend.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   loadFacts,
@@ -38,7 +39,16 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-async function callModel(ai: any, system: string, user: string): Promise<string> {
+async function callModel(ai: any, system: string, user: string, gate?: { supa: any; userId: string }): Promise<string> {
+  // 💸 atomic charge (0044) per user — the nightly episode summary is
+  // real per-user AI spend. Denial throws __SPEND_CAP__; the per-user
+  // try/catch treats it as a best-effort skip, like any model failure.
+  if (gate) {
+    const g = await chargeModelCall(gate.supa, gate.userId, {
+      inputChars: system.length + user.length, maxOutTokens: 400,
+    });
+    if (!g.allowed) throw new Error('__SPEND_CAP__');
+  }
   const r = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
@@ -107,7 +117,7 @@ Deno.serve(async (req) => {
       const texts = (notes ?? []).map((n: any) => String(n.transcript ?? '').slice(0, 200)).filter((s: string) => s.trim());
       if (texts.length > 0 && !dryRun) {
         try {
-          const summary = await callModel(ai, EPISODE_SYSTEM, texts.join('\n'));
+          const summary = await callModel(ai, EPISODE_SYSTEM, texts.join('\n'), { supa, userId: uid });
           if (summary && summary !== 'NOTHING' && summary.length > 20) {
             const { saved } = await upsertFacts(supa, pid, uid, [{
               content: summary.slice(0, 500),

@@ -1,8 +1,11 @@
 // Spend-ledger concurrency proof — REAL PostgreSQL (owner audit, final
-// correction). Runs in the rls-audit CI job against the same scratch
-// database migrate-check builds (mawjood_migtest), so the atomic
-// authorize+charge contract of migration 0044 is exercised at every
-// exact head, not just asserted from the SQL text.
+// correction). Designed for the rls-audit CI job against the same
+// scratch database migrate-check builds (mawjood_migtest); the ci.yml
+// step is pending the connector token's Workflows permission (see the
+// audit register's CI-wiring caveat) — until it lands, this script is
+// run manually against a migrated local/scratch database, so the
+// atomic authorize+charge contract of migration 0044 is exercised
+// against a real server, not just asserted from the SQL text.
 //
 // Contract under test (try_charge_ai_spend):
 //   1. 50 PARALLEL charges of $0.10 against a $2.05 cap: exactly 20
