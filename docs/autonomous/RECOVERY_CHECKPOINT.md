@@ -22,3 +22,7 @@
 - **Staging prep (2026-10-13):** staging deployment + test plans prepared (launch/ STAGING_*), D9 RC re-fixed at `7f4bad04`. Execution blocked on owner approval + scratch access route + owner-set secrets (plan §7, B1–B5). Nothing deployed; no spend.
 
 - **Staging Phase 1 readiness (2026-10-13):** live read-only preflight of scratch PASSED (owner's transient token; isolation verified live, schema at 0045, 0046 absent proven two ways, zero secrets, zero functions, Auth URLs unset, benchmark counts 100,002/20,001/2 frozen; migration tracking schema absent — raw-SQL route is canonical for this DB). Readiness package prepared on `staging/phase1-readiness` from main `7237a17c`: `docs/autonomous/launch/staging-phase1/` (RUNBOOK gates G0–G7, PREFLIGHT_EVIDENCE, RISK_BLOCKER_REGISTER, OWNER_APPROVAL_CHECKLIST). Phase 1 execution NOT started; first gate = owner approval of the runbook + G1. Production untouched; $0 spent.
+
+## 2026-10-13 — Phase 1 executed; beta pending owner secrets
+
+Staging (scratch) is LIVE: 0046 applied, 24 functions ACTIVE, 5 staging secrets set, fixtures T1–T5 in place, G6 matrix passed (one designed $0.086669 ledger reservation; $0.00 provider spend). G4/G7 blocked on the custom domain's DNS/hosting (owner-deferred). iPhone beta: pipeline verified end-to-end except GitHub Actions secrets (wiped by the org transfer) — owner re-adds 6 secrets and dispatches build-ios + submit-ios workflows; TestFlight then delivers to the internal tester. Runbook G6 ledger expectation corrected (beta PR). Production never touched.
