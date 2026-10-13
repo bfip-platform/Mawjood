@@ -1,7 +1,7 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { authUserId, json401, adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
-import { chargeModelCall, spendCapMessage } from '../_shared/spend.ts';
+import { chargeModelCall, spendCapMessage, byteLen } from '../_shared/spend.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
 
     // 💸 atomic charge (0044), measured on the assembled payload.
     const gate = await chargeModelCall(adminClient(), callerId, {
-      inputChars: SYSTEM.length + t.length,
+      inputBytes: byteLen(SYSTEM) + byteLen(t),
       maxOutTokens: 200,
     });
     if (!gate.allowed) {

@@ -1,7 +1,7 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { authUserId, json401, adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
-import { chargeModelCall } from '../_shared/spend.ts';
+import { chargeModelCall, byteLen } from '../_shared/spend.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -109,8 +109,9 @@ Deno.serve(async (req) => {
       // 💸 atomic charge (0044), measured on the assembled payload. A
       // denial skips the model call: routing falls back to the default
       // space (the chat path re-routes with full context anyway).
+      const userContent = `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`;
       const gate = await chargeModelCall(adminClient(), callerId, {
-        inputChars: SYSTEM.length + convo.length + t.length + 64,
+        inputBytes: byteLen(SYSTEM) + byteLen(userContent),
         maxOutTokens: 200,
       });
       if (gate.allowed) {
@@ -126,7 +127,7 @@ Deno.serve(async (req) => {
               { role: 'system', content: SYSTEM },
               {
                 role: 'user',
-                content: `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`,
+                content: userContent,
               },
             ],
           })),

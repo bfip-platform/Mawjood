@@ -6,7 +6,7 @@ import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
 import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
-import { checkSpendCap, chargeModelCall, payloadChars, spendCapMessage } from '../_shared/spend.ts';
+import { checkSpendCap, chargeModelCall, payloadBytes, spendCapMessage } from '../_shared/spend.ts';
 import { retryDelayMs, sleep } from '../_shared/backoff.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
@@ -896,7 +896,7 @@ async function callModel(ai: any, messages: any[], retries = 2, gate?: { supa: a
   // map it to the graceful cap answer. Retries re-enter and re-charge:
   // a retry is a real second provider request.
   if (gate) {
-    const g = await chargeModelCall(gate.supa, gate.userId, { inputChars: payloadChars(messages), maxOutTokens: 2000 });
+    const g = await chargeModelCall(gate.supa, gate.userId, { inputBytes: payloadBytes(messages), maxOutTokens: 2000 });
     if (!g.allowed) throw new Error('__SPEND_CAP__');
   }
   const t0 = Date.now();
@@ -953,7 +953,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     // image priced at the flat IMAGE_TOKEN_BOUND. Denial throws
     // __SPEND_CAP__ — the call site maps it to the cap answer.
     if (gate) {
-      const g = await chargeModelCall(gate.supa, gate.userId, { inputChars: payloadChars(vmsgs), maxOutTokens: 400, images: 1 });
+      const g = await chargeModelCall(gate.supa, gate.userId, { inputBytes: payloadBytes(vmsgs), maxOutTokens: 400, images: 1 });
       if (!g.allowed) throw new Error('__SPEND_CAP__');
     }
     // deno-lint-ignore no-explicit-any

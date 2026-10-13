@@ -17,24 +17,40 @@
 // sum survives as sumSpendFromEvents() for reporting only, fully
 // paginated; it is NOT the gate.
 //
-// CHARGE ACCURACY (owner correction): every model call is charged
-// BEFORE it runs, at a MEASURED upper bound of its own payload:
-//   - input tokens: payload characters × TOKENS_PER_CHAR_BOUND, a
-//     conservative chars->tokens factor for mixed Arabic/English GPT
-//     tokenizers (Arabic tokenizes denser than English; 0.75 tok/char
-//     plus slack covers observed worst cases), plus a flat
-//     IMAGE_TOKEN_BOUND per attached image (vision bills per image,
-//     not per character).
-//   - output tokens: the call's own max_tokens — a hard bound the
-//     provider enforces on every request.
-//   - price: FALLBACK_RATE, the most expensive rate in the table, so
-//     provider fallback chains (OpenAI -> Groq) can never out-price
-//     the charge: every chain member's rates are <= the fallback's.
+// CHARGE ACCURACY (owner corrections, rounds 2-3): every model call
+// is charged BEFORE it runs, at a computed upper bound of its own
+// payload. The bounds are CONSTRUCTION arguments, not observations
+// (validation + sources: audit register F-INT-01, round 3):
+//   - TEXT input tokens <= the payload's UTF-8 BYTE count. Every
+//     supported tokenizer (OpenAI o200k/cl100k, gpt-oss, Qwen) is a
+//     byte-level BPE: encoding starts from one token per byte and
+//     merges only combine, so the token count can never exceed the
+//     byte count. A flat ENVELOPE_TOKEN_ALLOWANCE covers the chat
+//     template's special/role tokens on top.
+//   - IMAGE input tokens <= IMAGE_TOKEN_BOUND per image. OpenAI's
+//     vision model here (gpt-4o-mini) uses the documented tile
+//     algorithm (base 2,833 + 5,667 per 512px tile; the 2048px-fit +
+//     768px-shortest-side geometry caps an image at 8 tiles), i.e. a
+//     48,169-token worst case; Groq's vision model caps image input
+//     at 2,048 tokens per Groq's vision docs. The bound rounds the
+//     OpenAI worst case up to 50,000.
+//   - OUTPUT tokens <= the call's own max_tokens — a hard cap the
+//     provider enforces server-side (it also covers reasoning
+//     tokens on the GPT-5 / gpt-oss paths).
+//   - PRICE: FALLBACK_RATE, the component-wise maximum over the rate
+//     table, so the deployment's provider choice (OpenAI xor Groq —
+//     there is no in-request cross-provider fallback in the code)
+//     cannot out-price a charge at the table's stated rates.
 // Retries are separate attempts and are charged per attempt at the
-// seam (callModel/callVision/extract loop), because a retried call is
-// a real second request. The ledger therefore always >= the actual
-// provider spend of completed calls, and reaches the cap exactly —
-// never past it.
+// seam, because a retried call is a real second request.
+// SCOPE OF THE GUARANTEE: the LEDGER total can never exceed the cap
+// (the RPC enforces it). Containment of ACTUAL provider billing
+// follows only while the bounds above hold at the providers' stated
+// formulas and rates; providers can reprice or change preprocessing
+// without notice. The operational control for that residual risk is
+// daily reconciliation (register F-INT-01 round 3): compare
+// sumSpendFromEvents (actual-token costing) against ledger
+// reservations and alert if actuals ever exceed reservations.
 //
 // FAIL-CLOSED everywhere: pre-check read failure denies; a missing,
 // non-finite, or negative charge estimate denies WITHOUT calling the
@@ -47,23 +63,44 @@
 //                            pending the owner's tier decisions)
 //   AI_SPEND_CAP_OFF=1     — kill-switch: disables the cap entirely
 
-// USD per 1M tokens { input, output }. Sources: OpenAI published pricing
-// (verified 2026-10-12): gpt-5-mini 0.25/2.00, gpt-4o-mini 0.15/0.60.
-// Groq-hosted models are priced at the gpt-4o-mini rate as a guardrail
-// estimate. Unknown models fall back to the MOST EXPENSIVE known rate so
-// a new model can never silently under-count spend.
+// USD per 1M tokens { input, output }. Sources (verified 2026-10-12,
+// round 3): OpenAI published pricing — gpt-5-mini 0.25/2.00,
+// gpt-4o-mini 0.15/0.60. Groq — gpt-oss-120b 0.15 input; output
+// sources conflict (0.60 on Groq's pricing page vs 0.75 in reseller
+// catalogs), so the table carries the HIGHER 0.75. qwen/qwen3.8-27b
+// (Groq preview, the Groq-path vision model): 0.80/4.00 per Groq's
+// model listing as reported in round-3 research — NOTE its $4.00
+// output EXCEEDS gpt-5-mini's, which is why the fallback is now the
+// component-wise table maximum rather than any single model's rate.
+// FALLBACK_RATE is DERIVED as that maximum, and a unit test asserts
+// it dominates every table entry, so adding a pricier model later
+// raises the charging rate automatically instead of silently
+// breaking the bound.
 export const MODEL_RATES_USD_PER_1M: Record<string, { input: number; output: number }> = {
   'gpt-5-mini': { input: 0.25, output: 2.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  'openai/gpt-oss-120b': { input: 0.15, output: 0.6 },
-  'qwen/qwen3.8-27b': { input: 0.15, output: 0.6 },
+  'openai/gpt-oss-120b': { input: 0.15, output: 0.75 },
+  'qwen/qwen3.8-27b': { input: 0.8, output: 4.0 },
 };
-export const FALLBACK_RATE = MODEL_RATES_USD_PER_1M['gpt-5-mini'];
+export const FALLBACK_RATE = Object.values(MODEL_RATES_USD_PER_1M).reduce(
+  (max, r) => ({ input: Math.max(max.input, r.input), output: Math.max(max.output, r.output) }),
+  { input: 0, output: 0 },
+);
 
-/** Conservative chars->tokens bound for mixed AR/EN GPT tokenizers. */
-export const TOKENS_PER_CHAR_BOUND = 0.75;
-/** Flat per-image input-token bound for vision calls. */
-export const IMAGE_TOKEN_BOUND = 2000;
+/**
+ * Per-call allowance for chat-template special tokens (role markers,
+ * message framing, reply priming) that are not part of the measured
+ * content bytes. Our largest call shape carries ~18 messages; the
+ * documented per-message overhead is ~3-4 tokens, so 96 covers every
+ * call shape in the codebase with margin.
+ */
+export const ENVELOPE_TOKEN_ALLOWANCE = 96;
+/**
+ * Per-image input-token bound for vision calls: gpt-4o-mini's
+ * documented worst case is 2,833 base + 8 tiles x 5,667 = 48,169
+ * (see header); Groq caps image input at 2,048. Rounded up.
+ */
+export const IMAGE_TOKEN_BOUND = 50_000;
 
 export function estimateCostUsd(
   model: string,
@@ -76,40 +113,48 @@ export function estimateCostUsd(
   return (pin * rate.input + pout * rate.output) / 1_000_000;
 }
 
+const textEncoder = new TextEncoder();
+/** UTF-8 byte length of a string — the unit the token bound is proven in. */
+export function byteLen(s: string): number {
+  return textEncoder.encode(s ?? '').length;
+}
+
 /**
  * The charge for ONE model-call attempt, from its measured payload.
- * inputChars counts every character of the messages payload (system,
- * history, context, tool results — whatever the caller assembled);
- * images add IMAGE_TOKEN_BOUND each. Priced at FALLBACK_RATE (the
- * table maximum) so no provider/fallback combination can exceed it.
- * Returns NaN for invalid specs — callers must treat NaN as a denial.
+ * inputBytes is the UTF-8 byte count of everything the caller
+ * assembled (system, history, context, tool results — byte-level BPE
+ * tokenizers can never emit more tokens than input bytes); images
+ * add IMAGE_TOKEN_BOUND each; ENVELOPE_TOKEN_ALLOWANCE covers the
+ * chat template's framing tokens. Priced at FALLBACK_RATE (the
+ * derived table maximum). Returns NaN for invalid specs — callers
+ * must treat NaN as a denial.
  */
 export function estimateCallChargeUsd(spec: {
-  inputChars: number;
+  inputBytes: number;
   maxOutTokens: number;
   images?: number;
 }): number {
-  const chars = Number(spec?.inputChars);
+  const bytes = Number(spec?.inputBytes);
   const maxOut = Number(spec?.maxOutTokens);
   const images = Number(spec?.images ?? 0);
-  if (!Number.isFinite(chars) || chars < 0 || !Number.isFinite(maxOut) || maxOut <= 0
+  if (!Number.isFinite(bytes) || bytes < 0 || !Number.isFinite(maxOut) || maxOut <= 0
     || !Number.isFinite(images) || images < 0) {
     return NaN;
   }
-  const inputTokens = Math.ceil(chars * TOKENS_PER_CHAR_BOUND) + images * IMAGE_TOKEN_BOUND;
+  const inputTokens = Math.ceil(bytes) + ENVELOPE_TOKEN_ALLOWANCE + images * IMAGE_TOKEN_BOUND;
   return estimateCostUsd('__fallback__', inputTokens, maxOut);
 }
 
-/** Total characters in a chat-messages payload (content strings only). */
+/** Total UTF-8 bytes in a chat-messages payload (content strings only). */
 // deno-lint-ignore no-explicit-any
-export function payloadChars(messages: any[]): number {
+export function payloadBytes(messages: any[]): number {
   let n = 0;
   for (const m of messages ?? []) {
     const c = m?.content;
-    if (typeof c === 'string') n += c.length;
+    if (typeof c === 'string') n += byteLen(c);
     else if (Array.isArray(c)) {
       for (const part of c) {
-        if (typeof part?.text === 'string') n += part.text.length;
+        if (typeof part?.text === 'string') n += byteLen(part.text);
       }
     }
   }
@@ -190,7 +235,7 @@ export async function checkSpendCap(supa: any, userId: string, capOverride?: num
 export async function chargeModelCall(
   supa: any,
   userId: string,
-  spec: { inputChars: number; maxOutTokens: number; images?: number },
+  spec: { inputBytes: number; maxOutTokens: number; images?: number },
   capOverride?: number | null,
 ): Promise<SpendCapResult> {
   const capUsd = resolveCap(capOverride);

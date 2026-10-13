@@ -13,7 +13,7 @@ import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
-import { chargeModelCall } from '../_shared/spend.ts';
+import { chargeModelCall, byteLen } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import {
   learnSystem,
@@ -34,7 +34,7 @@ async function callModel(ai: any, system: string, user: string, gate?: { supa: a
   // treats it as a silent skip (learning is best-effort by design).
   if (gate) {
     const g = await chargeModelCall(gate.supa, gate.userId, {
-      inputChars: system.length + user.length, maxOutTokens: 500,
+      inputBytes: byteLen(system) + byteLen(user), maxOutTokens: 500,
     });
     if (!g.allowed) throw new Error('__SPEND_CAP__');
   }

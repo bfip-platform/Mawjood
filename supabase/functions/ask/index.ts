@@ -9,7 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
-import { checkSpendCap, chargeModelCall, spendCapMessage } from '../_shared/spend.ts';
+import { checkSpendCap, chargeModelCall, spendCapMessage, byteLen } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 
 const cors = {
@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       // 💸 atomic per-attempt charge (0044): the payload string IS the
       // measured input (system + context + question, fully assembled).
-      const gate = await chargeModelCall(admin, userId, { inputChars: payload.length, maxOutTokens: 1200 });
+      const gate = await chargeModelCall(admin, userId, { inputBytes: byteLen(payload), maxOutTokens: 1200 });
       if (!gate.allowed) {
         await logOps(admin, {
           user_id: userId, request_id: requestId,

@@ -8,7 +8,7 @@
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
-import { checkSpendCap, chargeModelCall, spendCapMessage } from '../_shared/spend.ts';
+import { checkSpendCap, chargeModelCall, spendCapMessage, byteLen } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import { sanitizeTimezone } from '../_shared/time.ts';
 import {
@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
       // system prompt + the note transcript. Denial stops extraction
       // (the note stays intact and re-runnable) with the cap response.
       const gate = await chargeModelCall(supabase, rlUser, {
-        inputChars: systemPrompt.length + String(note.transcript ?? '').length,
+        inputBytes: byteLen(systemPrompt) + byteLen(String(note.transcript ?? '')),
         maxOutTokens: 1200,
       });
       if (!gate.allowed) {

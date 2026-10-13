@@ -1056,7 +1056,7 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
 
   it('chargeModelCall: ONE atomic authorize+charge — applies under the cap, NULL at the boundary denies', async () => {
     const { chargeModelCall, estimateCallChargeUsd } = await import('../functions/_shared/spend.ts');
-    const spec = { inputChars: 4000, maxOutTokens: 2000 };
+    const spec = { inputBytes: 4000, maxOutTokens: 2000 };
     const charge = estimateCallChargeUsd(spec);
     assert.ok(Number.isFinite(charge) && charge > 0);
     const s1 = ledgerSupa(2.0 - charge / 2); // headroom for only half a charge
@@ -1070,19 +1070,47 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     assert.ok(Math.abs(s2._state.total - charge) < 1e-9, 'an accepted charge lands exactly once');
   });
 
-  it('charge math is a MEASURED bound: chars x token factor at the max rate + hard output cap + image bound', async () => {
-    const { estimateCallChargeUsd, estimateCostUsd, TOKENS_PER_CHAR_BOUND, IMAGE_TOKEN_BOUND, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
-    const c = estimateCallChargeUsd({ inputChars: 10000, maxOutTokens: 2000 });
-    const expect = estimateCostUsd('gpt-5-mini', Math.ceil(10000 * TOKENS_PER_CHAR_BOUND), 2000);
+  it('charge math is a PROVEN bound: UTF-8 bytes (byte-level BPE) + envelope + image bound, at the derived max rate', async () => {
+    const { estimateCallChargeUsd, estimateCostUsd, ENVELOPE_TOKEN_ALLOWANCE, IMAGE_TOKEN_BOUND, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    const c = estimateCallChargeUsd({ inputBytes: 10000, maxOutTokens: 2000 });
+    const expect = estimateCostUsd('__fallback__', 10000 + ENVELOPE_TOKEN_ALLOWANCE, 2000);
     assert.ok(Math.abs(c - expect) < 1e-12);
-    const withImg = estimateCallChargeUsd({ inputChars: 0, maxOutTokens: 400, images: 1 });
-    assert.ok(Math.abs(withImg - estimateCostUsd('gpt-5-mini', IMAGE_TOKEN_BOUND, 400)) < 1e-12);
-    assert.ok(FALLBACK_RATE.input >= 0.25 && FALLBACK_RATE.output >= 2.0, 'priced at the priciest rate in the table');
+    const withImg = estimateCallChargeUsd({ inputBytes: 0, maxOutTokens: 400, images: 1 });
+    assert.ok(Math.abs(withImg - estimateCostUsd('__fallback__', ENVELOPE_TOKEN_ALLOWANCE + IMAGE_TOKEN_BOUND, 400)) < 1e-12);
+    assert.ok(FALLBACK_RATE.input >= 0.8 && FALLBACK_RATE.output >= 4.0, 'priced at the component-wise table maximum (qwen rates dominate)');
+  });
+
+  it('NEGATIVE: FALLBACK_RATE dominates EVERY rate-table entry (a pricier future model cannot silently break the bound)', async () => {
+    const { MODEL_RATES_USD_PER_1M, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    for (const [model, r] of Object.entries(MODEL_RATES_USD_PER_1M)) {
+      assert.ok(FALLBACK_RATE.input >= r.input && FALLBACK_RATE.output >= r.output, `${model} exceeds the fallback rate`);
+    }
+    // The round-3 violation this pins: qwen output $4.00 > gpt-5-mini $2.00.
+    assert.ok(MODEL_RATES_USD_PER_1M['qwen/qwen3.8-27b'].output > MODEL_RATES_USD_PER_1M['gpt-5-mini'].output);
+  });
+
+  it('NEGATIVE: the byte bound cannot be undercut by dense tokenization (Arabic/emoji payloads measure in BYTES, not chars)', async () => {
+    const { byteLen, payloadBytes, estimateCallChargeUsd } = await import('../functions/_shared/spend.ts');
+    const ar = 'ذاكرة'; // 5 Arabic chars, 10 UTF-8 bytes
+    assert.equal(byteLen(ar), 10);
+    assert.equal(byteLen('🔥'), 4); // 1 visible char, 2 UTF-16 units, 4 bytes
+    assert.equal(payloadBytes([{ role: 'user', content: ar }]), 10);
+    // A char-based estimate would have charged ceil(6 x 0.75) = 5 tokens;
+    // the byte bound charges 10 — dense-script input can no longer slip
+    // under the reservation.
+    const charge = estimateCallChargeUsd({ inputBytes: byteLen(ar), maxOutTokens: 10 });
+    const charEra = (Math.ceil(5 * 0.75) + 96) * 0.8 / 1e6 + 10 * 4.0 / 1e6;
+    assert.ok(charge > charEra - 1e-12, 'byte-bound charge covers the old char-era underestimate');
+  });
+
+  it('NEGATIVE: IMAGE_TOKEN_BOUND covers the documented gpt-4o-mini worst case (2,833 + 8 tiles x 5,667 = 48,169)', async () => {
+    const { IMAGE_TOKEN_BOUND } = await import('../functions/_shared/spend.ts');
+    assert.ok(IMAGE_TOKEN_BOUND >= 48169, `bound ${IMAGE_TOKEN_BOUND} must cover the documented tile-algorithm worst case`);
   });
 
   it('FAIL-CLOSED: invalid estimates deny WITHOUT any RPC (missing/NaN/negative)', async () => {
     const { chargeModelCall } = await import('../functions/_shared/spend.ts');
-    for (const spec of [{ inputChars: NaN, maxOutTokens: 100 }, { inputChars: -5, maxOutTokens: 100 }, { inputChars: 100, maxOutTokens: 0 }, { inputChars: 100 }, {}, null]) {
+    for (const spec of [{ inputBytes: NaN, maxOutTokens: 100 }, { inputBytes: -5, maxOutTokens: 100 }, { inputBytes: 100, maxOutTokens: 0 }, { inputBytes: 100 }, {}, null]) {
       const s1 = ledgerSupa(0);
       const r = await chargeModelCall(s1, 'u1', spec, 2.0);
       assert.equal(r.allowed, false, `spec ${JSON.stringify(spec)} must deny`);
@@ -1094,9 +1122,9 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
   it('FAIL-CLOSED: pre-check read error denies; charge RPC error denies; thrown RPC denies', async () => {
     const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
     assert.equal((await checkSpendCap(ledgerSupa(0, 'ai_spend_total'), 'u1', 2.0)).reason, 'check_failed');
-    const rc = await chargeModelCall(ledgerSupa(0, 'try_charge_ai_spend'), 'u1', { inputChars: 100, maxOutTokens: 100 }, 2.0);
+    const rc = await chargeModelCall(ledgerSupa(0, 'try_charge_ai_spend'), 'u1', { inputBytes: 100, maxOutTokens: 100 }, 2.0);
     assert.equal(rc.allowed, false); assert.equal(rc.reason, 'check_failed');
-    const rt = await chargeModelCall(throwingSupa(), 'u1', { inputChars: 100, maxOutTokens: 100 }, 2.0);
+    const rt = await chargeModelCall(throwingSupa(), 'u1', { inputBytes: 100, maxOutTokens: 100 }, 2.0);
     assert.equal(rt.allowed, false); assert.equal(rt.reason, 'check_failed');
     const rp = await checkSpendCap(throwingSupa(), 'u1', 2.0);
     assert.equal(rp.allowed, false); assert.equal(rp.reason, 'check_failed');
@@ -1105,14 +1133,14 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
   it('kill-switch (cap=null) allows pre-check AND charges without touching the ledger', async () => {
     const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
     assert.equal((await checkSpendCap(throwingSupa(), 'u1', null)).allowed, true);
-    assert.equal((await chargeModelCall(throwingSupa(), 'u1', { inputChars: 100, maxOutTokens: 100 }, null)).allowed, true);
+    assert.equal((await chargeModelCall(throwingSupa(), 'u1', { inputBytes: 100, maxOutTokens: 100 }, null)).allowed, true);
   });
 
   it('AUDIT REGRESSION: enforcement binds regardless of ai_events volume (the gate never sums events)', async () => {
     const { chargeModelCall } = await import('../functions/_shared/spend.ts');
     // Ledger at cap + empty events table -> still denied. The pre-0044
     // gate would have summed zero events and allowed.
-    const r = await chargeModelCall(ledgerSupa(2.0), 'heavy-user', { inputChars: 10, maxOutTokens: 10 }, 2.0);
+    const r = await chargeModelCall(ledgerSupa(2.0), 'heavy-user', { inputBytes: 10, maxOutTokens: 10 }, 2.0);
     assert.equal(r.allowed, false);
     assert.equal(r.reason, 'cap_reached');
   });

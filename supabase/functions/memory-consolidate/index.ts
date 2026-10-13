@@ -20,7 +20,7 @@
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { timingSafeEqual } from '../_shared/edge-auth.ts';
-import { chargeModelCall } from '../_shared/spend.ts';
+import { chargeModelCall, byteLen } from '../_shared/spend.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   loadFacts,
@@ -45,7 +45,7 @@ async function callModel(ai: any, system: string, user: string, gate?: { supa: a
   // try/catch treats it as a best-effort skip, like any model failure.
   if (gate) {
     const g = await chargeModelCall(gate.supa, gate.userId, {
-      inputChars: system.length + user.length, maxOutTokens: 400,
+      inputBytes: byteLen(system) + byteLen(user), maxOutTokens: 400,
     });
     if (!g.allowed) throw new Error('__SPEND_CAP__');
   }
