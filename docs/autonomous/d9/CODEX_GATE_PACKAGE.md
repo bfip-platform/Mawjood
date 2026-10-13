@@ -4,7 +4,7 @@ Charter D9: hand the exact release-candidate SHA to an independent Codex reviewe
 
 ## 1. Release-candidate SHA — definition & current blocker
 
-The RC is **the `main` HEAD after the owner merges the stage queue** (PRs #16–#34 + this one, in order). Today `main` is still at the D1 merge (`0a4df1087c178ec0ff05cfc0621dda1676b083de`): the program's work exists as 19 reviewed, CI-green Draft PRs, deliberately unmerged (owner authority). **No RC SHA exists yet, and this package does not invent one.** The moment the queue merges, the resulting main HEAD is the RC; record it here by amendment and hand it to Codex with §3.
+The RC is **the `main` HEAD after the owner merges the stage queue** (PRs #16–#34 + this one, in order). Today `main` is still at the D1 merge (`0a4df1087c178ec0ff05cfc0621dda1676b083de`): the program's work exists as 19 reviewed, CI-green stage Draft PRs, plus this gate package (20 in the merge queue), deliberately unmerged (owner authority). **No RC SHA exists yet, and this package does not invent one.** The moment the queue merges, the resulting main HEAD is the RC; record it here by amendment and hand it to Codex with §3.
 
 ## 2. Final program report
 
@@ -21,7 +21,7 @@ The RC is **the `main` HEAD after the owner merges the stage queue** (PRs #16–
 - **D7 gate evidence / PR #33** — F-AF-05 resolved (registry state proven); ADOPTs blocked on owner publication (see Deferred).
 - **D8 launch readiness / PR #34** — incident runbook, DR drill EXECUTED on scratch (checksum-identical restore), launch-gate evidence sheet, owner-action checklist.
 
-**Tests & load evidence:** unit suites 79–82 tests per branch (combining on merge), every PR's CI 9/9 at its exact head; scratch benchmarks (100,001 items / 20,001 notes) for indexes; DR drill timings; the D6 deterministic harness runs in CI permanently. Load evidence beyond scratch benchmarks (sustained ramps, p95/p99) is Codex-gate scope — not claimed here.
+**Tests & load evidence:** unit suites 79–83 tests per branch (combining on merge), every PR's CI 9/9 at its exact head; scratch benchmarks (100,001 items / 20,001 notes) for indexes; DR drill timings; the D6 deterministic harness runs in CI permanently. Load evidence beyond scratch benchmarks (sustained ramps, p95/p99) is Codex-gate scope — not claimed here.
 
 **Architecture & cloud ownership (summary for the gate):** Expo/React-Native client (single-route chat-first app) + voice-engine package; Supabase (Postgres + RLS, storage, 20+ edge functions in Deno) — production project `mwjzosfrxwxcrzcsiear` (us-east-2), owner-held; AI providers OpenAI (gpt-5-mini chat, gpt-4o-mini vision/transcribe fallback) + Groq (whisper, gpt-oss-120b) with keys in Supabase secrets (owner-held); GitHub (bfip-platform org) for code/CI/Pages trial.
 
