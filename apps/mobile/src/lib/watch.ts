@@ -20,7 +20,10 @@ export const WATCH_HOURS = 4;
 /** Minimal client surface prevention needs — structural typing. */
 export interface WatchClient extends HabitClient {
   listWatches(spaceId: string): Promise<Item[]>;
-  createItem(input: {
+  // Offline-first (PR #39 review N1): transport failures queue in
+  // the outbox and resolve with a placeholder carrying the final id;
+  // permanent server errors still throw, exactly as createItem did.
+  createItemOfflineFirst(input: {
     spaceId: string;
     kind: 'watch';
     title: string;
@@ -28,7 +31,7 @@ export interface WatchClient extends HabitClient {
     dueAt?: string | null;
     userId?: string;
     meta?: Item['meta'];
-  }): Promise<Item>;
+  }): Promise<{ item: Item; queued: boolean }>;
   resolveWatch(itemId: string): Promise<Item>;
   setItemDueAt(itemId: string, dueAt: string | null): Promise<Item>;
 }
@@ -165,7 +168,7 @@ export async function createWatch(
   const homePlace = habits[0]?.place ?? null;
   const dueAt = new Date(Date.now() + WATCH_HOURS * 3600e3).toISOString();
   const ar = getLang() === 'ar';
-  const watch = await client.createItem({
+  const { item: watch } = await client.createItemOfflineFirst({
     spaceId: input.spaceId,
     kind: 'watch',
     title: input.item,

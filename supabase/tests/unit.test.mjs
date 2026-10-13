@@ -1214,6 +1214,41 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
   });
 });
 
+describe('Launch readiness PR-D — LOW findings closure (F-INT-05/07)', () => {
+  it('chainToExtract retries with backoff and surfaces FINAL failure (never swallows silently)', async () => {
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    const { chainToExtract } = await import('../functions/_shared/extract-chain.ts');
+    let calls = 0;
+    const alwaysFail = async () => { calls++; return { ok: false, status: 500 }; };
+    let failedNote = null;
+    const ok = await chainToExtract('note-1', async (nid) => { failedNote = nid; }, alwaysFail);
+    assert.equal(ok, false);
+    assert.equal(calls, 3, 'three attempts before giving up');
+    assert.equal(failedNote, 'note-1', 'final failure is surfaced to the caller logger');
+    // succeeds on the second attempt -> true, no failure callback
+    let calls2 = 0; let failed2 = false;
+    const flaky = async () => { calls2++; return { ok: calls2 >= 2, status: calls2 >= 2 ? 200 : 503 }; };
+    const ok2 = await chainToExtract('note-2', async () => { failed2 = true; }, flaky);
+    assert.equal(ok2, true);
+    assert.equal(calls2, 2);
+    assert.equal(failed2, false);
+  });
+
+  it('GUARD: transcribe/chat chain via the retried helper and ops-log final failures', () => {
+    for (const fn of ['transcribe', 'chat']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('chainToExtract'), `${fn} uses the retried chaining helper`);
+      assert.ok(src.includes('extract.chain_failed'), `${fn} ops-logs final chain failures`);
+    }
+  });
+
+  it('GUARD: admin-stats has NO row-limit truncation left (F-INT-05)', () => {
+    const src = readFileSync(new URL('../functions/admin-stats/index.ts', import.meta.url), 'utf8');
+    assert.ok(!src.includes('.limit('), 'every aggregate is paginated or exact-counted');
+    assert.ok(src.includes('fetchAll'), 'the pagination helper is present');
+  });
+});
+
 describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
   it('timingSafeEqual: exact match only, length- and content-sensitive', async () => {
     const { timingSafeEqual } = await import('../functions/_shared/edge-auth.ts');
@@ -1810,6 +1845,137 @@ describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
     assert.ok(gateIdx > -1 && toggleIdx - gateIdx < 300, 'the 🧪 toggle button sits inside a __DEV__ block');
     // The seed capability itself remains for dev use (engine method untouched).
     assert.ok(app.includes('engine.seedDemoData'), 'seedDemoData still wired for dev builds');
+  });
+});
+
+describe('Launch readiness PR-A — 18+ age gate (Decision #5)', () => {
+  const boundary = (ageOn, isAdult, parseBirthDate) => {
+    const on = new Date('2026-10-12T12:00:00Z');
+    assert.equal(ageOn('2008-10-12', on), 18, 'turns 18 ON the birthday');
+    assert.equal(isAdult('2008-10-12', on), true);
+    assert.equal(ageOn('2008-10-13', on), 17, 'one day short is still 17');
+    assert.equal(isAdult('2008-10-13', on), false);
+    assert.equal(ageOn('1990-01-01', on), 36);
+    // Feb-29 births: older on Mar 1 in non-leap years, not on Feb 28.
+    assert.equal(ageOn('2008-02-29', new Date('2026-02-28T12:00:00Z')), 17);
+    assert.equal(ageOn('2008-02-29', new Date('2026-03-01T12:00:00Z')), 18);
+    // Undeclared / invalid -> null age, never adult.
+    for (const bad of [null, undefined, '', 'abc', '2008-13-01', '2008-02-30', '12-10-2008', 20081012]) {
+      assert.equal(parseBirthDate(bad), null, `${String(bad)} must not parse`);
+      assert.equal(ageOn(bad, on), null);
+      assert.equal(isAdult(bad, on), false);
+    }
+    assert.equal(parseBirthDate(' 1990-05-17 '), '1990-05-17', 'surrounding space tolerated');
+  };
+
+  it('edge _shared/age.ts: boundary math is exact', async () => {
+    const { ageOn, isAdult, parseBirthDate } = await import('../functions/_shared/age.ts');
+    boundary(ageOn, isAdult, parseBirthDate);
+  });
+
+  it('voice-engine age.ts: IDENTICAL math (the two implementations cannot drift)', async () => {
+    const { ageOn, isAdult, parseBirthDate } = await import('../../packages/voice-engine/src/age.ts');
+    boundary(ageOn, isAdult, parseBirthDate);
+  });
+
+  it('GUARD: migration 0045 + chat gate + app gate are all wired', () => {
+    const mig = readFileSync(new URL('../migrations/0045_profiles_birth_date.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('birth_date date'), 'migration adds the column');
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("kind: 'age_gate.blocked'") && chat.includes('isAdult(bd)'), 'chat refuses missing/under-18 declarations before model paths');
+    const gateAt = chat.indexOf('age_gate.blocked');
+    const spendAt = chat.indexOf('const spend = await checkSpendCap');
+    assert.ok(gateAt !== -1 && spendAt !== -1 && gateAt < spendAt, 'the age gate runs BEFORE the spend pre-check');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes("ageStatus === 'needed'") && app.includes("ageStatus === 'blocked'"), 'app renders both gate screens');
+    assert.ok(app.includes('setMyBirthDate'), 'app persists the declaration through the engine');
+  });
+});
+
+describe('Launch readiness PR-B — offline layer wired into the app', () => {
+  it('GUARD: the shared engine singleton enables the offline layer over AsyncStorage', () => {
+    const lib = readFileSync(new URL('../../apps/mobile/src/lib/engine.ts', import.meta.url), 'utf8');
+    assert.ok(lib.includes('engine.enableOffline(asyncStorageKV)'), 'offline layer is enabled at construction');
+    assert.ok(lib.includes('@react-native-async-storage/async-storage'), 'KV is AsyncStorage-backed (survives restarts)');
+  });
+
+  it('GUARD: app create/read paths are offline-first; outbox flushes on foreground + sign-in', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(!app.includes('engine.createItem('), 'no direct online-only createItem call remains in the app');
+    assert.ok((app.match(/engine\.createItemOfflineFirst\(/g) ?? []).length >= 4, 'all four direct-create sites are offline-first');
+    assert.ok(app.includes('engine.listItemsCached(spaceId)'), 'the items refresh reads through the cache');
+    assert.ok(app.includes("s === 'active'") && app.includes('engine.flushOutbox()'), 'foreground flush is wired');
+    assert.ok(app.includes('pendingSync > 0') && app.includes("tx('offlinePending'"), 'the drawer shows the queued-sync indicator');
+    // review N1: the INDIRECT create paths (watch / expense helpers)
+    // are offline-first too — no createItem( survives in the helpers
+    for (const lib of ['watch', 'expenses']) {
+      const src = readFileSync(new URL(`../../apps/mobile/src/lib/${lib}.ts`, import.meta.url), 'utf8');
+      assert.ok(!src.includes('.createItem('), `${lib} helper creates via the offline-first surface`);
+      assert.ok(src.includes('createItemOfflineFirst'), `${lib} helper is offline-first`);
+    }
+  });
+});
+
+describe('Launch readiness PR-C — accessibility completion (measured gaps only)', () => {
+  it('GUARD: every icon-only control found in the completion audit carries role + label', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    // handler -> the accessibilityLabel key it must carry (audit of
+    // 2026-10-12: 156 pressables scanned; these were the bare ones)
+    const pairs = [
+      ['deleteMessage(item.id)', "a11yDeleteMessage"],
+      ["voteAnswer(item.id, 'up'", 'a11yGoodAnswer'],
+      ["voteAnswer(item.id, 'down'", 'a11yBadAnswer'],
+      ['startEditSecret(item)', 'a11yEdit'],
+      ['askDeleteSecret(item.id)', 'a11yDeleteSecret'],
+      ['setShowDemo((v) => !v)', 'a11yDemoPanel'],
+      ['deleteSession(sess.id)', 'a11yDeleteChat'],
+      ['dismissBroadcast(b.id)', 'a11yDismiss'],
+      ['setChatPhotoUri(null)', 'a11yRemovePhoto'],
+      ['setSecretPhotoUri(null)', 'a11yRemovePhoto'],
+      ['openRename', 'a11yEdit'],
+      ['onAssign(item)', 'a11yAssign'],
+      ['setSecretSearchOpen((v) => !v)', 'a11ySearchSecrets'],
+      ['setActiveListId(null)', 'close'],
+      ['restoreTrashRow(r)', 'a11yRestoreItem'],
+      ['dismissProposal(item.id', 'a11yDismiss'],
+      // second sweep (independent review F1-F8): the first audit
+      // undercounted; these were found bare and are now labeled too
+      ['nukeTrashRow(r)', 'a11yDeleteForever'],
+      ['askPhotoSource(item)', 'a11yAttachPhoto'],
+      ['doRemoveMember(famSpace', 'a11yRemoveMember'],
+    ];
+    for (const [handler, key] of pairs) {
+      // A handler may also appear as a swipe gesture or a definition;
+      // pass when ANY occurrence sits in a tag carrying the label.
+      let found = false;
+      for (let at = app.indexOf(handler); at !== -1; at = app.indexOf(handler, at + 1)) {
+        const tag = app.slice(Math.max(0, at - 200), at + 400);
+        if (tag.includes(`accessibilityLabel={t('${key}')}`)) { found = true; break; }
+      }
+      assert.ok(found, `${handler} is labeled ${key}`);
+    }
+    // photo thumbnails open the viewer with a label; the chat bubble
+    // exposes the long-press reaction via role + hint.
+    assert.ok((app.match(/accessibilityLabel=\{t\('a11yViewPhoto'\)\}/g) ?? []).length >= 4, 'all four photo viewers labeled');
+    assert.ok(app.includes("accessibilityHint={t('a11yReactHint')}"), 'bubble long-press is discoverable');
+    // reaction picker + tab icon picker: the emoji is the accessible name
+    assert.ok(app.includes('onPress={() => applyReaction(item, e)} hitSlop={6} accessibilityRole="button" accessibilityLabel={e}'), 'reaction buttons are labeled by their emoji');
+    assert.ok(app.includes('accessibilityLabel={ic}'), 'tab icon choices are labeled by their emoji');
+    // tasks checkbox carries a state-aware label
+    assert.ok(app.includes("accessibilityLabel={item.status === 'done' ? t('a11yMarkOpen') : t('a11yMarkDone')}"), 'tasks checkbox is state-labeled');
+    // components swept in the second pass
+    const swipe = readFileSync(new URL('../../apps/mobile/src/lib/SwipeRow.tsx', import.meta.url), 'utf8');
+    assert.ok(swipe.includes('accessibilityLabel={label ?? icon}'), 'SwipeRow side actions always carry an accessible name');
+    const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
+    assert.ok(welcome.includes("mic === 'recording' ? t('a11yStopRecording') : t('a11yRecord')"), 'welcome mic is state-labeled');
+    assert.ok(welcome.includes("accessibilityLabel={t('a11ySend')}"), 'welcome send is labeled');
+  });
+
+  it('the new a11y keys exist in both dictionaries', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['a11yViewPhoto', 'a11yReactHint', 'a11yDeleteMessage', 'a11yGoodAnswer', 'a11yBadAnswer', 'a11yEdit', 'a11yDeleteSecret', 'a11yDismiss', 'a11yRemovePhoto', 'a11yDeleteChat', 'a11yAssign', 'a11ySearchSecrets', 'a11yRestoreItem', 'a11yDemoPanel', 'a11yDeleteForever', 'a11yRemoveMember', 'a11yMarkDone', 'a11yMarkOpen']) {
+      assert.ok((i18n.match(new RegExp(`^  ${k}:`, 'gm')) ?? []).length === 2, `${k} present in AR and EN`);
+    }
   });
 });
 

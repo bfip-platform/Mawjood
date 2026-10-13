@@ -7,8 +7,10 @@ import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
 import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
 import { checkSpendCap, chargeModelCall, payloadBytes, spendCapMessage } from '../_shared/spend.ts';
+import { chainToExtract } from '../_shared/extract-chain.ts';
+import { isAdult, ageGateMessage } from '../_shared/age.ts';
 import { retryDelayMs, sleep } from '../_shared/backoff.ts';
-import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
+import { adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import { sanitizeTimezone } from '../_shared/time.ts';
@@ -214,15 +216,14 @@ async function toolSaveNote(supa: Supa, userId: string, spaceByType: Record<stri
     ...(inVault ? { vault_id: vctx!.vaultId } : {}),
   }).select('id').single();
   if (error) return { error: error.message };
-  // fire-and-forget extraction (same as the transcribe pipeline)
-  try {
-    const base = Deno.env.get('SUPABASE_URL')!;
-    fetch(`${base}/functions/v1/extract`, {
-      method: 'POST',
-      headers: internalHeaders(),
-      body: JSON.stringify({ note_id: data.id }),
+  // fire-and-forget extraction (same as the transcribe pipeline),
+  // retried with final-failure ops logging (F-INT-07).
+  void chainToExtract(data.id, async (nid) => {
+    await logOps(supa, {
+      kind: 'extract.chain_failed', user_id: userId,
+      detail: `chat:note=${nid}`,
     }).catch(() => {});
-  } catch { /* ignore */ }
+  });
   return { note_id: data.id, space_type: st, space_label: SPACE_LABEL[st], tab_id: tabId };
 }
 
@@ -1065,6 +1066,31 @@ Deno.serve(async (req) => {
         kind: 'eval_mode.impersonation', ok: true,
         detail: 'internal eval call acting as this user',
       });
+    }
+
+    // 🔞 18+ launch gate (Decision #5): the AI surface requires a
+    // declared ADULT birth date on the caller's profile (migration
+    // 0045). Missing or under-18 declarations are refused here —
+    // before every model path and before the spend pre-check — with
+    // the graceful bilingual answer; the app collects the declaration
+    // at first sign-in. Ops-logged for visibility.
+    {
+      const { data: profAge } = await admin
+        .from('profiles')
+        .select('birth_date')
+        .eq('id', userId)
+        .maybeSingle();
+      const bd = (profAge as { birth_date?: string | null } | null)?.birth_date ?? null;
+      if (!isAdult(bd)) {
+        await logOps(admin, {
+          user_id: userId, request_id: requestId,
+          kind: 'age_gate.blocked', ok: false,
+          detail: bd ? 'under_18' : 'not_declared',
+        });
+        return new Response(JSON.stringify({ answer: ageGateMessage(ar), actions: [], age_gate: true }), {
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // 💸 daily AI spend cap (T-D2-4, fail-closed): computed once per

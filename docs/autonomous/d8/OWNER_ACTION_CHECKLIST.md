@@ -2,14 +2,14 @@
 
 Consolidated from every stage of the program. One pass through this list unblocks everything the agent cannot do itself.
 
-## 1. Merge the Draft PR queue (in order)
+## 1. Merge the Draft PR queue — ✅ DONE 2026-10-12 (via PR #36)
 
-#16 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #28 → #29 → #30 → #31 → #32 → #33 (then the D8 PR). Expect small EOF-append adjacencies in `unit.test.mjs` and minor `_layout.tsx`/`index.tsx` region overlaps; #21 (migration 0041) must precede #22 (0042).
+The queue was integrated in dependency order into PR #36 (with the owner's audit corrections) and the owner merged it: `main` = `0cd7546e7bb847887e0b8db72b57b1bbf60a0779`. Remaining merges are the post-merge launch-readiness PRs: **#37** (LOW closures) → **#38** (18+, migration 0045) → **#39** (offline wiring) → **#40** (a11y) → **#41** (launch docs). Each is independently reviewed + CI-green at its exact head; merge in any order (no shared files except test/ledger appends).
 
 ## 2. Production rollout (separate approval)
 
 - [ ] Verify production's current migration state (the open D0 question) — including whether `items.updated_at` already exists out of band.
-- [ ] Apply migrations **0035 → 0043** in order; deploy the corresponding edge functions.
+- [ ] Apply migrations **0035 → 0045** in order; deploy the corresponding edge functions. Full procedure + per-migration rollback: `docs/autonomous/launch/PROD_ROLLOUT_RUNBOOK.md`.
 - [ ] Use `CREATE INDEX CONCURRENTLY` for 0043 per its header runbook if prod tables are large.
 - [ ] Confirm production backup posture (daily backups / PITR) in the dashboard.
 
@@ -25,7 +25,7 @@ Consolidated from every stage of the program. One pass through this list unblock
 - [ ] Confirm or adjust the provisional **$2/day** AI spend-cap default (PR #19).
 - [ ] Stripe: complete the activation checklist in PR #25 when ready (no keys touched yet).
 - [ ] Legal: send the Terms/Privacy/DPA drafts (PR #25) to counsel; if any of PRs #17/#19/#20/#23 is declined, the drafts' §1 inventory must be amended first.
-- [ ] 18+ gate: confirm the launch age-gate approach (Decision #5 stands: 18+ only).
+- [x] 18+ gate: approach confirmed and BUILT in PR #38 (self-declared DOB: app declaration screen + chat AI-surface refusal, migration 0045). Owner merges #38; rollout adds 0045.
 
 ## 5. App Factory (D7 unblock, optional for launch)
 
@@ -37,5 +37,5 @@ Consolidated from every stage of the program. One pass through this list unblock
 
 - [ ] Screen-reader walkthrough (VoiceOver/TalkBack) of the primary flows (PR #29 scoped the code pass; device sign-off is yours).
 - [ ] Lighthouse on a deployed web build (PR #27 foundations are export-verified; the deployed check is post-deploy).
-- [ ] Run the D6 live-model protocol (PR #30 doc) against staging with real keys before the release candidate.
+- [ ] Run the D6 live-model protocol against a staging deployment of the RC with real keys (prepared + blocked analysis: `docs/autonomous/launch/LIVE_MODEL_E2E_PROTOCOL.md` — needs a staging deploy + keys + DOB-seeded test users).
 - [ ] ChatGPT ↔ GitHub OAuth link (your standing plan) — D9's gate package depends on it.

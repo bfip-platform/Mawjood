@@ -2460,16 +2460,27 @@ export class VoiceEngine {
   }
 
   /** Own display name (from the profiles table). */
-  async getMyProfile(): Promise<{ display_name: string | null } | null> {
+  async getMyProfile(): Promise<{ display_name: string | null; birth_date: string | null } | null> {
     const { data: user } = await this.supabase.auth.getUser();
     if (!user.user) return null;
     const { data, error } = await this.supabase
       .from('profiles')
-      .select('display_name')
+      .select('display_name, birth_date')
       .eq('id', user.user.id)
       .maybeSingle();
     if (error) throw error;
-    return (data as { display_name: string | null } | null) ?? null;
+    return (data as { display_name: string | null; birth_date: string | null } | null) ?? null;
+  }
+
+  /** 18+ gate (Decision #5): persist the caller's declared birth date. */
+  async setMyBirthDate(isoDate: string): Promise<void> {
+    const { data: user } = await this.supabase.auth.getUser();
+    if (!user.user) throw new Error('not signed in');
+    const { error } = await this.supabase
+      .from('profiles')
+      .update({ birth_date: isoDate })
+      .eq('id', user.user.id);
+    if (error) throw error;
   }
 
   /** Set own display name (upserts the profiles row). */

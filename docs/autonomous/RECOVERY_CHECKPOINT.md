@@ -2,16 +2,17 @@
 
 > Replace only with verified current state after updating append-only ledger. No reliance on chat/session memory.
 
-- Updated at (UTC): 2026-10-12 (at Stage-0 commit time; SHAs finalized in the PR)
-- Repository / main SHA: bfip-platform/Mawjood — main `0a4df1087c178ec0ff05cfc0621dda1676b` (D1 PR #15 merged 2026-10-12T21:13:26Z)
-- Active branch / SHA: `fix/notes-deleted-at` (Stage 0) — exact HEAD recorded on its Draft PR
-- Open PRs and CI status (exact SHA): PR #15 MERGED. Stage-0 Draft PR — CI + review recorded on the PR itself.
-- Last verified completed stage/task: D1 incl. delete-safety correction + confirmation hardening (PR #15, final HEAD `180674cc`, CI 9/9, reviews PASS-WITH-NOTES ×3)
-- Current task and acceptance criteria: Stage 0 — remove 6 stale `notes.deleted_at` filters (tabs.ts ×3, chat ×3); guard + behavioral regression tests; scratch before/after repro; review + exact-head CI; Draft PR. NO-GO items: no merge, no production, no migrations.
-- Last successful tests and evidence: unit suite 82/82 locally (failing-first verified: 4 new tests fail without the fix); scratch repro 8/8 PASS (4 shapes × before-42703/after-rows)
-- Failed tests / unresolved blockers: none for Stage 0. Program blockers: quota numbers unchosen (OD-01/02); D9 Codex gate may need the owner's ChatGPT↔GitHub link; production schema state vs migration chain still unverified since D0 (fix is safe on canonical schema regardless).
-- Known safety issues and protected resources: production project `mwjzosfrxwxcrzcsiear` is NEVER a test/deploy target without separate owner approval; scratch `caimavjwasxiegjhxdsr` is the only test DB. Cross-user private-photo isolation defect (HIGH, D0) still open — Stage 1.
-- Owner decisions pending: merge Stage-0 PR; D1 production rollout (migrations 0035+0036+0037 to prod + function deploy) as a separate approval; quota option A/B/C; revoke the Oct-12 GitHub PAT + the D1 Supabase vault token; confirm Oct-9 token revoked.
-- Next 3 safe actions: (1) open Stage-0 Draft PR + independent review + exact-head CI; (2) Stage 1: photo-isolation scratch E2E repro, then fix on its own branch; (3) Stage 1b: route/classify auth-gating.
-- Recovery/rollback anchor: main `0a4df108`; Stage-0 branch reverts cleanly (filter removals only).
-- Links to ledger entries: docs/autonomous/EXECUTION_LEDGER.md (Stage 0 entry); history in docs/autonomous/IMPLEMENTATION_LEDGER.md.
+- Updated at (UTC): 2026-10-13T03:15Z (post-merge launch-readiness program)
+- Repository / main SHA: bfip-platform/Mawjood — main `0cd7546e7bb847887e0b8db72b57b1bbf60a0779` (PR #36 merged by owner 2026-10-12; integration of PRs #16–#35 + owner audit corrections, final integration head f9647f85)
+- Open Draft PRs (post-merge launch readiness, each independently reviewed + exact-head CI): #37 LOW findings closure `f9971aac`; #38 18+ enforcement `88da938b` (after e2e + deadlock fix round); #39 offline wiring `1f1c5bbd`; #40 a11y completion `ac51d688`; #41 launch docs (this update).
+- Last verified completed stage/task: Mawjood autonomous program D0–D9 packages + owner audit integration (PR #36, merged). Scratch battery 2026-10-12: all checks green (docs/autonomous/launch/SCRATCH_VERIFICATION_BATTERY.md).
+- Current task: none active — the launch-readiness program is delivered as Draft PRs #37–#41 awaiting owner merges/decisions.
+- Production state: UNTOUCHED by the whole program. Deployed functions are the pre-program set; migrations 0035→0045 NOT applied to production; production schema state vs the chain still unverified (probes prepared in the rollout runbook).
+- Failed tests / unresolved blockers: PR #38's first CI run failed e2e-auth because fixture users had no birth date (the new gate working) — fixed in the spec at 88da938b. Live-model E2E cannot run: no RC deployment exists and deployment is owner-gated (protocol prepared). Codex gate: RC fixed (0cd7546e, or post-#41 main HEAD) but the owner's ChatGPT↔GitHub OAuth link is still pending.
+- Known safety issues and protected resources: production project `mwjzosfrxwxcrzcsiear` is NEVER a test/deploy target without separate owner approval; scratch `caimavjwasxiegjhxdsr` is the only test DB (holds ~100k bench rows + 0045 applied).
+- Owner decisions pending: merge #37–#41 (any order); production rollout (runbook ready); quota A/B/C + prices (OD-01/02); $2/day cap confirmation; Stripe activation; legal counsel review; revoke the Oct-12 GitHub PAT + d1-scratch Supabase token, confirm Oct-9 token revoked; set Supabase Auth Site/Redirect URLs; OD-39 brand finalization; D7 publishes + vault-crypto sign-off; device screen-reader walkthrough; staging live-model run; ChatGPT↔GitHub link.
+- Next 3 safe actions: (1) owner merges #37–#41; (2) owner runs the rollout runbook pre-flight probes (or authorizes the agent to read them) and decides on production rollout; (3) owner stages an RC deployment + keys for the live-model protocol, and completes the ChatGPT↔GitHub link for the Codex gate at the final main HEAD.
+- Recovery/rollback anchor: main `0cd7546e`; every launch PR reverts independently; per-migration rollback table in docs/autonomous/launch/PROD_ROLLOUT_RUNBOOK.md.
+- Links to ledger entries: docs/autonomous/EXECUTION_LEDGER.md (post-merge entry); register: docs/autonomous/audit/INTEGRATION_FINDINGS_REGISTER.md.
+
+- **Final integration (2026-10-13):** PRs #37–#41 combined on `integration/launch-readiness-37-41` — suite 174/174 (assertion union rebuilt verbatim), migrate-check/ledger/rls/authz/auth-gates ALL GREEN locally, app tsc + lint + web export green. One combination-only defect found and fixed in-branch: stray conflict markers in the index.tsx hooks block (age-gate state + offline indicator unioned). F-LAUNCH-01 investigated in `docs/autonomous/launch/F_LAUNCH_01_ANALYSIS.md` (Option B recommended; owner approval required).
