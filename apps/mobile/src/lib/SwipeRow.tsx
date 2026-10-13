@@ -21,15 +21,19 @@ function SideAction({
   bg,
   align,
   onTap,
+  label,
 }: {
   icon: string;
   bg: string;
   align: 'flex-start' | 'flex-end';
   onTap: () => void;
+  /** Accessible name; defaults to the icon itself (screen readers
+   *  voice emoji names) when a caller does not supply one. */
+  label?: string;
 }) {
   return (
     <View style={[styles.action, { backgroundColor: bg, alignItems: align }]}>
-      <Pressable onPress={onTap} hitSlop={10}>
+      <Pressable onPress={onTap} hitSlop={10} accessibilityRole="button" accessibilityLabel={label ?? icon}>
         <Text style={styles.icon}>{icon}</Text>
       </Pressable>
     </View>

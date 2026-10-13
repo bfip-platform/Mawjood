@@ -196,5 +196,11 @@ export const ASSERTIONS = [
                  and not has_function_privilege('authenticated', 'public.try_charge_ai_spend(uuid,date,numeric,numeric)', 'execute')
                  and not has_function_privilege('anon', 'public.try_charge_ai_spend(uuid,date,numeric,numeric)', 'execute')
                  and (select relrowsecurity from pg_class where oid = 'public.ai_spend_daily'::regclass)) as ok`,
+  },
+  {
+    name: 'profiles has birth_date for the 18+ gate (0045)',
+    sql: `select exists (select 1 from information_schema.columns
+                        where table_schema = 'public' and table_name = 'profiles'
+                          and column_name = 'birth_date' and data_type = 'date') as ok`,
   }
 ];

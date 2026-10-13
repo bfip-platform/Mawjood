@@ -1,0 +1,101 @@
+# F-LAUNCH-01 — Investigation: client hard-delete surface on `items`
+
+*Ordered by the owner in the final launch-readiness integration (2026-10-13).
+Analysis only — NO deletion semantics were changed. A recommendation follows;
+any change requires separate owner approval.*
+
+## 1. Who can hard-delete items today — exactly
+
+Migration `0002_items.sql` defines two policies on `public.items`:
+
+- `items_member_read` — SELECT, `using (can_access_space(space_id))`
+- `items_member_write` — **FOR ALL** (SELECT/INSERT/UPDATE/DELETE),
+  `using (can_access_space(space_id)) with check (can_access_space(space_id))`
+
+`can_access_space` (migration 0001) is true for the space **owner** and for
+**every member** in `space_members`. No later migration narrows either policy
+(grep-verified across 0001–0045; confirmed on scratch: `items_member_write`
+reports `polcmd='*'`).
+
+**Therefore:** any authenticated user who owns or belongs to a space can
+hard-delete **any** `items` row in that space with a direct PostgREST call —
+regardless of who created the item, regardless of its status, with no trash
+snapshot, no audit row, and no undo. Anonymous users and non-members cannot
+(the predicate still gates access to the space).
+
+## 2. How the app itself uses this permission (intended flows)
+
+All client-side `items` deletes live in `packages/voice-engine/src/client.ts`
+and are deliberate, user-initiated flows:
+
+| Site | Flow | Trash semantics |
+|---|---|---|
+| `trashItem` (~L1279) | user trashes an item | inserts a full snapshot into `trash_bin` **first**, then deletes the row — restorable until `emptyTrash`/expiry |
+| `deleteNote` / note cascades (~L1179, 1192, 1221, 1253) | user deletes a note | its extracted items are deleted with it |
+| list cascade (~L1303) | `trashShoppingList` / list delete | list + items moved to trash (or permanent when retention ≤ 0, the user's explicit choice) |
+| `deleteSpaceTab`, `deleteSpace` | tab/space deletion | move-to-trash options via the same snapshot pattern |
+
+Two schema facts matter for any fix:
+
+- `items.note_id` is `ON DELETE SET NULL` — deleting a note without the
+  client's pre-delete would orphan its items; the pre-delete is deliberate.
+- `items.list_id` is `ON DELETE CASCADE` — deleting a `shopping_lists` row
+  cascades to items at the DB level, bypassing the items policy entirely.
+  Parent-table deletes are part of the same surface.
+
+Server side is unaffected by this finding: the AI/engine paths never rely on
+the client policy. The engine's only `items` delete is
+`purgeExpiredTrashedFacts` (service role; trashed + past-retention only),
+and AI trashing goes through the 0036/0037/0041 confirmation rails.
+
+## 3. Does it bypass the intended confirmation/trash behavior?
+
+- **The delete-safety ruling (AI): NOT bypassed.** It binds the AI; those
+  rails are server-side and intact.
+- **The app's own user flows: NOT bypassed.** They snapshot to `trash_bin`
+  before deleting, by design.
+- **The gap:** the policy grants the raw DELETE power *outside* those flows.
+  Any member (e.g. an invited family member), a buggy or malicious client, or
+  a hijacked session can permanently wipe shared items — including the space
+  owner's saved memories in a family space — skipping the trash safety net
+  the product promises, leaving no trace. This is an insider-scope,
+  authenticated-only exposure: **MEDIUM** stands.
+
+## 4. Options
+
+**A — Accept as-is.** The owner's data authority argument. Leaves the
+insider/bug/hijack hole open in shared spaces. Zero work.
+
+**B — RPC-mediated deletion (RECOMMENDED).** Migration 0046:
+1. Split `items_member_write`: INSERT and UPDATE policies keep
+   `can_access_space`; **no client DELETE policy remains**.
+2. A `SECURITY DEFINER` RPC (e.g. `hard_delete_items(p_ids uuid[])`,
+   authenticated-only, service-verified `can_access_space` per row) becomes
+   the single client deletion path.
+3. The seven `client.ts` delete sites call the RPC instead of
+   `.from('items').delete()` — **zero UX change**: `trashItem` still
+   snapshots first; delete-forever, note/list/tab/space flows behave
+   identically; the engine purge (service role) is untouched.
+4. Same treatment flagged for the parent cascade (`shopping_lists` delete +
+   `list_id` CASCADE) if the owner wants defense in depth; list deletion
+   already snapshots first via `trashShoppingList`.
+
+*Impact:* one additive migration (policy split + one function; rollback =
+restore the FOR ALL policy, which re-opens the hole but breaks nothing) +
+a call-site swap in one file + tests. Scratch-provable both directions:
+direct member DELETE of an open item must fail post-fix while every app
+flow stays green. No data migration, no UX change, no pricing/behavior
+change. **Effort: small.**
+
+**C — Creator/owner-only DELETE policy.** `using (can_access_space AND
+(created_by = auth.uid() OR space-owner))`. NOT recommended: breaks
+`trashItem` for items a member didn't create and shared-list cleanup —
+real regressions in family spaces for a weaker guarantee than B.
+
+## 5. Recommendation
+
+**Adopt Option B as a small follow-up PR after this integration merges**,
+with the scratch proof and an extended census guard (no `.from('items')
+.delete(` may remain in client code; the RPC is the only path). Until then,
+F-LAUNCH-01 stays open at MEDIUM with Option A as the interim posture —
+which is a launch-gate input for the owner, not a silent acceptance.

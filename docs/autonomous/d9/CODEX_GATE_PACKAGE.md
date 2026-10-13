@@ -2,9 +2,11 @@
 
 Charter D9: hand the exact release-candidate SHA to an independent Codex reviewer under `docs/autonomous/MAWJOOD_CODEX_SECURITY_ARCHITECTURE_SCALE_GATE.md`; address findings via repair + re-review until gates pass; produce the final report. **Final production launch requires explicit owner approval** — nothing here grants it.
 
-## 1. Release-candidate SHA — definition & current blocker
+## 1. Release-candidate SHA — FIXED (amended 2026-10-12, post-merge)
 
-The RC is **the `main` HEAD after the owner merges the stage queue** (PRs #16–#34 + this one, in order). Today `main` is still at the D1 merge (`0a4df1087c178ec0ff05cfc0621dda1676b083de`): the program's work exists as 19 reviewed, CI-green stage Draft PRs, plus this gate package (20 in the merge queue), deliberately unmerged (owner authority). **No RC SHA exists yet, and this package does not invent one.** The moment the queue merges, the resulting main HEAD is the RC; record it here by amendment and hand it to Codex with §3.
+**The RC is `0cd7546e7bb847887e0b8db72b57b1bbf60a0779`** — the owner merged the integration vehicle PR #36 (the 20 stage PRs combined in dependency order, plus the owner's audit corrections through three rounds) into `main` on 2026-10-12. The PR-by-PR queue plan in the original text below is superseded by that merge; PRs #16–#35 were closed by it.
+
+**Post-merge launch-readiness delta (review with the RC):** PRs #37 (LOW findings closure), #38 (18+ enforcement, migration 0045), #39 (offline wiring), #40 (a11y completion), #41 (launch docs) were built against this RC. When the owner merges them, the gate should run at the resulting new `main` HEAD instead — the findings format and protocol in §3 are unchanged.
 
 ## 2. Final program report
 
@@ -25,9 +27,9 @@ The RC is **the `main` HEAD after the owner merges the stage queue** (PRs #16–
 
 **Architecture & cloud ownership (summary for the gate):** Expo/React-Native client (single-route chat-first app) + voice-engine package; Supabase (Postgres + RLS, storage, 20+ edge functions in Deno) — production project `mwjzosfrxwxcrzcsiear` (us-east-2), owner-held; AI providers OpenAI (gpt-5-mini chat, gpt-4o-mini vision/transcribe fallback) + Groq (whisper, gpt-oss-120b) with keys in Supabase secrets (owner-held); GitHub (bfip-platform org) for code/CI/Pages trial.
 
-**AI costs:** per-user daily spend cap (PR #19; provisional $2/day default, fail-closed) over `ai_events` token telemetry with published per-model prices — the mechanism is live in code; plan-level cost modeling awaits the owner's quota/pricing decision (OD-01/02).
+**AI costs (corrected by the owner audit, PR #36):** PR #19's original events-sum cap was found defective (5,000-event truncation) and replaced by an atomic per-user daily ledger (migration 0044, `try_charge_ai_spend`): authorize+charge is one DB operation, every model seam charges per attempt measured in UTF-8 bytes plus the call's enforced max_tokens, priced at a fallback rate DERIVED as the component-wise maximum of the provider rate table (gpt-5-mini 0.25/2.00, gpt-4o-mini 0.15/0.60, gpt-oss-120b 0.15/0.75, qwen3.8-27b 0.80/4.00 per 1M). The ledger total can never exceed the cap (provisional $2/day default, `AI_SPEND_CAP_OFF=1` kill switch); containment of actual provider billing is conditional on provider formulas/rates holding, with a daily reconciliation control specified in the findings register. Plan-level cost modeling awaits OD-01/02.
 
-**Deferred (explicitly, with owners):** App Factory ADOPTs (owner: publish 2 cores + registry read — PR #33); Stripe activation + quota/pricing + legal sign-off (owner/counsel — PR #25); offline screen wiring + retrieval pinning §6.2 (later stages, telemetry-gated); vault-crypto ADAPT (deferral sign-off requested — PR #33); production rollout of migrations 0035→0043 (owner approval — PR #34 checklist).
+**Deferred (explicitly, with owners):** App Factory ADOPTs (owner: publish 2 cores + registry read — PR #33); Stripe activation + quota/pricing + legal sign-off (owner/counsel — PR #25); retrieval pinning §6.2 (later stage, telemetry-gated) — offline screen wiring itself was completed post-merge in PR #39; vault-crypto ADAPT (deferral sign-off requested — PR #33); production rollout of migrations 0035→0045 (owner approval — runbook in docs/autonomous/launch/PROD_ROLLOUT_RUNBOOK.md).
 
 **Outstanding decisions:** OD-01/02 (quota/prices), OD-39 (final brand), production schema state, spend-cap default confirmation — all in PR #34's LAUNCH_GATE.md, which is the launch checklist of record. **Program verdict vs the charter's completion criteria: NOT READY for launch** — by design: every code criterion is evidenced, but merges, deployment, production verification, and the decisions above are the owner's, and the Codex gate itself has not run.
 

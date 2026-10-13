@@ -20,14 +20,18 @@ import { getLang, t, tx } from './i18n';
 export interface ExpenseClient {
   listSpaces(): Promise<{ id: string }[]>;
   listExpenses(spaceId: string, limit?: number): Promise<Item[]>;
-  createItem(input: {
+  // Offline-first (PR #39 review N1): transport failures queue and
+  // resolve with a placeholder; Postgres-coded errors (e.g. the kind
+  // CHECK when migration 0021 is missing) still throw, preserving
+  // recordExpense's documented fallback contract.
+  createItemOfflineFirst(input: {
     spaceId: string;
     kind: ItemKind;
     title: string;
     details?: string | null;
     userId?: string;
     meta?: { amount?: number | null; paid_by?: string | null } | null;
-  }): Promise<Item>;
+  }): Promise<{ item: Item; queued: boolean }>;
 }
 
 // ── parsing ────────────────────────────────────────────────────────────────
@@ -148,12 +152,14 @@ export interface RecordExpenseInput {
 }
 
 /** Persist one expense. Throws (→ caller falls back to the agent) if
- *  migration 0021 hasn't been applied yet (kind CHECK constraint). */
+ *  migration 0021 hasn't been applied yet (kind CHECK constraint) —
+ *  a Postgres-coded error, which the offline-first create rethrows;
+ *  only transport failures take the queue path. */
 export async function recordExpense(
   client: ExpenseClient,
   input: RecordExpenseInput,
 ): Promise<Item> {
-  return client.createItem({
+  const { item } = await client.createItemOfflineFirst({
     spaceId: input.spaceId,
     kind: 'expense' as ItemKind,
     title: input.title,
@@ -161,6 +167,7 @@ export async function recordExpense(
     userId: input.userId,
     meta: { amount: input.amount, paid_by: input.paidBy ?? null },
   });
+  return item;
 }
 
 // ── summarizing (pure) ─────────────────────────────────────────────────────

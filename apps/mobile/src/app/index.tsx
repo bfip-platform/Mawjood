@@ -29,6 +29,8 @@ import {
   parseDirectedShopping,
   splitShoppingItems,
   resolveFamilyMember,
+  isAdult,
+  parseBirthDate,
 } from '@mawjood/voice-engine';
 import type { FamilyMember, Item, Note, Space, SpaceTab, SpaceType, TrashKind, TrashRow } from '@mawjood/voice-engine';
 import { supabase } from '../lib/supabase';
@@ -629,6 +631,20 @@ export default function HomeScreen() {
 
   // ── Auth: real accounts + family invites ──
   const [authState, setAuthState] = useState<'loading' | 'signed-out' | 'signed-in'>('loading');
+  // 🔞 18+ gate (Decision #5): 'checking' until the profile's declared
+  // birth date is known; 'needed' = not declared; 'blocked' = under 18.
+  const [ageStatus, setAgeStatus] = useState<'checking' | 'needed' | 'adult' | 'blocked'>('checking');
+  const [dobDraft, setDobDraft] = useState('');
+  const [dobError, setDobError] = useState<string | null>(null);
+  const [dobSaving, setDobSaving] = useState(false);
+  // 📥 offline outbox depth for the drawer indicator (PR-B wiring).
+  const [pendingSync, setPendingSync] = useState(0);
+  const refreshPendingSync = useCallback(async () => {
+    try {
+      const ops = (await engine.offlineSync?.pending()) ?? [];
+      setPendingSync(ops.length);
+    } catch { /* indicator is best-effort */ }
+  }, []);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [upgradeEmail, setUpgradeEmail] = useState('');
   const [upgradeSent, setUpgradeSent] = useState(false);
@@ -816,7 +832,7 @@ export default function HomeScreen() {
 
   const refreshItems = useCallback(async (spaceId: string) => {
     try {
-      const items = await engine.listItems(spaceId);
+      const { items } = await engine.listItemsCached(spaceId);
       const grouped: Record<string, Item[]> = {};
       for (const it of items) {
         if (!it.note_id) continue;
@@ -1824,10 +1840,19 @@ export default function HomeScreen() {
         .then((p) => {
           setDisplayName(p?.display_name ?? null);
           setNameDraft(p?.display_name ?? '');
+          const bd = p?.birth_date ?? null;
+          setAgeStatus(bd ? (isAdult(bd) ? 'adult' : 'blocked') : 'needed');
         })
-        .catch(() => {});
+        .catch(() => {
+          // 🔞 fail CLOSED to the declaration screen, never to a stuck
+          // 'checking' spinner: a failed profile fetch must not
+          // deadlock sign-in (the declaration save retries the write).
+          setAgeStatus('needed');
+        });
       setSpaces(await engine.ensureDefaultSpaces(user.id));
       setAuthState('signed-in');
+      // 📥 replay queued offline creates from a previous session
+      void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
       // custom-tab free-tier cap (future paid plans raise it)
       engine
         .getCustomTabLimit(user.id)
@@ -2084,6 +2109,10 @@ export default function HomeScreen() {
   // starts. Tapping "new chat" archives immediately — same as ChatGPT.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        // 📥 back online/foreground: replay anything the outbox queued
+        void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
+      }
       if (s === 'background') {
         backgroundedAtRef.current = Date.now();
         saveDraft(messagesRef.current, sessionIdRef.current);
@@ -2115,13 +2144,14 @@ export default function HomeScreen() {
       const asg = parseAssignment(text);
       if (!asg) return;
       try {
-        const it = await engine.createItem({
+        const { item: it } = await engine.createItemOfflineFirst({
           spaceId,
           kind: 'task',
           title: asg.task,
           assignedTo: asg.name,
           userId: uid,
         });
+        void refreshPendingSync();
         setTasks((prev) => [it, ...prev]);
         pushMsg('app', tx('taskAssigned', { name: asg.name, task: asg.task }));
         engine
@@ -2260,13 +2290,14 @@ export default function HomeScreen() {
           try {
             const famId = spaceIdByType('family') ?? spaceIdByType('private');
             if (!famId) return false;
-            await engine.createItem({
+            await engine.createItemOfflineFirst({
               spaceId: famId,
               kind: 'place',
               title: session.item,
               details: text,
               userId,
             });
+            void refreshPendingSync();
             await dropNote();
             activeSearchRef.current = null;
             const msg = formatPlaceSaved(session.item, text);
@@ -2681,7 +2712,7 @@ export default function HomeScreen() {
         if (error) throw error;
       },
       createMemoryItem: async (input) => {
-        await engine.createItem({
+        await engine.createItemOfflineFirst({
           spaceId: input.spaceId,
           kind: 'memory',
           title: input.title,
@@ -2803,7 +2834,7 @@ export default function HomeScreen() {
       try {
         const pid = spaceIdByType('private') ?? spaceIdByType('family');
         if (!pid) return;
-        await engine.createItem({
+        await engine.createItemOfflineFirst({
           spaceId: pid,
           kind: 'feedback',
           title: rating === 'up' ? '👍 جواب عجبني' : '👎 جواب ما عجبني',
@@ -3395,13 +3426,13 @@ export default function HomeScreen() {
         {reacting && (
           <View style={styles.reactBar}>
             {REACTION_EMOJIS.map((e) => (
-              <Pressable key={e} onPress={() => applyReaction(item, e)} hitSlop={6}>
+              <Pressable key={e} onPress={() => applyReaction(item, e)} hitSlop={6} accessibilityRole="button" accessibilityLabel={e}>
                 <View style={[styles.reactHit, item.reaction === e && styles.reactHitOn]}>
                   <Text style={styles.reactEmoji}>{e}</Text>
                 </View>
               </Pressable>
             ))}
-            <Pressable onPress={() => deleteMessage(item.id)} hitSlop={6}>
+            <Pressable onPress={() => deleteMessage(item.id)} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('a11yDeleteMessage')}>
               <View style={styles.reactHit}>
                 <Text style={styles.reactEmoji}>🗑️</Text>
               </View>
@@ -3411,10 +3442,12 @@ export default function HomeScreen() {
         <Pressable
           onLongPress={() => !item.pending && setReactFor(reacting ? null : item.id)}
           delayLongPress={350}
+          accessibilityRole="button"
+          accessibilityHint={t('a11yReactHint')}
         >
           <View style={[styles.bubble, item.role === 'user' ? styles.bubbleUser : styles.bubbleApp]}>
             {item.photo ? (
-              <Pressable onPress={() => setPhotoViewer(item.photo!)}>
+              <Pressable onPress={() => setPhotoViewer(item.photo!)} accessibilityRole="button" accessibilityLabel={t('a11yViewPhoto')}>
                 <SignedImage photo={item.photo} style={styles.bubblePhoto} />
               </Pressable>
             ) : null}
@@ -3430,14 +3463,14 @@ export default function HomeScreen() {
             )}
             {item.role === 'app' && !item.pending && (
               <View style={styles.feedbackRow}>
-                <Pressable onPress={() => voteAnswer(item.id, 'up', item.text)} hitSlop={10}>
+                <Pressable onPress={() => voteAnswer(item.id, 'up', item.text)} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('a11yGoodAnswer')}>
                   <Text
                     style={[styles.feedbackBtn, voted[item.id] === 'up' && styles.feedbackBtnOn]}
                   >
                     👍
                   </Text>
                 </Pressable>
-                <Pressable onPress={() => voteAnswer(item.id, 'down', item.text)} hitSlop={10}>
+                <Pressable onPress={() => voteAnswer(item.id, 'down', item.text)} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('a11yBadAnswer')}>
                   <Text
                     style={[styles.feedbackBtn, voted[item.id] === 'down' && styles.feedbackBtnOn]}
                   >
@@ -3489,6 +3522,8 @@ export default function HomeScreen() {
                     onPress={() => dismissProposal(item.id, item.proposal!)}
                     style={styles.proposalBtnGhost}
                     hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('a11yDismiss')}
                   >
                     <Text style={styles.proposalBtnGhostText}>✕</Text>
                   </Pressable>
@@ -3575,7 +3610,7 @@ export default function HomeScreen() {
             <Text style={styles.cardText}>{statusLabel(item)}</Text>
           )}
           {item.photo_url ? (
-            <Pressable onPress={() => setPhotoViewer(item.photo_url!)} style={{ marginTop: 8 }}>
+            <Pressable onPress={() => setPhotoViewer(item.photo_url!)} style={{ marginTop: 8 }} accessibilityRole="button" accessibilityLabel={t('a11yViewPhoto')}>
               <SignedImage photo={item.photo_url} style={styles.cardPhoto} />
             </Pressable>
           ) : null}
@@ -3637,10 +3672,10 @@ export default function HomeScreen() {
           </Text>
           {!editing && (
             <View style={styles.cardTopActions}>
-              <Pressable onPress={() => startEditSecret(item)} style={styles.moveBtn}>
+              <Pressable onPress={() => startEditSecret(item)} style={styles.moveBtn} accessibilityRole="button" accessibilityLabel={t('a11yEdit')}>
                 <Text style={styles.moveBtnText}>✏️</Text>
               </Pressable>
-              <Pressable onPress={() => askDeleteSecret(item.id)} style={styles.moveBtn}>
+              <Pressable onPress={() => askDeleteSecret(item.id)} style={styles.moveBtn} accessibilityRole="button" accessibilityLabel={t('a11yDeleteSecret')}>
                 <Text style={styles.moveBtnText}>{delArmed ? '⚠️' : '🗑️'}</Text>
               </Pressable>
             </View>
@@ -3672,7 +3707,7 @@ export default function HomeScreen() {
           <Text style={styles.cardText}>{item.transcript}</Text>
         )}
         {item.photo_url ? (
-          <Pressable onPress={() => setPhotoViewer(item.photo_url!)} style={{ marginTop: 8 }}>
+          <Pressable onPress={() => setPhotoViewer(item.photo_url!)} style={{ marginTop: 8 }} accessibilityRole="button" accessibilityLabel={t('a11yViewPhoto')}>
             <SignedImage photo={item.photo_url} style={styles.cardPhoto} />
           </Pressable>
         ) : null}
@@ -3690,10 +3725,93 @@ export default function HomeScreen() {
     );
   }
 
+  const submitDob = async () => {
+    const iso = parseBirthDate(dobDraft);
+    if (!iso) {
+      setDobError(t('ageGateInvalid'));
+      return;
+    }
+    setDobSaving(true);
+    setDobError(null);
+    try {
+      await engine.setMyBirthDate(iso);
+      setAgeStatus(isAdult(iso) ? 'adult' : 'blocked');
+    } catch {
+      setDobError(t('ageGateSaveFail'));
+    } finally {
+      setDobSaving(false);
+    }
+  };
+
   if (authState === 'signed-out') {
     return (
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
         <AuthScreen />
+      </SafeAreaView>
+    );
+  }
+
+  // 🔞 18+ gate screens (Decision #5) — before any main UI renders.
+  if (authState === 'signed-in' && ageStatus === 'checking') {
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color={P.accent} />
+        <Text style={styles.muted}>loading Mawjood…</Text>
+      </SafeAreaView>
+    );
+  }
+  if (authState === 'signed-in' && ageStatus === 'needed') {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: P.ink }}>{t('ageGateTitle')}</Text>
+          <Text style={{ fontSize: 15, lineHeight: 22, color: P.ink }}>{t('ageGateBody')}</Text>
+          <Text style={{ fontSize: 13, color: P.muted }}>{t('ageGateDobLabel')}</Text>
+          <TextInput
+            value={dobDraft}
+            onChangeText={setDobDraft}
+            placeholder={t('ageGateDobPlaceholder')}
+            placeholderTextColor={P.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="numbers-and-punctuation"
+            accessibilityLabel={t('ageGateDobLabel')}
+            style={{
+              borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 14,
+              fontSize: 17, color: P.ink, backgroundColor: P.input,
+            }}
+          />
+          {dobError ? <Text style={{ color: '#B3261E', fontSize: 14 }}>{dobError}</Text> : null}
+          <Pressable
+            onPress={submitDob}
+            disabled={dobSaving}
+            accessibilityRole="button"
+            accessibilityLabel={t('ageGateSubmit')}
+            style={{ backgroundColor: P.accent, borderRadius: 12, padding: 15, alignItems: 'center', opacity: dobSaving ? 0.6 : 1 }}
+          >
+            {dobSaving
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{t('ageGateSubmit')}</Text>}
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  if (authState === 'signed-in' && ageStatus === 'blocked') {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: P.ink }}>{t('ageGateBlockedTitle')}</Text>
+          <Text style={{ fontSize: 15, lineHeight: 22, color: P.ink }}>{t('ageGateBlockedBody')}</Text>
+          <Pressable
+            onPress={async () => { await signOut(); setAgeStatus('checking'); setAuthState('signed-out'); }}
+            accessibilityRole="button"
+            accessibilityLabel={t('ageGateSignOut')}
+            style={{ borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 15, alignItems: 'center' }}
+          >
+            <Text style={{ color: P.ink, fontSize: 16, fontWeight: '600' }}>{t('ageGateSignOut')}</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
@@ -3742,7 +3860,7 @@ export default function HomeScreen() {
             <SwipeRow onSwipeLeft={() => void askDeleteItem(item)}>
             <View style={styles.famRow}>
               {photoUrl ? (
-                <Pressable onPress={() => setPhotoViewer(photoUrl)}>
+                <Pressable onPress={() => setPhotoViewer(photoUrl)} accessibilityRole="button" accessibilityLabel={t('a11yViewPhoto')}>
                   <SignedImage photo={photoUrl} style={styles.thingThumb} />
                 </Pressable>
               ) : (
@@ -3801,6 +3919,8 @@ export default function HomeScreen() {
                 onPress={() => askPhotoSource(item)}
                 style={styles.photoBtn}
                 disabled={uploadingPhotoId === item.id}
+                accessibilityRole="button"
+                accessibilityLabel={t('a11yAttachPhoto')}
               >
                 <Text style={styles.photoBtnText}>
                   {uploadingPhotoId === item.id ? '…' : '📷'}
@@ -4048,7 +4168,7 @@ export default function HomeScreen() {
             must never ship to production users. __DEV__ is false in
             release builds, so the button and panel vanish there. */}
         {__DEV__ && (
-          <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn}>
+          <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t('a11yDemoPanel')}>
             <Text style={styles.iconBtnText}>🧪</Text>
           </Pressable>
         )}
@@ -4184,6 +4304,11 @@ export default function HomeScreen() {
                 <Text style={[styles.menuBadge, { textAlign: ta() }]}>
                   {isAnonymous ? t('trialBadge') : t('permAccountBadge')}
                 </Text>
+                {pendingSync > 0 ? (
+                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
+                    {tx('offlinePending', { n: String(pendingSync) })}
+                  </Text>
+                ) : null}
               </View>
             </View>
 
@@ -4328,7 +4453,7 @@ export default function HomeScreen() {
                           {sess.ttl}
                         </Text>
                       </Pressable>
-                      <Pressable style={styles.histDel} onPress={() => deleteSession(sess.id)}>
+                      <Pressable style={styles.histDel} onPress={() => deleteSession(sess.id)} accessibilityRole="button" accessibilityLabel={t('a11yDeleteChat')}>
                         <Text style={styles.histDelText}>✕</Text>
                       </Pressable>
                     </View>
@@ -4702,7 +4827,7 @@ export default function HomeScreen() {
                 <Text style={styles.bcTitle}>📣 {bcTitle(b)}</Text>
                 <Text style={styles.bcBody}>{bcBody(b)}</Text>
               </View>
-              <Pressable onPress={() => dismissBroadcast(b.id)} style={styles.bcX} hitSlop={8}>
+              <Pressable onPress={() => dismissBroadcast(b.id)} style={styles.bcX} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yDismiss')}>
                 <Text style={styles.bcXText}>✕</Text>
               </Pressable>
             </View>
@@ -4712,7 +4837,7 @@ export default function HomeScreen() {
             {chatPhotoUri ? (
               <View style={styles.photoPreview}>
                 <Image source={{ uri: chatPhotoUri }} style={styles.photoPreviewImg} />
-                <Pressable onPress={() => setChatPhotoUri(null)} style={styles.photoPreviewX}>
+                <Pressable onPress={() => setChatPhotoUri(null)} style={styles.photoPreviewX} accessibilityRole="button" accessibilityLabel={t('a11yRemovePhoto')}>
                   <Text style={styles.photoPreviewXText}>✕</Text>
                 </Pressable>
                 <Text style={styles.photoPreviewLabel}>{t('photoTalkOrType')}</Text>
@@ -4785,7 +4910,7 @@ export default function HomeScreen() {
               </Text>
             </Pressable>
             {isManager && (
-              <Pressable onPress={openRename} style={styles.famEditBtn} hitSlop={10}>
+              <Pressable onPress={openRename} style={styles.famEditBtn} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('a11yEdit')}>
                 <Text style={styles.famEditBtnText}>✏️</Text>
               </Pressable>
             )}
@@ -4859,6 +4984,8 @@ export default function HomeScreen() {
                           styles.removeBtn,
                           confirmRemove === m.user_id && styles.removeBtnConfirm,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('a11yRemoveMember')}
                       >
                         <Text
                           style={[
@@ -5071,7 +5198,7 @@ export default function HomeScreen() {
                     onSwipeLeft={() => void askDeleteItem(item)}
                   >
                   <View style={styles.famRow}>
-                    <Pressable onPress={() => toggleItem(item)}>
+                    <Pressable onPress={() => toggleItem(item)} accessibilityRole="checkbox" accessibilityState={{ checked: item.status === 'done' }} accessibilityLabel={item.status === 'done' ? t('a11yMarkOpen') : t('a11yMarkDone')}>
                       <Text style={styles.itemIcon}>{item.status === 'done' ? '✅' : '⬜'}</Text>
                     </Pressable>
                     <View style={styles.itemBody}>
@@ -5150,7 +5277,7 @@ export default function HomeScreen() {
                         onSubmitEditing={() => onAssign(item)}
                         returnKeyType="done"
                       />
-                      <Pressable onPress={() => onAssign(item)} style={styles.sendBtn}>
+                      <Pressable onPress={() => onAssign(item)} style={styles.sendBtn} accessibilityRole="button" accessibilityLabel={t('a11yAssign')}>
                         <Text style={styles.sendBtnText}>➤</Text>
                       </Pressable>
                     </View>
@@ -5253,6 +5380,9 @@ export default function HomeScreen() {
                   key={ic}
                   onPress={() => setTabIcon(ic)}
                   style={[styles.iconPick, tabIcon === ic && styles.iconPickActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={ic}
+                  accessibilityState={{ selected: tabIcon === ic }}
                 >
                   <Text style={styles.iconPickText}>{ic}</Text>
                 </Pressable>
@@ -5395,7 +5525,7 @@ export default function HomeScreen() {
                 <Text style={styles.trashBtnText}>🗑️</Text>
               </Pressable>
             ) : null}
-            <Pressable onPress={() => setSecretSearchOpen((v) => !v)} style={styles.trashBtn}>
+            <Pressable onPress={() => setSecretSearchOpen((v) => !v)} style={styles.trashBtn} accessibilityRole="button" accessibilityLabel={t('a11ySearchSecrets')}>
               <Text style={styles.trashBtnText}>🔍</Text>
             </Pressable>
           </View>
@@ -5424,7 +5554,7 @@ export default function HomeScreen() {
             {secretPhotoUri ? (
               <View style={styles.photoPreview}>
                 <Image source={{ uri: secretPhotoUri }} style={styles.photoPreviewImg} />
-                <Pressable onPress={() => setSecretPhotoUri(null)} style={styles.photoPreviewX}>
+                <Pressable onPress={() => setSecretPhotoUri(null)} style={styles.photoPreviewX} accessibilityRole="button" accessibilityLabel={t('a11yRemovePhoto')}>
                   <Text style={styles.photoPreviewXText}>✕</Text>
                 </Pressable>
               </View>
@@ -5853,7 +5983,7 @@ export default function HomeScreen() {
                       >
                         <Text style={styles.shopShareBtn}>📤 {t('shareWhatsApp')}</Text>
                       </Pressable>
-                      <Pressable onPress={() => setActiveListId(null)} hitSlop={10}>
+                      <Pressable onPress={() => setActiveListId(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('close')}>
                         <Text style={styles.shopListDel}>✕</Text>
                       </Pressable>
                     </View>
@@ -6142,10 +6272,10 @@ export default function HomeScreen() {
                         </Text>
                       </View>
                       <View style={styles.trashActions}>
-                        <Pressable onPress={() => void restoreTrashRow(r)} style={styles.trashBtn}>
+                        <Pressable onPress={() => void restoreTrashRow(r)} style={styles.trashBtn} accessibilityRole="button" accessibilityLabel={t('a11yRestoreItem')}>
                           <Text style={styles.trashBtnText}>↩️</Text>
                         </Pressable>
-                        <Pressable onPress={() => void nukeTrashRow(r)} style={styles.trashBtn}>
+                        <Pressable onPress={() => void nukeTrashRow(r)} style={styles.trashBtn} accessibilityRole="button" accessibilityLabel={t('a11yDeleteForever')}>
                           <Text style={styles.trashBtnText}>{delForeverId === r.id ? '⚠️' : '✕'}</Text>
                         </Pressable>
                       </View>
