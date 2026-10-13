@@ -9,6 +9,7 @@
 // POST { "action": "delete", "id" }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { timingSafeEqual } from '../_shared/edge-auth.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
 
   const expected = Deno.env.get('ADMIN_TOKEN') ?? '';
   const got = req.headers.get('x-admin-token') ?? '';
-  if (!expected || got !== expected) return err('غير مصرح', 401);
+  if (!expected || !timingSafeEqual(got, expected)) return err('غير مصرح', 401);
 
   let body: Record<string, unknown>;
   try {

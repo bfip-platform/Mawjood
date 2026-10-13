@@ -153,4 +153,48 @@ export const ASSERTIONS = [
           from information_schema.columns
           where table_schema = 'public' and table_name = 'pending_actions' and column_name = 'expires_at'`,
   },
+  {
+    name: 'can_read_photo binds sponsoring note to its author (0038)',
+    sql: `select (pg_get_functiondef('public.can_read_photo(text,text)'::regprocedure) like '%created_by%') as ok`,
+  },
+  {
+    name: 'notes authorship immutability trigger exists (0039)',
+    sql: `select count(*)::int = 1 as ok from pg_trigger
+          where tgname = 'notes_preserve_authorship' and not tgisinternal
+            and tgrelid = 'public.notes'::regclass and tgenabled = 'O'`,
+  },
+  {
+    name: 'claim_invite_use exists and is service-role only (0040)',
+    sql: `select (has_function_privilege('service_role', 'public.claim_invite_use(uuid)', 'execute')
+                 and not has_function_privilege('authenticated', 'public.claim_invite_use(uuid)', 'execute')) as ok`,
+  },
+  {
+    name: 'pending_actions accepts merge_memory (0041)',
+    sql: `select (pg_get_constraintdef(oid) like '%merge_memory%') as ok from pg_constraint
+          where conname = 'pending_actions_action_type_check'`,
+  },
+  {
+    name: 'items has updated_at + touch trigger (0042)',
+    sql: `select (
+            exists (select 1 from information_schema.columns
+                    where table_schema = 'public' and table_name = 'items' and column_name = 'updated_at')
+            and exists (select 1 from pg_trigger
+                        where tgname = 'items_touch_updated_at' and tgrelid = 'public.items'::regclass and tgenabled = 'O')
+          ) as ok`,
+  },
+  {
+    name: 'D3 search indexes exist (0043)',
+    sql: `select (
+            (select count(*) from pg_indexes where schemaname = 'public'
+             and indexname in ('items_title_trgm','items_details_trgm','notes_transcript_trgm','items_note_id_idx','items_space_kind_status_idx')) = 5
+            and exists (select 1 from pg_extension where extname = 'pg_trgm')
+          ) as ok`,
+  },
+  {
+    name: 'ai spend ledger is atomic + service-role only (0044)',
+    sql: `select (has_function_privilege('service_role', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
+                 and not has_function_privilege('authenticated', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
+                 and not has_function_privilege('anon', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
+                 and (select relrowsecurity from pg_class where oid = 'public.ai_spend_daily'::regclass)) as ok`,
+  }
 ];

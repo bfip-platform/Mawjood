@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Borrow, Item, ItemKind, Note, RecordedAudio, Space, SpaceTab, SpaceType, TabProposal } from './types';
 import { suggestSpaceType } from './suggest';
 import { isCorrection, isQuestion } from './answer';
+import { OfflineSync, isQueueableError, listCacheKey, type KVStore } from './offline';
+import { rankByRelevance } from './rank';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 /**
@@ -148,7 +150,20 @@ export interface TrashRow {
  * Storage + DB live in Supabase; transcription runs in the `transcribe` edge function.
  */
 export class VoiceEngine {
+  private offline: OfflineSync | null = null;
+
   constructor(private supabase: SupabaseClient) {}
+
+  /** D3 T-D3-4: enable the offline layer (read cache + write outbox)
+   *  with a host-provided KV (AsyncStorage / localStorage adapter). */
+  enableOffline(kv: KVStore): OfflineSync {
+    this.offline = new OfflineSync(kv);
+    return this.offline;
+  }
+
+  get offlineSync(): OfflineSync | null {
+    return this.offline;
+  }
 
   // ── Spaces ──────────────────────────────────────────────
 
@@ -730,6 +745,7 @@ export class VoiceEngine {
   // ── Phase 3: family pillar ──────────────────────────────
 
   async createItem(input: {
+    id?: string;
     spaceId: string;
     kind: ItemKind;
     title: string;
@@ -740,9 +756,15 @@ export class VoiceEngine {
     userId?: string;
     meta?: Item['meta'];
   }): Promise<Item> {
+    // T-D3-6 idempotency: the id is assigned CLIENT-side (stable across
+    // retries and offline replays). A PK conflict means an earlier
+    // attempt actually landed — resolve to the existing row instead of
+    // duplicating or failing.
+    const id = input.id ?? uuid4();
     const { data, error } = await this.supabase
       .from('items')
       .insert({
+        id,
         space_id: input.spaceId,
         kind: input.kind,
         title: input.title,
@@ -755,8 +777,86 @@ export class VoiceEngine {
       })
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if ((error as { code?: string }).code === '23505') {
+        const { data: existing, error: selErr } = await this.supabase
+          .from('items')
+          .select('*')
+          .eq('id', id)
+          .eq('space_id', input.spaceId)
+          .single();
+        if (!selErr && existing) return existing as Item;
+      }
+      throw error;
+    }
     return data as Item;
+  }
+
+  /**
+   * D3 T-D3-4: offline-first create. Online → identical to createItem.
+   * Offline (or any failure) with the offline layer enabled → the
+   * create is queued in the outbox under its stable id and a local
+   * placeholder is returned with `queued: true`; flushOutbox() replays
+   * it idempotently when connectivity returns.
+   */
+  async createItemOfflineFirst(input: Parameters<VoiceEngine['createItem']>[0]): Promise<{ item: Item; queued: boolean }> {
+    const id = input.id ?? this.offline?.makeId() ?? uuid4();
+    try {
+      const item = await this.createItem({ ...input, id });
+      return { item, queued: false };
+    } catch (e) {
+      // Review N1: only transport-shaped failures are queued. A
+      // permanent server error (RLS, CHECK, FK — anything carrying a
+      // Postgres/PostgREST code) is rethrown: queueing it would render
+      // a phantom item and poison the FIFO for everything behind it.
+      if (!this.offline || !isQueueableError(e)) throw e;
+      await this.offline.enqueueCreate({ ...input, id } as Record<string, unknown>);
+      const placeholder = {
+        id,
+        space_id: input.spaceId,
+        note_id: input.noteId ?? null,
+        kind: input.kind,
+        title: input.title,
+        details: input.details ?? null,
+        due_at: input.dueAt ?? null,
+        status: 'open',
+        assigned_to: input.assignedTo ?? null,
+        list_id: null,
+        bought_at: null,
+        meta: input.meta ?? null,
+        created_by: input.userId ?? null,
+        created_at: new Date().toISOString(),
+      } as unknown as Item;
+      return { item: placeholder, queued: true };
+    }
+  }
+
+  /** Replay queued creates (FIFO, idempotent). No-op when disabled. */
+  async flushOutbox(): Promise<{ sent: number; remaining: number; deadLettered: number }> {
+    if (!this.offline) return { sent: 0, remaining: 0, deadLettered: 0 };
+    return this.offline.flush(async (op) => {
+      await this.createItem(op.payload as Parameters<VoiceEngine['createItem']>[0]);
+      return 'ok';
+    });
+  }
+
+  /** D3 T-D3-4: read-through cache for listItems — network result is
+   *  cached per page (limit+offset in the key, review N2); on network
+   *  failure the last cached page is served. */
+  async listItemsCached(spaceId: string, opts?: number | PageOpts): Promise<{ items: Item[]; fromCache: boolean }> {
+    const page = pageOptsOf(opts);
+    const key = listCacheKey(`items:${spaceId}`, Math.min(Math.max(page?.limit ?? 100, 1), 200), Math.max(page?.offset ?? 0, 0));
+    try {
+      const items = await this.listItems(spaceId, opts);
+      if (this.offline) await this.offline.cacheList(key, items);
+      return { items, fromCache: false };
+    } catch (e) {
+      if (this.offline) {
+        const cached = await this.offline.readList<Item>(key);
+        if (cached) return { items: cached.rows, fromCache: true };
+      }
+      throw e;
+    }
   }
 
   async assignItem(itemId: string, name: string | null): Promise<Item> {
@@ -2209,7 +2309,10 @@ export class VoiceEngine {
       .eq('space_id', spaceId)
       .or(`title.ilike.${pattern},details.ilike.${pattern}`);
     if (opts.kinds && opts.kinds.length > 0) itemsQ = itemsQ.in('kind', opts.kinds);
-    const itemsP = itemsQ.order('created_at', { ascending: false }).limit(30);
+    // D6 T-D6-2: fetch a wider candidate pool (the 0043 trigram indexes
+    // keep it fast), rank by relevance locally, then cut to the classic
+    // page sizes — a perfect older match now beats a newer partial hit.
+    const itemsP = itemsQ.order('created_at', { ascending: false }).limit(60);
     const notesP = includeNotes
       ? this.supabase
           .from('notes')
@@ -2218,12 +2321,14 @@ export class VoiceEngine {
           .or('tab_id.is.null,tab_id.neq.secret') // trashed + vault notes never surface in search
           .ilike('transcript', pattern)
           .order('created_at', { ascending: false })
-          .limit(20)
+          .limit(40)
       : Promise.resolve({ data: [] as Note[], error: null });
     const [n, i] = await Promise.all([notesP, itemsP]);
     if (n.error) throw n.error;
     if (i.error) throw i.error;
-    return { notes: n.data as Note[], items: i.data as Item[] };
+    const items = rankByRelevance(i.data as Item[], q, (it) => `${it.title} ${it.details ?? ''}`).slice(0, 30);
+    const notes = rankByRelevance(n.data as Note[], q, (nt) => nt.transcript ?? '').slice(0, 20);
+    return { notes, items };
   }
 
   // ── Q&A (Phase 2) ─────────────────────────────────────────
@@ -2270,10 +2375,11 @@ export class VoiceEngine {
 
   // ── Family invites ──────────────────────────────────────────
 
-  /** Generate a human-friendly invite code (no confusing chars). */
+  /** Generate a human-friendly invite code (no confusing chars).
+   *  10 chars × 31-symbol alphabet ≈ 49.6 bits (F-SEC-05; was 6 ≈ 29.8). */
   private makeInviteCode(): string {
     const ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-    const bytes = new Uint8Array(6);
+    const bytes = new Uint8Array(10);
     crypto.getRandomValues(bytes);
     return Array.from(bytes, (b) => ABC[b % ABC.length]).join('');
   }

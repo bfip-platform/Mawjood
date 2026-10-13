@@ -44,6 +44,22 @@ export const RADIUS = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 } as const;
 /** Minimum comfortable touch target (px). */
 export const TOUCH = 48;
 
+/**
+ * Brand layer (Decision #11 — brand v1.2 baseline; D5 T-D5-5
+ * foundations). Monochrome-first: the palettes above carry the product;
+ * these two accents exist as NAMED tokens so future screens use them
+ * sparingly and consistently instead of inventing hexes. Fonts: Inter +
+ * IBM Plex Sans Arabic. NOTE: OD-39 (final logo / final color lock-in /
+ * polished screens) is still OPEN — these are baseline tokens, not a
+ * final brand commitment, and no screen restyle rides on them yet.
+ */
+export const BRAND = {
+  accentBlue: '#3B82C4', // soft blue — primary accent, sparing
+  accentSage: '#5E7E63', // muted sage — secondary accent, sparing
+  fontLatin: 'Inter',
+  fontArabic: 'IBM Plex Sans Arabic',
+} as const;
+
 /** Flatten a type token into a RN text style. */
 export function typeStyle(t: TypeToken): { fontSize: number; lineHeight: number; fontWeight: TextStyle['fontWeight'] } {
   return { fontSize: t.size, lineHeight: t.height, fontWeight: t.weight };

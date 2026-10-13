@@ -340,6 +340,75 @@ export async function applyMemoryMaintenance(
 }
 
 /**
+ * Duplicate candidates for USER review (spec §6.1). PURE. Pairs whose
+ * normalized text is identical but which are NOT retry duplicates (the
+ * auto-merge exception — same mkey + created within 24h — is handled
+ * by the consolidation job and excluded here). The user decides:
+ * keep one, keep both, or merge. Nothing here mutates anything.
+ */
+export function findDuplicateCandidates(
+  facts: MemoryRow[],
+): { a: MemoryRow; b: MemoryRow; reason: 'same_text_diff_key' | 'same_text_stale_dup' }[] {
+  const out: { a: MemoryRow; b: MemoryRow; reason: 'same_text_diff_key' | 'same_text_stale_dup' }[] = [];
+  const byText = new Map<string, MemoryRow[]>();
+  for (const f of facts) {
+    if (f.meta?.mcat === 'episode' || f.meta?.mcat === 'route') continue;
+    const k = normAr(factLine(f));
+    if (!k) continue;
+    byText.set(k, [...(byText.get(k) ?? []), f]);
+  }
+  for (const group of byText.values()) {
+    if (group.length < 2) continue;
+    const sorted = group.slice().sort((x, y) => (x.created_at < y.created_at ? -1 : 1));
+    for (let i = 1; i < sorted.length; i++) {
+      const a = sorted[0];
+      const b = sorted[i];
+      const sameKey = String(a.meta?.mkey ?? '') !== '' && a.meta?.mkey === b.meta?.mkey;
+      const within24h = Math.abs(new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) <= 24 * 3600 * 1000;
+      if (sameKey && within24h) continue; // retry duplicate — the job auto-merges it to trash
+      out.push({ a, b, reason: sameKey ? 'same_text_stale_dup' : 'same_text_diff_key' });
+    }
+  }
+  return out;
+}
+
+/**
+ * User-confirmed merge (spec §6.1): the KEEPER survives (the caller
+ * passes the newer row, or whichever the user picked), the loser's
+ * text is appended to the keeper's meta.previous_versions (bounded,
+ * auditable), importance becomes max+1 capped at 5, and the loser
+ * goes to TRASH — recoverable for 30 days, never hard-deleted.
+ * `mergedText` lets the user supply an edited combined text.
+ */
+export async function mergeFacts(
+  supa: Supa,
+  keep: MemoryRow,
+  loser: MemoryRow,
+  mergedText?: string,
+): Promise<boolean> {
+  if (keep.id === loser.id) return false;
+  const prev = Array.isArray(keep.meta?.previous_versions) ? keep.meta.previous_versions : [];
+  const versions = [
+    ...prev,
+    { text: factLine(loser), from_id: loser.id, merged_at: new Date().toISOString() },
+  ].slice(-10);
+  const importance = Math.min(
+    5,
+    Math.max(Number(keep.meta?.importance ?? 3), Number(loser.meta?.importance ?? 3)) + 1,
+  );
+  const { error } = await supa
+    .from('items')
+    .update({
+      ...(mergedText ? { details: mergedText } : {}),
+      updated_at: new Date().toISOString(),
+      meta: { ...(keep.meta ?? {}), importance, previous_versions: versions },
+    })
+    .eq('id', keep.id);
+  if (error) return false;
+  return trashFact(supa, loser, 'merged_duplicate');
+}
+
+/**
  * Scoped forget matching (spec §5.1). PURE — decides WHAT a forget request
  * may touch, never deletes anything itself.
  *   tier 'exact'     — normalized content/title equals the query
@@ -479,11 +548,14 @@ export async function purgeExpiredTrashedFacts(
 export interface PendingForgetRow {
   id: string;
   user_id: string;
+  action_type?: string;
   status: string;
   expires_at: string;
   payload: {
     fact_ids?: string[];
     fact_texts?: string[];
+    keep_id?: string;
+    loser_id?: string;
     memory_space_id?: string;
     confirm_code?: string;
   };
@@ -505,7 +577,18 @@ export function newForgetCode(): string {
  */
 export function parseForgetConfirmation(text: string): string | null {
   const latin = (text ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
-  const m = normAr(latin).match(/^(?:نفذ|confirm)\s+(\d{6})$|^(\d{6})$/);
+  // Confirmation matching is deliberately TIGHTER than normAr: strip
+  // only Arabic diacritics/tatweel and unify hamza forms (so «نفّذ»
+  // matches), but do NOT erase punctuation — the user's message must be
+  // EXACTLY the confirmation and nothing else. A quote-wrapped or
+  // punctuated code is not a confirmation (D6 injection corpus:
+  // forge-quoted — normAr's punctuation erasure let it through).
+  const t = latin
+    .replace(/[ً-ٰٟ]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .trim();
+  const m = t.match(/^(?:نفذ|confirm)\s+(\d{6})$|^(\d{6})$/i);
   return m ? (m[1] ?? m[2]) : null;
 }
 
@@ -657,6 +740,84 @@ export async function executeConfirmedForget(
     .eq('id', row.id)
     .eq('status', 'executing');
   return { trashed };
+}
+
+/**
+ * Create a pending MERGE preview (D2, review fix F1). Merging moves the
+ * loser to trash, so it obeys the owner's delete-safety ruling exactly
+ * like forgetting: the model may only PREVIEW — execution happens solely
+ * when the user sends «نفّذ <code>» as their own message. The pair is
+ * re-verified server-side as a genuine duplicate (identical normalized
+ * text) before a code is issued. Trashes NOTHING.
+ */
+export async function createMergePreview(
+  supa: Supa,
+  userId: string,
+  spaceId: string,
+  keep: MemoryRow,
+  loser: MemoryRow,
+): Promise<{ action_id: string; confirm_code: string } | null> {
+  if (keep.id === loser.id) return null;
+  if (normAr(factLine(keep)) !== normAr(factLine(loser))) return null;
+  await supa
+    .from('pending_actions')
+    .update({ status: 'superseded' })
+    .eq('user_id', userId)
+    .eq('action_type', 'merge_memory')
+    .eq('status', 'pending');
+  const confirm_code = newForgetCode();
+  const id = crypto.randomUUID();
+  const { error } = await supa.from('pending_actions').insert({
+    id,
+    user_id: userId,
+    action_type: 'merge_memory',
+    payload: {
+      keep_id: keep.id,
+      loser_id: loser.id,
+      fact_texts: [factLine(keep), factLine(loser)],
+      memory_space_id: spaceId,
+      confirm_code,
+    },
+    approvals: 0,
+    required_approvals: 1,
+    status: 'pending',
+  });
+  if (error) return null;
+  return { action_id: id, confirm_code };
+}
+
+/**
+ * Execute a CLAIMED merge preview: re-check live (both facts still open
+ * in the previewed space and STILL identical-text duplicates — if the
+ * user edited either since the preview, refuse), merge with provenance
+ * (mergeFacts), and finalize the row. Called ONLY from the deterministic
+ * confirmation path after validate + atomic claim — never from a model
+ * tool (owner delete-safety ruling, same as executeConfirmedForget).
+ */
+export async function executeConfirmedMerge(
+  supa: Supa,
+  row: PendingForgetRow,
+): Promise<{ merged: boolean; kept?: string }> {
+  if (row.status !== 'executing') return { merged: false };
+  const exp = expiryMs(row);
+  if (exp === null || exp <= Date.now()) return { merged: false };
+  const spaceId = String(row.payload?.memory_space_id ?? '');
+  const keepId = String(row.payload?.keep_id ?? '');
+  const loserId = String(row.payload?.loser_id ?? '');
+  if (!spaceId || !keepId || !loserId || keepId === loserId) return { merged: false };
+  const facts = await loadFacts(supa, spaceId);
+  const keep = facts.find((f) => f.id === keepId);
+  const loser = facts.find((f) => f.id === loserId);
+  if (!keep || !loser) return { merged: false };
+  if (normAr(factLine(keep)) !== normAr(factLine(loser))) return { merged: false };
+  const ok = await mergeFacts(supa, keep, loser);
+  if (!ok) return { merged: false };
+  await supa
+    .from('pending_actions')
+    .update({ status: 'executed' })
+    .eq('id', row.id)
+    .eq('status', 'executing');
+  return { merged: true, kept: factLine(keep) };
 }
 
 /** Find the user's private space id (memory lives there, owner-only). */

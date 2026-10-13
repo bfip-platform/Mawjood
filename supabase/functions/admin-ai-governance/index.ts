@@ -12,7 +12,7 @@
 //   the raw answers so the admin can verify behavior after governance edits.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { internalHeaders } from '../_shared/edge-auth.ts';
+import { internalHeaders, timingSafeEqual } from '../_shared/edge-auth.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
 
   const expected = Deno.env.get('ADMIN_TOKEN') ?? '';
   const got = req.headers.get('x-admin-token') ?? '';
-  if (!expected || got !== expected) return err('غير مصرح', 401);
+  if (!expected || !timingSafeEqual(got, expected)) return err('غير مصرح', 401);
 
   let body: Record<string, unknown>;
   try {

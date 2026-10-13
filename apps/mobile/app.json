@@ -50,7 +50,15 @@
     "userInterfaceStyle": "light",
     "version": "0.1.0",
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "Mawjood — موجود",
+      "shortName": "Mawjood",
+      "description": "Bilingual voice-memory assistant: say where things are, ask where they went.",
+      "lang": "en",
+      "themeColor": "#FAF7F2",
+      "backgroundColor": "#FAF7F2",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "extra": {
       "router": {},

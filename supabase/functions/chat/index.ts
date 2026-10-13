@@ -1,10 +1,13 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget } from '../_shared/memory.ts';
+import { recallFacts, factLine, upsertFacts, loadFacts, normAr, matchForget, restoreFact, listTrashedFacts, createForgetPreview, parseForgetConfirmation, validateForgetConfirmation, claimForgetPreview, releaseForgetClaim, executeConfirmedForget, findDuplicateCandidates, createMergePreview, executeConfirmedMerge } from '../_shared/memory.ts';
 import { routeText, buildRouteFact, type TabInfo, type LearnedRoute, type SpaceType } from '../_shared/routing.ts';
 import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
+import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
+import { checkSpendCap, spendCapMessage, estimateWorstCaseChargeUsd } from '../_shared/spend.ts';
+import { retryDelayMs, sleep } from '../_shared/backoff.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
@@ -139,8 +142,11 @@ async function toolSearch(supa: Supa, args: { query?: string; kind?: string }, v
   if (!q) return { results: [] };
   const like = `%${q}%`;
   const kind = ['appointment', 'shopping', 'task', 'place', 'thing'].includes(args.kind ?? '') ? args.kind : null;
+  // NOTE: notes.deleted_at was dropped in migration 0019 (trashed notes live
+  // in trash_bin) — never filter notes on it; the query errors and the notes
+  // leg silently returns nothing. Guard-tested.
   const [notesRes, itemsRes, borrowsRes] = await Promise.all([
-    scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').is('deleted_at', null).or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).ilike('transcript', like).order('created_at', { ascending: false }).limit(6),
+    scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).ilike('transcript', like).order('created_at', { ascending: false }).limit(6),
     (() => {
       // memory/feedback rows are the app's own bookkeeping — never agent fodder
       let iq = scopeVault(supa.from('items').select('id, kind, title, details, due_at, status, bought_at, space_id, meta').not('kind', 'in', '(memory,feedback)'), vctx, hasVaultCols).or(`title.ilike.${like},details.ilike.${like}`).order('created_at', { ascending: false }).limit(8);
@@ -413,6 +419,65 @@ async function toolListMemories(supa: Supa, spaceByType: Record<string, string>,
   return { facts: facts.slice(0, 50).map(factLine) };
 }
 
+// D2 (spec §6.1): surface duplicate candidates for the USER to decide.
+// Read-only — merging is a separate, explicit step (merge_memories).
+async function toolListDuplicates(supa: Supa, spaceByType: Record<string, string>, vctx?: VaultCtx | null) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { duplicates: [] };
+  const facts = await loadFacts(supa, pid);
+  const pairs = findDuplicateCandidates(facts).slice(0, 10);
+  return {
+    duplicates: pairs.map((p) => ({
+      keep_id: p.a.id, other_id: p.b.id,
+      text: factLine(p.a), reason: p.reason,
+    })),
+    next: pairs.length
+      ? 'Show each pair to the user and ask: keep the first, keep the second, keep both, or merge into one. Only call merge_memories after the user picks merge for a specific pair.'
+      : 'No duplicate memories found.',
+  };
+}
+
+// D2 (spec §6.1) + review fix F1: merging is PREVIEW-ONLY, exactly like
+// forget_fact — it moves a saved memory to trash, so under the owner's
+// delete-safety ruling the model can never execute it. The tool verifies
+// the pair is a genuine duplicate of the caller's OWN facts, issues a
+// confirmation code, and the merge runs only when the user sends
+// «نفّذ <code>» as their own message (deterministic fast path below).
+async function toolMergeMemories(
+  supa: Supa,
+  admin: any,
+  userId: string,
+  spaceByType: Record<string, string>,
+  args: { keep_id?: string; other_id?: string },
+  vctx?: VaultCtx | null,
+) {
+  if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
+  const pid = spaceByType['private'];
+  if (!pid) return { error: 'no private space' };
+  const keepId = String(args.keep_id ?? '');
+  const otherId = String(args.other_id ?? '');
+  if (!keepId || !otherId || keepId === otherId) return { error: 'keep_id and other_id (different) required' };
+  const facts = await loadFacts(supa, pid);
+  const keep = facts.find((f) => f.id === keepId);
+  const loser = facts.find((f) => f.id === otherId);
+  if (!keep || !loser) return { error: 'memory not found in your private space' };
+  const pair = findDuplicateCandidates([keep, loser]);
+  if (pair.length === 0) {
+    return { error: 'not_duplicates', detail: 'Those two memories are not identical-text duplicates (or they are retry duplicates the nightly job handles). Nothing was merged.' };
+  }
+  const preview = await createMergePreview(admin, userId, pid, keep, loser);
+  if (!preview) return { error: 'preview failed' };
+  return {
+    needs_confirmation: true,
+    confirm_code: preview.confirm_code,
+    kept: factLine(keep),
+    merging_away: factLine(loser),
+    expires_in_minutes: 30,
+    next: 'Read the pair back to the user and ask THEM to send «نفّذ ' + preview.confirm_code + '» as their own message to confirm the merge. Nothing is merged until they do — you can never confirm on their behalf.',
+  };
+}
+
 async function toolReturnBorrow(supa: Supa, args: { borrow_id?: string }, vctx?: VaultCtx | null, hasVaultCols?: boolean) {
   if (!args.borrow_id) return { error: 'borrow_id required' };
   if (hasVaultCols) {
@@ -604,6 +669,10 @@ async function toolApproveAction(admin: any, userId: string, gov: Governance | n
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
   if (row.status === 'cancelled') return { error: 'cancelled' };
+  // PR-B review N1: never touch a row mid-execution — approving an
+  // 'executing' row would flip it back to 'approved' and re-arm a
+  // second claim in toolExecuteAction.
+  if (row.status === 'executing') return { error: 'execution in progress' };
   if (row.status === 'expired' || new Date(row.expires_at).getTime() < Date.now()) {
     await admin.from('pending_actions').update({ status: 'expired' }).eq('id', action_id);
     return { error: 'expired — request a new action' };
@@ -614,7 +683,7 @@ async function toolApproveAction(admin: any, userId: string, gov: Governance | n
   const ready = approvals >= required;
   await admin.from('pending_actions').update({
     approvals, status: ready ? 'approved' : 'pending',
-  }).eq('id', action_id);
+  }).eq('id', action_id).eq('status', row.status);
   return {
     action_id, approvals, approvals_needed: required, ready,
     next: ready
@@ -630,7 +699,10 @@ async function toolCancelAction(admin: any, userId: string, args: { action_id?: 
   const { data: row } = await admin.from('pending_actions').select('id,status').eq('id', action_id).eq('user_id', userId).maybeSingle();
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
-  await admin.from('pending_actions').update({ status: 'cancelled' }).eq('id', action_id);
+  // PR-B review N1: an executing action can no longer be cancelled —
+  // the executor is already running and will mark it 'executed'.
+  if (row.status === 'executing') return { error: 'execution in progress' };
+  await admin.from('pending_actions').update({ status: 'cancelled' }).eq('id', action_id).eq('status', row.status);
   return { cancelled: true };
 }
 
@@ -740,7 +812,10 @@ async function toolExecuteAction(admin: any, userId: string, gov: Governance | n
   if (!row) return { error: 'action not found' };
   if (row.status === 'executed') return { error: 'already executed' };
   if (row.status === 'cancelled') return { error: 'cancelled' };
-  if (new Date(row.expires_at).getTime() < Date.now()) {
+  // Fail-closed expiry (same NaN class fixed for forget in 0037):
+  // an unparseable expires_at counts as expired, never as valid.
+  const expMs = Date.parse(row.expires_at);
+  if (!Number.isFinite(expMs) || expMs < Date.now()) {
     await admin.from('pending_actions').update({ status: 'expired' }).eq('id', action_id);
     return { error: 'expired — request a new action' };
   }
@@ -750,17 +825,38 @@ async function toolExecuteAction(admin: any, userId: string, gov: Governance | n
   if ((row.approvals ?? 0) < required || row.status !== 'approved') {
     return { error: 'approvals_incomplete', approvals: row.approvals ?? 0, needed: required };
   }
+  // F-SEC-05 (M4): approval→execute TOCTOU. All checks above are reads;
+  // two concurrent execute_action calls could both pass them and run the
+  // destructive executor twice. Claim the row with ONE conditional
+  // UPDATE (approved → executing): exactly one caller wins. A stuck
+  // 'executing' row fails closed below (it is no longer 'approved').
+  const { data: claimed } = await admin
+    .from('pending_actions')
+    .update({ status: 'executing' })
+    .eq('id', action_id)
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .select('id');
+  if (!claimed || claimed.length !== 1) return { error: 'already executed or in progress' };
   // deno-lint-ignore no-explicit-any
   const payload = (row.payload ?? {}) as Record<string, any>;
   let res: unknown;
-  if (at === 'create_tab') res = await executeCreateTab(admin, userId, payload, gov, uiAr);
-  else if (at === 'delete_tab') res = await executeDeleteTab(admin, userId, payload);
-  else if (at === 'create_space') res = await executeCreateSpace(admin, userId, payload, gov, uiAr);
-  else if (at === 'delete_space') res = await executeDeleteSpace(admin, userId, payload);
-  else return { error: 'unknown action_type' }; // fail closed: never default to a destructive executor
+  try {
+    if (at === 'create_tab') res = await executeCreateTab(admin, userId, payload, gov, uiAr);
+    else if (at === 'delete_tab') res = await executeDeleteTab(admin, userId, payload);
+    else if (at === 'create_space') res = await executeCreateSpace(admin, userId, payload, gov, uiAr);
+    else if (at === 'delete_space') res = await executeDeleteSpace(admin, userId, payload);
+    else res = { error: 'unknown action_type' }; // fail closed: never default to a destructive executor
+  } catch (e) {
+    res = { error: e instanceof Error ? e.message : 'execute failed' };
+  }
   // deno-lint-ignore no-explicit-any
-  if ((res as any)?.error) return res;
-  await admin.from('pending_actions').update({ status: 'executed' }).eq('id', action_id);
+  if ((res as any)?.error) {
+    // release the claim — the action stays approved and retryable
+    await admin.from('pending_actions').update({ status: 'approved' }).eq('id', action_id).eq('status', 'executing');
+    return res;
+  }
+  await admin.from('pending_actions').update({ status: 'executed' }).eq('id', action_id).eq('status', 'executing');
   return { executed: true, action_type: at, ...(res as object) };
 }
 
@@ -780,6 +876,8 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
     case 'forget_fact': return await toolForgetFact(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'restore_fact': return await toolRestoreFact(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'list_memories': return await toolListMemories(supa, spaceByType, vctx ?? null);
+    case 'list_memory_duplicates': return await toolListDuplicates(supa, spaceByType, vctx ?? null);
+    case 'merge_memories': return await toolMergeMemories(supa, admin, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'list_tabs': return await toolListTabs(supa, userId, spaceByType, args ?? {}, vctx ?? null);
     case 'read_tab': return await toolReadTab(supa, spaceByType, args ?? {}, vctx ?? null);
     case 'propose_tab': return await toolProposeTab(admin, userId, spaceByType, args ?? {}, vctx ?? null);
@@ -792,7 +890,7 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
 }
 
 // deno-lint-ignore no-explicit-any
-async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
+async function callModel(ai: any, messages: any[], retries = 2): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
   const t0 = Date.now();
   const aiRes = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
@@ -804,9 +902,10 @@ async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text:
   });
   const latencyMs = Date.now() - t0;
   if (!aiRes.ok) {
-    // retry once on rate limits / overloaded backends, then surface a clean error
+    // retry on rate limits / overloaded backends with exponential
+    // backoff + jitter (F-SEC-08), then surface a clean error
     if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(retryDelayMs(2 - retries));
       return callModel(ai, messages, retries - 1);
     }
     // honest errors: only 429/503 are rate limits — anything else (e.g. a 400
@@ -824,10 +923,11 @@ async function callModel(ai: any, messages: any[], retries = 1): Promise<{ text:
 }
 
 // Vision: the user attached a photo and asks about it — the model actually
-// looks at the image. Returns the answer text, or null when the vision call
-// fails (caller then answers gracefully instead of guessing blind).
+// looks at the image. Returns the answer text + token usage (the caller
+// meters it into ai_events for the spend cap), or null when the vision
+// call fails (caller then answers gracefully instead of guessing blind).
 // deno-lint-ignore no-explicit-any
-async function callVision(ai: any, imageUrl: string, question: string, retries = 1): Promise<string | null> {
+async function callVision(ai: any, imageUrl: string, question: string, retries = 2): Promise<{ text: string; usage: any } | null> {
   const sys = `You are Mawjood, a warm assistant inside a family memory app. The user attached a photo and asks about it. Look at the image carefully and answer their question directly in the SAME language they used (Levantine Arabic if they write Arabic). Be concise: 1-3 sentences. Describe only what you actually see — never invent details, people, or text that is not in the image. Reply with ONLY the answer, no preamble.`;
   try {
     // deno-lint-ignore no-explicit-any
@@ -851,7 +951,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     });
     if (!aiRes.ok) {
       if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await sleep(retryDelayMs(2 - retries));
         return callVision(ai, imageUrl, question, retries - 1);
       }
       return null;
@@ -860,7 +960,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     const raw = (j.choices?.[0]?.message?.content ?? '').trim();
     // strip a thinking preamble if the model leaks one
     const clean = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    return clean || null;
+    return clean ? { text: clean, usage: j.usage ?? null } : null;
   } catch {
     return null;
   }
@@ -902,7 +1002,7 @@ Deno.serve(async (req) => {
     // photo attached in chat ("photograph, then talk about it") — the client
     // uploads it first and passes the public URL; the vision branch above
     // lets the model actually look at it when the user asks about the photo.
-    const photoUrl =
+    let photoUrl =
       typeof photo_url === 'string' && photo_url.startsWith('https://')
         ? photo_url.slice(0, 500)
         : null;
@@ -920,14 +1020,40 @@ Deno.serve(async (req) => {
     userId = userData?.user?.id ?? null;
     // 🧠 eval override: internal service-to-service (admin eval.run) may act
     // as a real user for regression testing. Never accepted from the client.
+    let evalImpersonation: string | null = null;
     if (!userId && eval_mode === true && isInternal(req)) {
       const euid = String(as_user_id ?? '');
-      if (/^[0-9a-f-]{36}$/i.test(euid)) userId = euid;
+      if (/^[0-9a-f-]{36}$/i.test(euid)) {
+        userId = euid;
+        evalImpersonation = euid;
+      }
     }
     if (!userId) throw new Error('not authenticated');
 
+    // 🔒 photo isolation (D0 HIGH): a client-supplied photo_url may only
+    // reference the caller's OWN storage folder — otherwise it is dropped
+    // before it can be stored on a note or shown to the vision model.
+    photoUrl = sanitizePhotoUrl(photoUrl, userId);
+
     admin = adminClient();
     requestId = newRequestId();
+
+    // F-SEC-06 (M3): every impersonation is audit-logged. The internal
+    // secret remains the gate; this makes its use visible after the fact
+    // (who was impersonated, when, under which request id).
+    if (evalImpersonation) {
+      await logOps(admin, {
+        user_id: evalImpersonation, request_id: requestId,
+        kind: 'eval_mode.impersonation', ok: true,
+        detail: 'internal eval call acting as this user',
+      });
+    }
+
+    // 💸 daily AI spend cap (T-D2-4, fail-closed): computed once per
+    // request and enforced ONLY on the model-bound paths below (vision
+    // call, split call, agent loop). Deterministic fast paths never
+    // consult it.
+    const spend = await checkSpendCap(admin, userId, undefined, estimateWorstCaseChargeUsd('gpt-5-mini', 7, 2000)); // worst case: vision+split+5 agent calls
 
     // 🧠 governance: verify the vault session (ownership proof, server-side)
     // + load the admin's rulebook. A failed vault check is a hard 403.
@@ -990,12 +1116,12 @@ Deno.serve(async (req) => {
       if (confirmCode) {
         const { data: pendingRows } = await admin.from('pending_actions')
           .select('id')
-          .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+          .eq('user_id', userId).in('action_type', ['forget_memory', 'merge_memory']).eq('status', 'pending')
           .limit(1);
         if ((pendingRows ?? []).length > 0) {
           const { data: row } = await admin.from('pending_actions')
             .select('*')
-            .eq('user_id', userId).eq('action_type', 'forget_memory').eq('status', 'pending')
+            .eq('user_id', userId).in('action_type', ['forget_memory', 'merge_memory']).eq('status', 'pending')
             .eq('payload->>confirm_code', confirmCode)
             .maybeSingle();
           const verdict = validateForgetConfirmation(row ?? null, userId, confirmCode, new Date());
@@ -1005,13 +1131,26 @@ Deno.serve(async (req) => {
             const claimed = await claimForgetPreview(admin, row.id);
             if (!claimed) {
               const answer = uiAr
-                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنساه.'
-                : 'That code was already used or is being processed — nothing new to forget.';
-              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation already claimed)'] }), {
+                ? 'هاد الكود انستخدم من قبل أو عم يتنفّذ — ما في شي جديد أنفّذه.'
+                : 'That code was already used or is being processed — nothing new to execute.';
+              return new Response(JSON.stringify({ answer, actions: ['confirmation (already claimed)'] }), {
                 headers: { ...cors, 'Content-Type': 'application/json' },
               });
             }
             try {
+              if (claimed.action_type === 'merge_memory') {
+                const res = await executeConfirmedMerge(admin, claimed);
+                const answer = res.merged
+                  ? (uiAr
+                    ? `دمجتها ✓ صارت ذكرى وحدة: ${res.kept} — النسخة المدموجة راحت للمهملات وبتقدر ترجعها خلال 30 يوم (قلّي «رجّعها»).`
+                    : `Merged ✓ into one memory: ${res.kept} — the merged-away copy is in trash and restorable for 30 days (say "restore it").`)
+                  : (uiAr
+                    ? 'ما صار الدمج — الذكريات تغيّرت من وقت المعاينة أو ما عادت موجودة. اطلب الدمج من جديد.'
+                    : 'The merge did not happen — the memories changed since the preview or no longer exist. Ask for the merge again.');
+                return new Response(JSON.stringify({ answer, actions: ['merge_memories (confirmed)'] }), {
+                  headers: { ...cors, 'Content-Type': 'application/json' },
+                });
+              }
               const { trashed } = await executeConfirmedForget(admin, claimed);
               const answer = trashed.length > 0
                 ? (uiAr
@@ -1028,17 +1167,17 @@ Deno.serve(async (req) => {
               // stays consistent and the user can retry with the same code.
               await releaseForgetClaim(admin, row.id);
               const answer = uiAr
-                ? 'صار خطأ أثناء التنفيذ — الذكرى ما انحذفت. جرّب تبعت الكود مرة تانية.'
-                : 'Something went wrong while executing — nothing was forgotten. Try sending the code again.';
-              return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation error)'] }), {
+                ? 'صار خطأ أثناء التنفيذ — ما تغيّر شي. جرّب تبعت الكود مرة تانية.'
+                : 'Something went wrong while executing — nothing was changed. Try sending the code again.';
+              return new Response(JSON.stringify({ answer, actions: ['confirmation (error)'] }), {
                 headers: { ...cors, 'Content-Type': 'application/json' },
               });
             }
           }
           const answer = uiAr
-            ? 'كود التأكيد هاد مش صالح أو منتهي — الذكرى ما انحذفت. اطلب مني أنساها من جديد وبعطيك كود جديد.'
-            : 'That confirmation code is invalid or expired — nothing was forgotten. Ask me to forget it again for a fresh code.';
-          return new Response(JSON.stringify({ answer, actions: ['forget_fact (confirmation rejected)'] }), {
+            ? 'كود التأكيد هاد مش صالح أو منتهي — ما تغيّر شي. اطلب العملية من جديد وبعطيك كود جديد.'
+            : 'That confirmation code is invalid or expired — nothing was changed. Ask again for a fresh code.';
+          return new Response(JSON.stringify({ answer, actions: ['confirmation (rejected)'] }), {
             headers: { ...cors, 'Content-Type': 'application/json' },
           });
         }
@@ -1130,7 +1269,30 @@ Deno.serve(async (req) => {
         // text path: persist the photo+question as a note (voice path already did)
         await toolSaveNote(supa, userId, spaceByType, { text: t }, photoUrl, routeCtx, vctx);
       }
-      const seen = await callVision(ai, photoUrl, t);
+      // 💸 spend cap (T-D2-4/R1): the note save above is a deterministic
+      // write and stays; the vision MODEL call is gated + metered.
+      if (!spend.allowed) {
+        await logOps(admin, {
+          user_id: userId, request_id: requestId,
+          kind: 'spend_cap.hit', ok: false, detail: `vision:${spend.reason ?? 'cap_reached'}`,
+        });
+        return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions: ['save_note'] }), {
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
+      const vStart = Date.now();
+      const vres = await callVision(ai, photoUrl, t);
+      if (admin) {
+        await logAi(admin, {
+          user_id: userId, request_id: requestId, fn: 'chat',
+          provider: ai.provider, model: ai.visionModel,
+          latency_ms: Date.now() - vStart, status: vres ? 200 : 502,
+          prompt_tokens: vres?.usage?.prompt_tokens ?? null,
+          completion_tokens: vres?.usage?.completion_tokens ?? null,
+          meta: { vision: true },
+        });
+      }
+      const seen = vres?.text ?? null;
       const answer = seen ?? (uiAr ? 'ما قدرت أشوف الصورة هلأ (الخدمة مضغوطة)، جرّب بعد شوي.' : 'Could not see the photo right now (service is busy), try again in a bit.');
       return new Response(JSON.stringify({ answer, actions: ['save_note', 'vision'] }), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -1189,7 +1351,7 @@ Deno.serve(async (req) => {
           try {
             const { data: recent } = await supa.from('notes')
               .select('id, transcript, created_at')
-              .eq('created_by', userId).is('deleted_at', null)
+              .eq('created_by', userId)
               .order('created_at', { ascending: false }).limit(2);
             const target = (recent ?? []).find((r: { id: string }) => r.id !== note_id) as { id: string; transcript: string; created_at: string } | undefined;
             const fresh = !!target && (Date.now() - new Date(target.created_at).getTime() < 30 * 60 * 1000);
@@ -1267,7 +1429,7 @@ Deno.serve(async (req) => {
     // family purchase in one breath). Split deterministically: one model call
     // decides the parts, then we save each part directly.
     const sm = spaceMatches(t);
-    if (!inVault && sm.work && sm.family && ruleSpaceConfident(t) === null) {
+    if (spend.allowed && !inVault && sm.work && sm.family && ruleSpaceConfident(t) === null) {
       // deno-lint-ignore no-explicit-any
       const splitRes = await callModel(ai, [
         { role: 'system', content: SPLIT_SYSTEM },
@@ -1331,7 +1493,7 @@ Deno.serve(async (req) => {
     // light context: recent notes + open items (so the agent often answers without a tool round-trip)
     // 🧠 vault-scoped: normal mode sees no vault rows; vault mode sees only its vault.
     const [notesRes, itemsRes, openBorrowsRes] = await Promise.all([
-      scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').is('deleted_at', null).or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(8),
+      scopeVault(supa.from('notes').select('id, transcript, created_at, space_id').or('tab_id.is.null,tab_id.neq.secret'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(8),
       scopeVault(supa.from('items').select('id, kind, title, details, due_at, status, bought_at, meta').eq('status', 'open'), vctx, hasVaultCols).order('created_at', { ascending: false }).limit(20),
       scopeVault(supa.from('borrows').select('id, item_title, borrower, lent_at, due_at').is('returned_at', null), vctx, hasVaultCols).order('lent_at', { ascending: false }).limit(10),
     ]);
@@ -1362,6 +1524,18 @@ Deno.serve(async (req) => {
 
     let answer = 'ما قدرت أفهم الطلب — جرّب تصيغه بطريقة ثانية.';
     const actions: string[] = [];
+    // 💸 spend-cap gate for the agent loop (the split call above is
+    // separately gated): a capped user gets a graceful answer, not an
+    // error — and no model call is made.
+    if (!spend.allowed) {
+      await logOps(admin, {
+        user_id: userId, request_id: requestId,
+        kind: 'spend_cap.hit', ok: false, detail: spend.reason ?? 'cap_reached',
+      });
+      return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions }), {
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
     // 🗂️ when propose_tab succeeds this turn, the client renders a proposal
     // card under the answer bubble (create / send-to-manager / dismiss).
     // deno-lint-ignore no-explicit-any

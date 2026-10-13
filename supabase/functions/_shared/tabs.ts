@@ -85,13 +85,16 @@ export async function listTabs(supa: Supa, spaceId: string, spaceType: string): 
       tabs.push({ id: r.id, title: r.title, icon: r.icon ?? '📁', isCustom: true, noteCount: 0 });
     }
   } catch { /* custom tabs degrade to built-ins */ }
-  // live note counts (the secret vault is excluded everywhere)
+  // live note counts (the secret vault is excluded everywhere).
+  // NOTE: notes has no deleted_at column — dropped in migration 0019;
+  // trashed notes are MOVED to trash_bin, so every row here is live and no
+  // liveness filter exists or is needed. Filtering on it errors (42703)
+  // and silently zeroes these counts — see the regression guard tests.
   try {
     const { data: notes } = await supa
       .from('notes')
       .select('tab_id')
       .eq('space_id', spaceId)
-      .is('deleted_at', null)
       .neq('tab_id', 'secret');
     const counts: Record<string, number> = {};
     for (const n of notes ?? []) {
@@ -119,7 +122,6 @@ export async function getTabNotes(
     .from('notes')
     .select('id, transcript, created_at')
     .eq('space_id', spaceId)
-    .is('deleted_at', null)
     .neq('tab_id', 'secret')
     .order('created_at', { ascending: false })
     .limit(lim);
@@ -129,7 +131,6 @@ export async function getTabNotes(
     .from('notes')
     .select('id', { count: 'exact', head: true })
     .eq('space_id', spaceId)
-    .is('deleted_at', null)
     .neq('tab_id', 'secret');
   cq = tabId === 'main' ? cq.is('tab_id', null) : cq.eq('tab_id', tabId);
   const [{ data }, { count }] = await Promise.all([q, cq]);

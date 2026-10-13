@@ -19,11 +19,14 @@
 // cron). Never callable from the client. Trigger: POST with empty body.
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
+import { timingSafeEqual } from '../_shared/edge-auth.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   loadFacts,
   upsertFacts,
   applyMemoryMaintenance,
+  planMemoryMaintenance,
+  listTrashedFacts,
   trashFact,
   purgeExpiredTrashedFacts,
   normAr,
@@ -61,12 +64,16 @@ Deno.serve(async (req) => {
     const auth = req.headers.get('Authorization') ?? '';
     const cronSecret = Deno.env.get('CRON_SECRET') ?? '';
     const cronHeader = req.headers.get('x-cron-secret') ?? '';
-    const okService = !!key && auth === `Bearer ${key}`;
-    const okCron = !!cronSecret && cronHeader === cronSecret;
+    const okService = !!key && timingSafeEqual(auth, `Bearer ${key}`);
+    const okCron = !!cronSecret && timingSafeEqual(cronHeader, cronSecret);
     if (!okService && !okCron) throw new Error('forbidden');
 
     const supa = createClient(Deno.env.get('SUPABASE_URL')!, key);
     const ai = aiConfig();
+    // D2 (spec §6.3): ?dry_run=1 computes the full report — including
+    // the would-flag / would-merge / would-purge sets — without a
+    // single write (no model call, no trash, no purge).
+    const dryRun = new URL(req.url).searchParams.get('dry_run') === '1';
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -81,7 +88,7 @@ Deno.serve(async (req) => {
       .limit(2000);
     const userIds = [...new Set((recent ?? []).map((r: any) => r.created_by).filter(Boolean))];
 
-    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, duplicate_candidates: 0, rescored: 0, review_flagged: 0, trash_purged: 0 };
+    const report: Record<string, any> = { users: userIds.length, episodes: 0, merged: 0, duplicate_candidates: 0, rescored: 0, review_flagged: 0, trash_purged: 0, dry_run: dryRun };
 
     for (const uid of userIds) {
       // private space of this user
@@ -98,7 +105,7 @@ Deno.serve(async (req) => {
         .order('created_at')
         .limit(40);
       const texts = (notes ?? []).map((n: any) => String(n.transcript ?? '').slice(0, 200)).filter((s: string) => s.trim());
-      if (texts.length > 0) {
+      if (texts.length > 0 && !dryRun) {
         try {
           const summary = await callModel(ai, EPISODE_SYSTEM, texts.join('\n'));
           if (summary && summary !== 'NOTHING' && summary.length > 20) {
@@ -131,7 +138,8 @@ Deno.serve(async (req) => {
           const sameKey = String(drop.meta?.mkey ?? '') !== '' && drop.meta?.mkey === keep.meta?.mkey;
           const within24h = Math.abs(new Date(keep.created_at).getTime() - new Date(drop.created_at).getTime()) <= 24 * 3600 * 1000;
           if (sameKey && within24h) {
-            if (await trashFact(supa, drop, 'duplicate_retry')) report.merged++;
+            if (dryRun) report.merged++;
+            else if (await trashFact(supa, drop, 'duplicate_retry')) report.merged++;
           } else {
             report.duplicate_candidates++;
           }
@@ -142,15 +150,40 @@ Deno.serve(async (req) => {
       }
 
       // 3) visibility decay + review flagging (spec §3): metadata only.
-      const m = await applyMemoryMaintenance(supa, pid);
-      report.rescored += m.rescored;
-      report.review_flagged += m.review_flagged;
+      if (dryRun) {
+        const plan = planMemoryMaintenance(facts, new Date());
+        report.rescored += plan.rescore.length;
+        report.review_flagged += plan.flagReview.length;
+      } else {
+        const m = await applyMemoryMaintenance(supa, pid);
+        report.rescored += m.rescored;
+        report.review_flagged += m.review_flagged;
+      }
 
       // 4) trash auto-purge (decision #6): ONLY memory rows the user already
       // trashed whose 30-day recovery window expired. The engine's single
       // sanctioned delete; live memories are never touched.
-      report.trash_purged += await purgeExpiredTrashedFacts(supa, pid);
+      if (dryRun) {
+        const trashedRows = await listTrashedFacts(supa, pid);
+        const cutoff = Date.now() - 30 * 86400000;
+        report.trash_purged += trashedRows.filter((t: any) => {
+          const at = Date.parse(String(t.meta?.trashed_at ?? ''));
+          return Number.isFinite(at) && at < cutoff;
+        }).length;
+      } else {
+        report.trash_purged += await purgeExpiredTrashedFacts(supa, pid);
+      }
     }
+
+    // D2 (spec §6.3): every run's report lands in ops_events so the
+    // admin dashboard can show last-run counts. Best-effort.
+    try {
+      await supa.from('ops_events').insert({
+        kind: dryRun ? 'memory.consolidate.dry_run' : 'memory.consolidate',
+        ok: true,
+        meta: report,
+      });
+    } catch { /* the report still returns to the caller */ }
 
     return new Response(JSON.stringify(report), { headers: { ...cors, 'Content-Type': 'application/json' } });
   } catch (e) {

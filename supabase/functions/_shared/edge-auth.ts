@@ -47,6 +47,20 @@ export function adminClient() {
 }
 
 /**
+ * Constant-time string equality for secret comparisons (F-SEC-04):
+ * never returns early on a mismatched character, so response timing
+ * cannot leak how much of the secret an attacker guessed. A length
+ * mismatch still fails fast — standard practice, since the length of
+ * a server-side secret is not itself sensitive here.
+ */
+export function timingSafeEqual(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
  * True when the call comes from another edge function (or cron) bearing the
  * shared internal secret. Compares in constant time to avoid leaking the
  * secret's prefix through timing.
@@ -54,10 +68,7 @@ export function adminClient() {
 export function isInternal(req: Request): boolean {
   const secret = Deno.env.get('INTERNAL_FN_SECRET') ?? '';
   const got = req.headers.get('x-internal-secret') ?? '';
-  if (!secret || !got || got.length !== secret.length) return false;
-  let diff = 0;
-  for (let i = 0; i < secret.length; i++) diff |= secret.charCodeAt(i) ^ got.charCodeAt(i);
-  return diff === 0;
+  return timingSafeEqual(got, secret);
 }
 
 /** Headers every service-to-service edge call must send. */

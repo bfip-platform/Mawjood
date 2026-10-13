@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Image,
   I18nManager,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -37,6 +38,7 @@ import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import AuthScreen from '../components/AuthScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
+import { parseDeepLink } from '../lib/deeplinks';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
 import { useTheme } from '../lib/theme';
 import { SearchBar } from '../lib/SearchBar';
@@ -95,8 +97,10 @@ import {
   loadMemoryFacts,
   upsertMemoryFact,
   formatMemorySaved,
+  scanMemoryMaintenance,
   type MemoryClient,
   type MemoryFact,
+  type MemoryMaintenanceScan,
 } from '../lib/userMemory';
 import {
   parseTimelineQuery,
@@ -637,6 +641,23 @@ export default function HomeScreen() {
   const [joinCode, setJoinCode] = useState('');
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  // D5 T-D5-2: deep links — fail-closed allowlist (lib/deeplinks). The
+  // only external intent is a family-join code, which lands in the
+  // existing join modal for the user's own confirmation tap; anything
+  // unrecognized is ignored entirely.
+  useEffect(() => {
+    const handle = (raw: string | null) => {
+      const intent = parseDeepLink(raw);
+      if (intent?.kind === 'join-family') {
+        setJoinCode(intent.code);
+        setJoinError(null);
+        setJoinOpen(true);
+      }
+    };
+    Linking.getInitialURL().then(handle).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handle(e.url));
+    return () => sub.remove();
+  }, []);
   // ── multi-family: slots (paid hook), switcher, paywall ──
   const [familySlots, setFamilySlots] = useState(1);
   const [paywallOpen, setPaywallOpen] = useState(false);
@@ -647,6 +668,31 @@ export default function HomeScreen() {
   // ── side menu (drawer) ──
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // D5 T-D5-4: in-app support (inside the existing Profile surface — no
+  // new navigation destination, Decision #12). The message is text the
+  // user deliberately writes for the team; it rides the existing
+  // report-error channel (sanitized server-side) with context 'support'.
+  const [supportText, setSupportText] = useState('');
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [supportMsg, setSupportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const sendSupport = useCallback(async () => {
+    const msg = supportText.trim();
+    if (!msg || supportBusy) return;
+    setSupportBusy(true);
+    setSupportMsg(null);
+    try {
+      const { error } = await supabase.functions.invoke('report-error', {
+        body: { message: msg.slice(0, 300), context: 'support' },
+      });
+      if (error) throw error;
+      setSupportText('');
+      setSupportMsg({ text: t('supportSent'), ok: true });
+    } catch {
+      setSupportMsg({ text: t('supportFailed'), ok: false });
+    } finally {
+      setSupportBusy(false);
+    }
+  }, [supportText, supportBusy]);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [memberSince, setMemberSince] = useState<string | null>(null);
@@ -1880,6 +1926,13 @@ export default function HomeScreen() {
         setView('chat');
         setIsAnonymous(false);
         setAuthState('signed-out');
+        // D6 review N1: clear the maintenance scan so a second user in
+        // the same session never sees the first user's counts (and gets
+        // their own scan). The setters are declared later in this
+        // component; this handler only runs after render completes.
+        setMaintScan(null);
+        setMaintDismissed(false);
+        maintScanDoneRef.current = false;
       } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
         // magic-link return, or anonymous → permanent upgrade
         boot();
@@ -2611,7 +2664,20 @@ export default function HomeScreen() {
       listMemoryItems: async (sid: string) =>
         (await engine.listItems(sid)).filter((i) => i.kind === 'memory' && i.status === 'open'),
       deleteMemoryItem: async (id: string) => {
-        const { error } = await supabase.from('items').delete().eq('id', id);
+        // D2 (spec §1 contract): a saved memory is NEVER hard-deleted
+        // from the client — replacing a restated fact sends the old row
+        // to trash (recoverable for the retention window; only the
+        // engine's trash purge may ever delete it). listMemoryItems
+        // filters status='open', so the flow is unchanged.
+        const { data: row } = await supabase.from('items').select('meta').eq('id', id).maybeSingle();
+        const { error } = await supabase.from('items').update({
+          status: 'trashed',
+          meta: {
+            ...((row as any)?.meta ?? {}),
+            trashed_at: new Date().toISOString(),
+            trash_reason: 'replaced_by_restatement',
+          },
+        }).eq('id', id);
         if (error) throw error;
       },
       createMemoryItem: async (input) => {
@@ -2641,6 +2707,30 @@ export default function HomeScreen() {
       return [];
     }
   }, [spaceIdByType, memoryClient]);
+
+  // ── D6 T-D6-1: memory-maintenance surfacing. A read-only scan of the
+  // private space (once per session) feeds a dismissible banner; acting
+  // on it happens in chat through the confirmation rails — this surface
+  // never writes or deletes anything.
+  const [maintScan, setMaintScan] = useState<MemoryMaintenanceScan | null>(null);
+  const [maintDismissed, setMaintDismissed] = useState(false);
+  const maintScanDoneRef = useRef(false);
+  useEffect(() => {
+    if (authState !== 'signed-in' || maintScanDoneRef.current) return;
+    (async () => {
+      try {
+        const pid = spaceIdByType('private');
+        if (!pid) return;
+        const rows = await memoryClient.listMemoryItems(pid);
+        setMaintScan(scanMemoryMaintenance(rows));
+        // Mark done only AFTER a successful scan (review N2) — a
+        // transient failure must not suppress the banner all session.
+        maintScanDoneRef.current = true;
+      } catch {
+        /* surfacing is best-effort — silence is the failure mode */
+      }
+    })();
+  }, [authState, spaceIdByType, memoryClient]);
 
   const maybeMemory = useCallback(
     async (text: string, noteId?: string): Promise<boolean> => {
@@ -3946,7 +4036,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Pressable onPress={openMenu} style={styles.iconBtn}>
+          <Pressable onPress={openMenu} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t('a11yMenu')}>
             <Text style={styles.iconBtnText}>☰</Text>
           </Pressable>
           <View>
@@ -3954,12 +4044,17 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>Lost it? Mawjood.</Text>
           </View>
         </View>
-        <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>🧪</Text>
-        </Pressable>
+        {/* F-COM-09 (D4 T-D4-6): the demo-seed panel is a DEV tool — it
+            must never ship to production users. __DEV__ is false in
+            release builds, so the button and panel vanish there. */}
+        {__DEV__ && (
+          <Pressable onPress={() => setShowDemo((v) => !v)} style={styles.iconBtn}>
+            <Text style={styles.iconBtnText}>🧪</Text>
+          </Pressable>
+        )}
       </View>
 
-      {showDemo && (
+      {__DEV__ && showDemo && (
         <View style={styles.demoPanel}>
           <Text style={styles.demoTitle}>{t('demoTitle')}</Text>
           <View style={styles.demoRow}>
@@ -3981,6 +4076,8 @@ export default function HomeScreen() {
           onPress={() => setView('chat')}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
           testID="tab-home"
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === 'chat' }}
         >
           <Text style={[styles.tabText, view === 'chat' && styles.tabTextActive]}>
             {t('tabHome')}
@@ -3992,6 +4089,8 @@ export default function HomeScreen() {
             onPress={() => openSpace(t)}
             style={[styles.tab, view === t && styles.tabActive]}
             testID={`tab-space-${t}`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === t }}
           >
             <Text style={[styles.tabText, view === t && styles.tabTextActive]}>
               {SPACE_SHORT[t]}
@@ -4032,6 +4131,33 @@ export default function HomeScreen() {
       {isAnonymous && upgradeSent && (
         <View style={styles.upgradeBanner}>
           <Text style={styles.upgradeText}>{t('confirmEmailSent')}</Text>
+        </View>
+      )}
+
+      {/* ── D6 T-D6-1: memory maintenance surfacing (read-only scan;
+          the review itself happens in chat via the confirmation rails) ── */}
+      {maintScan && !maintDismissed && (maintScan.duplicateGroups > 0 || maintScan.reviewFlagged > 0) && (
+        <View style={styles.upgradeBanner}>
+          <Text style={styles.upgradeText}>
+            {tx('maintBanner', { dups: maintScan.duplicateGroups, review: maintScan.reviewFlagged })}
+          </Text>
+          <View style={styles.upgradeRow}>
+            <Pressable
+              onPress={() => { setMaintDismissed(true); onSendText(t('maintAsk')); }}
+              style={styles.upgradeBtn}
+              accessibilityRole="button"
+            >
+              <Text style={styles.upgradeBtnText}>{t('maintAsk')}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setMaintDismissed(true)}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('maintDismiss')}
+            >
+              <Text style={styles.ghostBtnText}>{t('maintDismiss')}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -4479,6 +4605,32 @@ export default function HomeScreen() {
                 </>
               ) : null}
 
+              {/* ── D5 T-D5-4: help & support (existing Profile surface) ── */}
+              <Text style={styles.sectionHeader}>{t('supportSection')}</Text>
+              <Text style={styles.fieldHint}>{t('supportHint')}</Text>
+              <TextInput
+                style={[styles.fieldInput, { textAlign: ta(), minHeight: 64 }]}
+                value={supportText}
+                onChangeText={(v) => { setSupportText(v); setSupportMsg(null); }}
+                placeholder={t('supportPlaceholder')}
+                placeholderTextColor={P.faint2}
+                multiline
+                maxLength={300}
+                accessibilityLabel={t('supportSection')}
+              />
+              {supportMsg ? (
+                <Text style={supportMsg.ok ? styles.fieldOk : styles.fieldError}>{supportMsg.text}</Text>
+              ) : null}
+              <Pressable
+                onPress={sendSupport}
+                disabled={supportBusy || !supportText.trim()}
+                style={[styles.primaryBtn, (supportBusy || !supportText.trim()) && styles.primaryBtnDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={t('supportSend')}
+              >
+                <Text style={styles.primaryBtnText}>{supportBusy ? t('supportSending') : t('supportSend')}</Text>
+              </Pressable>
+
               <Pressable onPress={() => setProfileOpen(false)} style={styles.ghostBtn}>
                 <Text style={styles.ghostBtnText}>{t('close')}</Text>
               </Pressable>
@@ -4569,7 +4721,7 @@ export default function HomeScreen() {
             <View style={styles.inputRow}>
               {/* WhatsApp-style composer: camera inside the box, mic/send beside it */}
               <View style={styles.composerBox}>
-                <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8}>
+                <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
                 <TextInput
@@ -4590,6 +4742,9 @@ export default function HomeScreen() {
               <Pressable
                 onPress={textNote.trim() && !isRecording ? () => onSendText() : onRecordPress}
                 disabled={saving || savingText || asking}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: saving || savingText || asking }}
+                accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
@@ -5277,7 +5432,7 @@ export default function HomeScreen() {
             {isRecording ? <Text style={styles.timer}>🔴 {fmtTime(duration)}</Text> : null}
             <View style={styles.inputRow}>
               <View style={styles.composerBox}>
-                <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8}>
+                <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
                 <TextInput
@@ -5295,6 +5450,9 @@ export default function HomeScreen() {
                   secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress
                 }
                 disabled={secretSaving}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: secretSaving }}
+                accessibilityLabel={isRecording ? t('a11yStopRecording') : secretDraft.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
