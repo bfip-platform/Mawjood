@@ -1813,6 +1813,50 @@ describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
   });
 });
 
+describe('Launch readiness PR-A — 18+ age gate (Decision #5)', () => {
+  const boundary = (ageOn, isAdult, parseBirthDate) => {
+    const on = new Date('2026-10-12T12:00:00Z');
+    assert.equal(ageOn('2008-10-12', on), 18, 'turns 18 ON the birthday');
+    assert.equal(isAdult('2008-10-12', on), true);
+    assert.equal(ageOn('2008-10-13', on), 17, 'one day short is still 17');
+    assert.equal(isAdult('2008-10-13', on), false);
+    assert.equal(ageOn('1990-01-01', on), 36);
+    // Feb-29 births: older on Mar 1 in non-leap years, not on Feb 28.
+    assert.equal(ageOn('2008-02-29', new Date('2026-02-28T12:00:00Z')), 17);
+    assert.equal(ageOn('2008-02-29', new Date('2026-03-01T12:00:00Z')), 18);
+    // Undeclared / invalid -> null age, never adult.
+    for (const bad of [null, undefined, '', 'abc', '2008-13-01', '2008-02-30', '12-10-2008', 20081012]) {
+      assert.equal(parseBirthDate(bad), null, `${String(bad)} must not parse`);
+      assert.equal(ageOn(bad, on), null);
+      assert.equal(isAdult(bad, on), false);
+    }
+    assert.equal(parseBirthDate(' 1990-05-17 '), '1990-05-17', 'surrounding space tolerated');
+  };
+
+  it('edge _shared/age.ts: boundary math is exact', async () => {
+    const { ageOn, isAdult, parseBirthDate } = await import('../functions/_shared/age.ts');
+    boundary(ageOn, isAdult, parseBirthDate);
+  });
+
+  it('voice-engine age.ts: IDENTICAL math (the two implementations cannot drift)', async () => {
+    const { ageOn, isAdult, parseBirthDate } = await import('../../packages/voice-engine/src/age.ts');
+    boundary(ageOn, isAdult, parseBirthDate);
+  });
+
+  it('GUARD: migration 0045 + chat gate + app gate are all wired', () => {
+    const mig = readFileSync(new URL('../migrations/0045_profiles_birth_date.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('birth_date date'), 'migration adds the column');
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("kind: 'age_gate.blocked'") && chat.includes('isAdult(bd)'), 'chat refuses missing/under-18 declarations before model paths');
+    const gateAt = chat.indexOf('age_gate.blocked');
+    const spendAt = chat.indexOf('const spend = await checkSpendCap');
+    assert.ok(gateAt !== -1 && spendAt !== -1 && gateAt < spendAt, 'the age gate runs BEFORE the spend pre-check');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes("ageStatus === 'needed'") && app.includes("ageStatus === 'blocked'"), 'app renders both gate screens');
+    assert.ok(app.includes('setMyBirthDate'), 'app persists the declaration through the engine');
+  });
+});
+
 describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
   const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
 

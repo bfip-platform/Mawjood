@@ -136,6 +136,26 @@ async function browserSession(page) {
 // user but are not testing the magic-link flow itself (test 1 owns that).
 // This avoids GoTrue's per-IP email rate limits, which throttled the 2nd+
 // magic-link emails when every test did its own UI login.
+
+// 🔞 Age gate (PR-A, Decision #5): a user without a declared adult
+// birth date lands on the DOB declaration screen, NOT the chat home.
+// Complete it when present; no-op when the profile already declares
+// an adult DOB (returning test users). Waits for whichever surface
+// resolves first — the gate input or the chat composer.
+async function completeAgeGateIfPresent(page, dob = '1990-05-17') {
+  const dobInput = page.getByPlaceholder('YYYY-MM-DD');
+  const composer = page.getByPlaceholder(/Write a note or question|اكتب ملاحظة/);
+  await Promise.race([
+    dobInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {}),
+    composer.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {}),
+  ]);
+  if (await dobInput.isVisible().catch(() => false)) {
+    await dobInput.fill(dob);
+    await page.getByText(/^Confirm$|^تأكيد$/).click();
+    await expect(dobInput).toBeHidden({ timeout: 15000 });
+  }
+}
+
 async function signInWithPassword(page, email, password = 'e2e-test-pass-123') {
   const admin = sbAdmin();
   // idempotent: ignore "already exists"
@@ -160,6 +180,7 @@ async function signInWithPassword(page, email, password = 'e2e-test-pass-123') {
   await page.reload();
   // signed in: AuthScreen gone
   await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 15000 });
+  await completeAgeGateIfPresent(page);
   return session;
 }
 
@@ -169,6 +190,8 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
   const email = `e2e-a-${Date.now()}@example.com`;
   const { session } = await signInViaMagicLink(page, email);
   expect(session.user.email).toBe(email);
+  // 🔞 first-run: the 18+ declaration gate comes BEFORE the chat home
+  await completeAgeGateIfPresent(page);
   // chat home renders (placeholder from i18n, English default in test env)
   await expect(
     page.getByPlaceholder(/Write a note or question|اكتب ملاحظة/),
