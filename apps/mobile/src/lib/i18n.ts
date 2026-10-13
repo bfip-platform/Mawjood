@@ -486,6 +486,7 @@ const ar = {
   smartHint: 'قول "ضيفهم" وبضيفهم لقائمة جديدة 👍',
   smartNone: 'ما لقطت إيقاع شراء واضح بعد — كل ما بتسجلوا مشتريات أكتر بصير أذكى 🧠',
   smartAdded: '✅ ضفتهم لقائمة "{title}": {items}',
+  offlinePending: '⏳ {n} تغييرات بانتظار المزامنة',
   smartListTitle: '🛒 تسوق ذكي',
 };
 
@@ -958,6 +959,7 @@ const en: Record<keyof typeof ar, string> = {
   smartHint: 'Say "add them" and I\'ll start a new list 👍',
   smartNone: 'No clear buying rhythm yet — the more you log, the smarter I get 🧠',
   smartAdded: '✅ Added them to "{title}": {items}',
+  offlinePending: '⏳ {n} changes waiting to sync',
   smartListTitle: '🛒 Smart shopping',
 };
 

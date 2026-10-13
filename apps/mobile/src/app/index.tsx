@@ -629,6 +629,14 @@ export default function HomeScreen() {
 
   // ── Auth: real accounts + family invites ──
   const [authState, setAuthState] = useState<'loading' | 'signed-out' | 'signed-in'>('loading');
+  // 📥 offline outbox depth for the drawer indicator (PR-B wiring).
+  const [pendingSync, setPendingSync] = useState(0);
+  const refreshPendingSync = useCallback(async () => {
+    try {
+      const ops = (await engine.offlineSync?.pending()) ?? [];
+      setPendingSync(ops.length);
+    } catch { /* indicator is best-effort */ }
+  }, []);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [upgradeEmail, setUpgradeEmail] = useState('');
   const [upgradeSent, setUpgradeSent] = useState(false);
@@ -816,7 +824,7 @@ export default function HomeScreen() {
 
   const refreshItems = useCallback(async (spaceId: string) => {
     try {
-      const items = await engine.listItems(spaceId);
+      const { items } = await engine.listItemsCached(spaceId);
       const grouped: Record<string, Item[]> = {};
       for (const it of items) {
         if (!it.note_id) continue;
@@ -1828,6 +1836,8 @@ export default function HomeScreen() {
         .catch(() => {});
       setSpaces(await engine.ensureDefaultSpaces(user.id));
       setAuthState('signed-in');
+      // 📥 replay queued offline creates from a previous session
+      void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
       // custom-tab free-tier cap (future paid plans raise it)
       engine
         .getCustomTabLimit(user.id)
@@ -2084,6 +2094,10 @@ export default function HomeScreen() {
   // starts. Tapping "new chat" archives immediately — same as ChatGPT.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        // 📥 back online/foreground: replay anything the outbox queued
+        void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
+      }
       if (s === 'background') {
         backgroundedAtRef.current = Date.now();
         saveDraft(messagesRef.current, sessionIdRef.current);
@@ -2115,13 +2129,14 @@ export default function HomeScreen() {
       const asg = parseAssignment(text);
       if (!asg) return;
       try {
-        const it = await engine.createItem({
+        const { item: it } = await engine.createItemOfflineFirst({
           spaceId,
           kind: 'task',
           title: asg.task,
           assignedTo: asg.name,
           userId: uid,
         });
+        void refreshPendingSync();
         setTasks((prev) => [it, ...prev]);
         pushMsg('app', tx('taskAssigned', { name: asg.name, task: asg.task }));
         engine
@@ -2260,13 +2275,14 @@ export default function HomeScreen() {
           try {
             const famId = spaceIdByType('family') ?? spaceIdByType('private');
             if (!famId) return false;
-            await engine.createItem({
+            await engine.createItemOfflineFirst({
               spaceId: famId,
               kind: 'place',
               title: session.item,
               details: text,
               userId,
             });
+            void refreshPendingSync();
             await dropNote();
             activeSearchRef.current = null;
             const msg = formatPlaceSaved(session.item, text);
@@ -2681,7 +2697,7 @@ export default function HomeScreen() {
         if (error) throw error;
       },
       createMemoryItem: async (input) => {
-        await engine.createItem({
+        await engine.createItemOfflineFirst({
           spaceId: input.spaceId,
           kind: 'memory',
           title: input.title,
@@ -2803,7 +2819,7 @@ export default function HomeScreen() {
       try {
         const pid = spaceIdByType('private') ?? spaceIdByType('family');
         if (!pid) return;
-        await engine.createItem({
+        await engine.createItemOfflineFirst({
           spaceId: pid,
           kind: 'feedback',
           title: rating === 'up' ? '👍 جواب عجبني' : '👎 جواب ما عجبني',
@@ -4184,6 +4200,11 @@ export default function HomeScreen() {
                 <Text style={[styles.menuBadge, { textAlign: ta() }]}>
                   {isAnonymous ? t('trialBadge') : t('permAccountBadge')}
                 </Text>
+                {pendingSync > 0 ? (
+                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
+                    {tx('offlinePending', { n: String(pendingSync) })}
+                  </Text>
+                ) : null}
               </View>
             </View>
 

@@ -1813,6 +1813,30 @@ describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
   });
 });
 
+describe('Launch readiness PR-B — offline layer wired into the app', () => {
+  it('GUARD: the shared engine singleton enables the offline layer over AsyncStorage', () => {
+    const lib = readFileSync(new URL('../../apps/mobile/src/lib/engine.ts', import.meta.url), 'utf8');
+    assert.ok(lib.includes('engine.enableOffline(asyncStorageKV)'), 'offline layer is enabled at construction');
+    assert.ok(lib.includes('@react-native-async-storage/async-storage'), 'KV is AsyncStorage-backed (survives restarts)');
+  });
+
+  it('GUARD: app create/read paths are offline-first; outbox flushes on foreground + sign-in', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(!app.includes('engine.createItem('), 'no direct online-only createItem call remains in the app');
+    assert.ok((app.match(/engine\.createItemOfflineFirst\(/g) ?? []).length >= 4, 'all four direct-create sites are offline-first');
+    assert.ok(app.includes('engine.listItemsCached(spaceId)'), 'the items refresh reads through the cache');
+    assert.ok(app.includes("s === 'active'") && app.includes('engine.flushOutbox()'), 'foreground flush is wired');
+    assert.ok(app.includes('pendingSync > 0') && app.includes("tx('offlinePending'"), 'the drawer shows the queued-sync indicator');
+    // review N1: the INDIRECT create paths (watch / expense helpers)
+    // are offline-first too — no createItem( survives in the helpers
+    for (const lib of ['watch', 'expenses']) {
+      const src = readFileSync(new URL(`../../apps/mobile/src/lib/${lib}.ts`, import.meta.url), 'utf8');
+      assert.ok(!src.includes('.createItem('), `${lib} helper creates via the offline-first surface`);
+      assert.ok(src.includes('createItemOfflineFirst'), `${lib} helper is offline-first`);
+    }
+  });
+});
+
 describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
   const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
 
