@@ -12,7 +12,7 @@ Was: UNKNOWN (BLOCKER). Now established from primary evidence (2026-10-12):
 - **The two D7 ADOPT targets have NO release runs at all and are therefore NOT published:** `@bfip-platform/ai-provider-core`, `@bfip-platform/ops-telemetry-core`.
 - The Mawjood connector token cannot even list org packages (403 — no `read:packages` scope): registry *read* auth for Mawjood-side consumption is also an owner/infra provisioning item.
 
-**Blocker (owner/infra, roadmap §276 "registry-auth is owner/infra"):** publish the two target cores (factory release workflow, owner-dispatched) + provision a read token if edge-side consumption will pull from the registry. Until then, T-D7-3/T-D7-4 cannot start — consuming an unpublished package would require vendoring/forking, which the roadmap forbids ("factory-side (no fork)").
+**Blocker (owner/infra, roadmap §276 "registry-auth is owner/infra"):** publish the two target cores (factory release workflow, owner-dispatched) + provision a read token if edge-side consumption will pull from the registry. Until then, T-D7-3/T-D7-4 cannot start — consuming an unpublished package would require vendoring/forking, which the factory governance model forbids (consumption is from the registry, not source imports; the roadmap’s review model likewise assumes no fork).
 
 ## 2. ai-provider-core — Decision #9 gates, pre-evaluated from source (T-D7-2)
 
@@ -26,11 +26,11 @@ Evaluated against the factory source (`packages/ai-provider-core`, local tree) a
 
 ## 3. ops-telemetry-core ADOPT (T-D7-4)
 
-Same blocker (unpublished). Mawjood-side readiness is good: D3 already aligned the in-tree telemetry (`_shared/log.ts` hard rule, the D3 janitor allowlist, the Sentry scrubber), so the eventual ADOPT is an adapter swap, not a redesign.
+Same blocker (unpublished). Mawjood-side readiness is good: D3 already aligned the in-tree telemetry (`_shared/log.ts` hard rule, the D3 janitor allowlist and Sentry scrubber (on the D3 stage branches, PR #23)), so the eventual ADOPT is an adapter swap, not a redesign.
 
 ## 4. Rate-limit convergence (T-D7-5) — assessment, no code change needed
 
-Bidirectional by design and already partially converged: Mawjood's `_shared/rate-limit.ts` (Supabase-backed store) is the piece the factory's rate-limit core lacks (D0 finding) — the convergence direction is Mawjood → factory (an upstream proposal owned by the factory program), while factory-side semantics (window shapes) already match Mawjood's usage on 8+ functions. No Mawjood change is required or made; the proposal travels with the factory program, not this repo.
+Bidirectional by design and already partially converged: Mawjood's `_shared/rate-limit.ts` (Supabase-backed store) is the piece the factory's rate-limit core lacks (D0 finding) — the convergence direction is Mawjood → factory (an upstream proposal owned by the factory program), while factory-side semantics (window shapes) already match Mawjood's usage on 8 functions. No Mawjood change is required or made; the proposal travels with the factory program, not this repo.
 
 ## 5. vault-crypto ADAPT (T-D7-6) — DEFER recommended (owner sign-off requested)
 
