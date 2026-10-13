@@ -95,8 +95,10 @@ import {
   loadMemoryFacts,
   upsertMemoryFact,
   formatMemorySaved,
+  scanMemoryMaintenance,
   type MemoryClient,
   type MemoryFact,
+  type MemoryMaintenanceScan,
 } from '../lib/userMemory';
 import {
   parseTimelineQuery,
@@ -2642,6 +2644,28 @@ export default function HomeScreen() {
     }
   }, [spaceIdByType, memoryClient]);
 
+  // ── D6 T-D6-1: memory-maintenance surfacing. A read-only scan of the
+  // private space (once per session) feeds a dismissible banner; acting
+  // on it happens in chat through the confirmation rails — this surface
+  // never writes or deletes anything.
+  const [maintScan, setMaintScan] = useState<MemoryMaintenanceScan | null>(null);
+  const [maintDismissed, setMaintDismissed] = useState(false);
+  const maintScanDoneRef = useRef(false);
+  useEffect(() => {
+    if (authState !== 'signed-in' || maintScanDoneRef.current) return;
+    maintScanDoneRef.current = true;
+    (async () => {
+      try {
+        const pid = spaceIdByType('private');
+        if (!pid) return;
+        const rows = await memoryClient.listMemoryItems(pid);
+        setMaintScan(scanMemoryMaintenance(rows));
+      } catch {
+        /* surfacing is best-effort — silence is the failure mode */
+      }
+    })();
+  }, [authState, spaceIdByType, memoryClient]);
+
   const maybeMemory = useCallback(
     async (text: string, noteId?: string): Promise<boolean> => {
       if (!userId) return false;
@@ -4032,6 +4056,33 @@ export default function HomeScreen() {
       {isAnonymous && upgradeSent && (
         <View style={styles.upgradeBanner}>
           <Text style={styles.upgradeText}>{t('confirmEmailSent')}</Text>
+        </View>
+      )}
+
+      {/* ── D6 T-D6-1: memory maintenance surfacing (read-only scan;
+          the review itself happens in chat via the confirmation rails) ── */}
+      {maintScan && !maintDismissed && (maintScan.duplicateGroups > 0 || maintScan.reviewFlagged > 0) && (
+        <View style={styles.upgradeBanner}>
+          <Text style={styles.upgradeText}>
+            {tx('maintBanner', { dups: maintScan.duplicateGroups, review: maintScan.reviewFlagged })}
+          </Text>
+          <View style={styles.upgradeRow}>
+            <Pressable
+              onPress={() => { setMaintDismissed(true); onSendText(t('maintAsk')); }}
+              style={styles.upgradeBtn}
+              accessibilityRole="button"
+            >
+              <Text style={styles.upgradeBtnText}>{t('maintAsk')}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setMaintDismissed(true)}
+              style={styles.ghostBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('maintDismiss')}
+            >
+              <Text style={styles.ghostBtnText}>{t('maintDismiss')}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
