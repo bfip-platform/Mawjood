@@ -1214,6 +1214,41 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
   });
 });
 
+describe('Launch readiness PR-D — LOW findings closure (F-INT-05/07)', () => {
+  it('chainToExtract retries with backoff and surfaces FINAL failure (never swallows silently)', async () => {
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    const { chainToExtract } = await import('../functions/_shared/extract-chain.ts');
+    let calls = 0;
+    const alwaysFail = async () => { calls++; return { ok: false, status: 500 }; };
+    let failedNote = null;
+    const ok = await chainToExtract('note-1', async (nid) => { failedNote = nid; }, alwaysFail);
+    assert.equal(ok, false);
+    assert.equal(calls, 3, 'three attempts before giving up');
+    assert.equal(failedNote, 'note-1', 'final failure is surfaced to the caller logger');
+    // succeeds on the second attempt -> true, no failure callback
+    let calls2 = 0; let failed2 = false;
+    const flaky = async () => { calls2++; return { ok: calls2 >= 2, status: calls2 >= 2 ? 200 : 503 }; };
+    const ok2 = await chainToExtract('note-2', async () => { failed2 = true; }, flaky);
+    assert.equal(ok2, true);
+    assert.equal(calls2, 2);
+    assert.equal(failed2, false);
+  });
+
+  it('GUARD: transcribe/chat chain via the retried helper and ops-log final failures', () => {
+    for (const fn of ['transcribe', 'chat']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('chainToExtract'), `${fn} uses the retried chaining helper`);
+      assert.ok(src.includes('extract.chain_failed'), `${fn} ops-logs final chain failures`);
+    }
+  });
+
+  it('GUARD: admin-stats has NO row-limit truncation left (F-INT-05)', () => {
+    const src = readFileSync(new URL('../functions/admin-stats/index.ts', import.meta.url), 'utf8');
+    assert.ok(!src.includes('.limit('), 'every aggregate is paginated or exact-counted');
+    assert.ok(src.includes('fetchAll'), 'the pagination helper is present');
+  });
+});
+
 describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
   it('timingSafeEqual: exact match only, length- and content-sensitive', async () => {
     const { timingSafeEqual } = await import('../functions/_shared/edge-auth.ts');
