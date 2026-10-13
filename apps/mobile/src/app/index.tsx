@@ -1835,7 +1835,12 @@ export default function HomeScreen() {
           const bd = p?.birth_date ?? null;
           setAgeStatus(bd ? (isAdult(bd) ? 'adult' : 'blocked') : 'needed');
         })
-        .catch(() => {});
+        .catch(() => {
+          // 🔞 fail CLOSED to the declaration screen, never to a stuck
+          // 'checking' spinner: a failed profile fetch must not
+          // deadlock sign-in (the declaration save retries the write).
+          setAgeStatus('needed');
+        });
       setSpaces(await engine.ensureDefaultSpaces(user.id));
       setAuthState('signed-in');
       // custom-tab free-tier cap (future paid plans raise it)
