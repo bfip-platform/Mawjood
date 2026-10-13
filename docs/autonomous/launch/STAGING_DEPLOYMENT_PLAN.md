@@ -104,7 +104,7 @@ Owner-set on the scratch project:
 
 | Name | Purpose | Staging note |
 |---|---|---|
-| `OPENAI_API_KEY` | Primary provider (gpt-5-mini chat, gpt-4o-mini vision) | Setting this selects the OpenAI provider (`aiConfig()`); the live-E2E runs against it |
+| `OPENAI_API_KEY` | Primary provider (gpt-5-mini chat, gpt-4o-mini vision) | Setting this selects the OpenAI provider (`aiConfig()`); the live-E2E runs against it. **Use a DEDICATED staging key — do not reuse the production key value** (see `OPENAI_INTEGRATION_AUDIT.md`) |
 | `GROQ_API_KEY` | Transcription (whisper-large-v3-turbo); Groq-only fallback provider | Optional but recommended — matches the production configuration's shape |
 | `INTERNAL_FN_SECRET` | Internal function-to-function auth | Fresh value for staging; do NOT copy production's |
 | `CRON_SECRET` | Cron/notify invocation guard | Fresh value for staging |
