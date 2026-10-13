@@ -1827,6 +1827,13 @@ describe('Launch readiness PR-B — offline layer wired into the app', () => {
     assert.ok(app.includes('engine.listItemsCached(spaceId)'), 'the items refresh reads through the cache');
     assert.ok(app.includes("s === 'active'") && app.includes('engine.flushOutbox()'), 'foreground flush is wired');
     assert.ok(app.includes('pendingSync > 0') && app.includes("tx('offlinePending'"), 'the drawer shows the queued-sync indicator');
+    // review N1: the INDIRECT create paths (watch / expense helpers)
+    // are offline-first too — no createItem( survives in the helpers
+    for (const lib of ['watch', 'expenses']) {
+      const src = readFileSync(new URL(`../../apps/mobile/src/lib/${lib}.ts`, import.meta.url), 'utf8');
+      assert.ok(!src.includes('.createItem('), `${lib} helper creates via the offline-first surface`);
+      assert.ok(src.includes('createItemOfflineFirst'), `${lib} helper is offline-first`);
+    }
   });
 });
 
