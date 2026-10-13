@@ -9,7 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
-import { checkSpendCap, spendCapMessage, estimateWorstCaseChargeUsd } from '../_shared/spend.ts';
+import { checkSpendCap, chargeModelCall, spendCapMessage } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 
 const cors = {
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     }
 
     // 💸 daily AI spend cap (T-D2-4, fail-closed).
-    const spend = await checkSpendCap(admin, userId, undefined, estimateWorstCaseChargeUsd('gpt-5-mini', 1, 1200));
+    const spend = await checkSpendCap(admin, userId); // pre-check; binding charge per attempt below
     if (!spend.allowed) {
       await logOps(admin, {
         user_id: userId, request_id: requestId,
@@ -137,6 +137,19 @@ Deno.serve(async (req) => {
     let aiRes: Response | null = null;
     let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
+      // 💸 atomic per-attempt charge (0044): the payload string IS the
+      // measured input (system + context + question, fully assembled).
+      const gate = await chargeModelCall(admin, userId, { inputChars: payload.length, maxOutTokens: 1200 });
+      if (!gate.allowed) {
+        await logOps(admin, {
+          user_id: userId, request_id: requestId,
+          kind: 'spend_cap.hit', ok: false, detail: `ask:charge_denied:${gate.reason ?? 'cap_reached'}`,
+        });
+        return new Response(JSON.stringify({ error: spendCapMessage(true) }), {
+          status: 429,
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
       aiRes = await fetch(`${ai.base}/chat/completions`, {
         method: 'POST',
         headers: {

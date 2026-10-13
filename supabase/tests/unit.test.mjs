@@ -997,17 +997,25 @@ describe('Stage 1b — route/classify auth gate (D0 MEDIUM: public AI-spend orac
 });
 
 describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
-  // INTEGRATION (owner audit): the gate reads/charges the atomic
-  // ledger via RPC (migration 0044) — this fake emulates exactly that:
-  // a per-user total mutated ONLY by charge_ai_spend.
+  // OWNER AUDIT (final correction): authorization + charge are ONE
+  // atomic RPC — try_charge_ai_spend applies the charge only when the
+  // resulting total stays <= cap, else returns NULL. This fake mirrors
+  // the SQL contract exactly (incl. invalid-input rejection).
   const ledgerSupa = (initial = 0, failAt = null) => {
-    const state = { total: initial };
+    const state = { total: initial, rpcCalls: 0 };
     return {
       _state: state,
       rpc: async (fn, args) => {
+        state.rpcCalls++;
         if (failAt === fn) return { data: null, error: { message: 'rpc down' } };
         if (fn === 'ai_spend_total') return { data: state.total, error: null };
-        if (fn === 'charge_ai_spend') { state.total += Math.max(0, args.p_amount); return { data: state.total, error: null }; }
+        if (fn === 'try_charge_ai_spend') {
+          const { p_amount, p_cap } = args;
+          if (p_amount == null || p_amount < 0 || p_cap == null || p_cap <= 0 || p_amount > p_cap) return { data: null, error: null };
+          if (state.total + p_amount > p_cap) return { data: null, error: null };
+          state.total += p_amount;
+          return { data: state.total, error: null };
+        }
         return { data: null, error: { message: 'unknown fn' } };
       },
     };
@@ -1036,51 +1044,77 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     assert.equal(parseSpendCapUsd('5', '1'), null);
   });
 
-  it('allows under the cap (pre-charging the ledger), denies at/over it', async () => {
-    const { checkSpendCap, estimateWorstCaseChargeUsd } = await import('../functions/_shared/spend.ts');
-    const charge = estimateWorstCaseChargeUsd('gpt-5-mini', 1, 2000);
-    const s1 = ledgerSupa(0);
-    assert.equal((await checkSpendCap(s1, 'u1', 2.0, charge)).allowed, true);
-    assert.ok(Math.abs(s1._state.total - charge) < 1e-9, 'the worst-case charge landed atomically in the ledger');
-    const denied = await checkSpendCap(ledgerSupa(2.5), 'u1', 2.0, charge);
+  it('pre-check is READ-ONLY: allows under the cap without charging; denies at/over it', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const s1 = ledgerSupa(0.5);
+    assert.equal((await checkSpendCap(s1, 'u1', 2.0)).allowed, true);
+    assert.equal(s1._state.total, 0.5, 'the pre-check never charges — enforcement is per-attempt');
+    const denied = await checkSpendCap(ledgerSupa(2.0), 'u1', 2.0);
     assert.equal(denied.allowed, false);
     assert.equal(denied.reason, 'cap_reached');
   });
 
-  it('AUDIT REGRESSION: the gate binds regardless of ai_events volume (no 5,000-row truncation)', async () => {
-    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
-    // A user whose LEDGER is at the cap is denied even with an EMPTY
-    // events table — the gate no longer sums events at all.
-    const r = await checkSpendCap(ledgerSupa(2.0), 'heavy-user', 2.0, 0.01);
+  it('chargeModelCall: ONE atomic authorize+charge — applies under the cap, NULL at the boundary denies', async () => {
+    const { chargeModelCall, estimateCallChargeUsd } = await import('../functions/_shared/spend.ts');
+    const spec = { inputChars: 4000, maxOutTokens: 2000 };
+    const charge = estimateCallChargeUsd(spec);
+    assert.ok(Number.isFinite(charge) && charge > 0);
+    const s1 = ledgerSupa(2.0 - charge / 2); // headroom for only half a charge
+    const r1 = await chargeModelCall(s1, 'u1', spec, 2.0);
+    assert.equal(r1.allowed, false, 'a charge that would cross the cap is rejected atomically');
+    assert.equal(r1.reason, 'cap_reached');
+    assert.equal(s1._state.total, 2.0 - charge / 2, 'a rejected charge leaves the ledger untouched');
+    const s2 = ledgerSupa(0);
+    const r2 = await chargeModelCall(s2, 'u1', spec, 2.0);
+    assert.equal(r2.allowed, true);
+    assert.ok(Math.abs(s2._state.total - charge) < 1e-9, 'an accepted charge lands exactly once');
+  });
+
+  it('charge math is a MEASURED bound: chars x token factor at the max rate + hard output cap + image bound', async () => {
+    const { estimateCallChargeUsd, estimateCostUsd, TOKENS_PER_CHAR_BOUND, IMAGE_TOKEN_BOUND, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    const c = estimateCallChargeUsd({ inputChars: 10000, maxOutTokens: 2000 });
+    const expect = estimateCostUsd('gpt-5-mini', Math.ceil(10000 * TOKENS_PER_CHAR_BOUND), 2000);
+    assert.ok(Math.abs(c - expect) < 1e-12);
+    const withImg = estimateCallChargeUsd({ inputChars: 0, maxOutTokens: 400, images: 1 });
+    assert.ok(Math.abs(withImg - estimateCostUsd('gpt-5-mini', IMAGE_TOKEN_BOUND, 400)) < 1e-12);
+    assert.ok(FALLBACK_RATE.input >= 0.25 && FALLBACK_RATE.output >= 2.0, 'priced at the priciest rate in the table');
+  });
+
+  it('FAIL-CLOSED: invalid estimates deny WITHOUT any RPC (missing/NaN/negative)', async () => {
+    const { chargeModelCall } = await import('../functions/_shared/spend.ts');
+    for (const spec of [{ inputChars: NaN, maxOutTokens: 100 }, { inputChars: -5, maxOutTokens: 100 }, { inputChars: 100, maxOutTokens: 0 }, { inputChars: 100 }, {}, null]) {
+      const s1 = ledgerSupa(0);
+      const r = await chargeModelCall(s1, 'u1', spec, 2.0);
+      assert.equal(r.allowed, false, `spec ${JSON.stringify(spec)} must deny`);
+      assert.equal(r.reason, 'check_failed');
+      assert.equal(s1._state.rpcCalls, 0, 'no RPC is attempted for an invalid estimate');
+    }
+  });
+
+  it('FAIL-CLOSED: pre-check read error denies; charge RPC error denies; thrown RPC denies', async () => {
+    const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
+    assert.equal((await checkSpendCap(ledgerSupa(0, 'ai_spend_total'), 'u1', 2.0)).reason, 'check_failed');
+    const rc = await chargeModelCall(ledgerSupa(0, 'try_charge_ai_spend'), 'u1', { inputChars: 100, maxOutTokens: 100 }, 2.0);
+    assert.equal(rc.allowed, false); assert.equal(rc.reason, 'check_failed');
+    const rt = await chargeModelCall(throwingSupa(), 'u1', { inputChars: 100, maxOutTokens: 100 }, 2.0);
+    assert.equal(rt.allowed, false); assert.equal(rt.reason, 'check_failed');
+    const rp = await checkSpendCap(throwingSupa(), 'u1', 2.0);
+    assert.equal(rp.allowed, false); assert.equal(rp.reason, 'check_failed');
+  });
+
+  it('kill-switch (cap=null) allows pre-check AND charges without touching the ledger', async () => {
+    const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
+    assert.equal((await checkSpendCap(throwingSupa(), 'u1', null)).allowed, true);
+    assert.equal((await chargeModelCall(throwingSupa(), 'u1', { inputChars: 100, maxOutTokens: 100 }, null)).allowed, true);
+  });
+
+  it('AUDIT REGRESSION: enforcement binds regardless of ai_events volume (the gate never sums events)', async () => {
+    const { chargeModelCall } = await import('../functions/_shared/spend.ts');
+    // Ledger at cap + empty events table -> still denied. The pre-0044
+    // gate would have summed zero events and allowed.
+    const r = await chargeModelCall(ledgerSupa(2.0), 'heavy-user', { inputChars: 10, maxOutTokens: 10 }, 2.0);
     assert.equal(r.allowed, false);
     assert.equal(r.reason, 'cap_reached');
-  });
-
-  it('FAIL-CLOSED: a ledger read error denies the AI call', async () => {
-    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
-    const r = await checkSpendCap(ledgerSupa(0, 'ai_spend_total'), 'u1', 2.0);
-    assert.equal(r.allowed, false);
-    assert.equal(r.reason, 'check_failed');
-  });
-
-  it('FAIL-CLOSED: a ledger CHARGE error also denies (charge state unknown = conservative)', async () => {
-    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
-    const r = await checkSpendCap(ledgerSupa(0, 'charge_ai_spend'), 'u1', 2.0);
-    assert.equal(r.allowed, false);
-    assert.equal(r.reason, 'check_failed');
-  });
-
-  it('FAIL-CLOSED (R2): a THROWN rpc failure also denies — never propagates', async () => {
-    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
-    const r = await checkSpendCap(throwingSupa(), 'u1', 2.0);
-    assert.equal(r.allowed, false);
-    assert.equal(r.reason, 'check_failed');
-  });
-
-  it('kill-switch (cap=null) allows without touching the ledger', async () => {
-    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
-    const r = await checkSpendCap(throwingSupa(), 'u1', null);
-    assert.equal(r.allowed, true);
   });
 
   it('sumSpendFromEvents paginates FULLY: exact total past the old 5,000-row limit (PostgREST page cap emulated)', async () => {
@@ -1113,17 +1147,20 @@ describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
     const ask = readFileSync(new URL('../functions/ask/index.ts', import.meta.url), 'utf8');
     const extract = readFileSync(new URL('../functions/extract/index.ts', import.meta.url), 'utf8');
-    assert.ok(chat.includes('checkSpendCap(admin, userId, undefined, estimateWorstCaseChargeUsd('), 'chat computes the cap once per request with a worst-case charge');
-    assert.ok(chat.includes('spend.allowed && !inVault'), 'chat split call is gated');
-    assert.ok(chat.includes("kind: 'spend_cap.hit'") && chat.includes('spendCapMessage(ar)'),
-      'chat agent loop returns the graceful cap answer');
-    assert.ok(ask.includes('checkSpendCap(admin, userId, undefined, estimateWorstCaseChargeUsd('), 'ask is gated');
-    assert.ok(extract.includes('checkSpendCap(supabase, rlUser, undefined, estimateWorstCaseChargeUsd('), 'extract is gated against the note owner');
+    assert.ok(chat.includes('checkSpendCap(admin, userId)'), 'chat pre-checks the ledger once per request');
+    assert.ok(chat.includes('chargeModelCall(gate.supa, gate.userId'), 'chat charges per attempt inside its model wrappers');
+    assert.ok(chat.includes('__SPEND_CAP__') && chat.includes('spendCapMessage(ar)'),
+      'a denied charge surfaces the graceful cap answer');
+    assert.ok(chat.includes('spend.allowed && !inVault'), 'chat split path still respects the pre-check');
+    assert.ok(ask.includes('checkSpendCap(admin, userId)') && ask.includes('chargeModelCall(admin, userId'), 'ask pre-checks and charges per attempt');
+    assert.ok(extract.includes('checkSpendCap(supabase, rlUser)') && extract.includes('chargeModelCall(supabase, rlUser'), 'extract pre-checks and charges per attempt against the note owner');
+    const learn = readFileSync(new URL('../functions/memory-learn/index.ts', import.meta.url), 'utf8');
+    assert.ok(learn.includes('chargeModelCall'), 'memory-learn (an AI path) is charged too');
   });
 
   it('R1: the vision path is gated AND metered (it was neither)', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
-    const visionAt = chat.indexOf('const vres = await callVision');
+    const visionAt = chat.indexOf('vres = await callVision');
     assert.ok(visionAt !== -1, 'vision call site present');
     const before = chat.slice(Math.max(0, visionAt - 1500), visionAt);
     assert.ok(before.includes('if (!spend.allowed)'), 'vision model call must sit behind the spend gate');

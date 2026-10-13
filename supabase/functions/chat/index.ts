@@ -6,7 +6,7 @@ import { listTabs, getTabNotes, resolveTabName } from '../_shared/tabs.ts';
 import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
 import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
-import { checkSpendCap, spendCapMessage, estimateWorstCaseChargeUsd } from '../_shared/spend.ts';
+import { checkSpendCap, chargeModelCall, payloadChars, spendCapMessage } from '../_shared/spend.ts';
 import { retryDelayMs, sleep } from '../_shared/backoff.ts';
 import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
@@ -890,7 +890,15 @@ async function runTool(supa: Supa, userId: string, spaceByType: Record<string, s
 }
 
 // deno-lint-ignore no-explicit-any
-async function callModel(ai: any, messages: any[], retries = 2): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
+async function callModel(ai: any, messages: any[], retries = 2, gate?: { supa: any; userId: string }): Promise<{ text: string; usage: any; status: number; latencyMs: number }> {
+  // 💸 atomic per-attempt charge (0044): measured payload bound, priced
+  // at the table's max rate. A denial throws __SPEND_CAP__ — callers
+  // map it to the graceful cap answer. Retries re-enter and re-charge:
+  // a retry is a real second provider request.
+  if (gate) {
+    const g = await chargeModelCall(gate.supa, gate.userId, { inputChars: payloadChars(messages), maxOutTokens: 2000 });
+    if (!g.allowed) throw new Error('__SPEND_CAP__');
+  }
   const t0 = Date.now();
   const aiRes = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
@@ -906,7 +914,7 @@ async function callModel(ai: any, messages: any[], retries = 2): Promise<{ text:
     // backoff + jitter (F-SEC-08), then surface a clean error
     if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
       await sleep(retryDelayMs(2 - retries));
-      return callModel(ai, messages, retries - 1);
+      return callModel(ai, messages, retries - 1, gate);
     }
     // honest errors: only 429/503 are rate limits — anything else (e.g. a 400
     // bad-parameter) must not masquerade as one.
@@ -927,7 +935,7 @@ async function callModel(ai: any, messages: any[], retries = 2): Promise<{ text:
 // meters it into ai_events for the spend cap), or null when the vision
 // call fails (caller then answers gracefully instead of guessing blind).
 // deno-lint-ignore no-explicit-any
-async function callVision(ai: any, imageUrl: string, question: string, retries = 2): Promise<{ text: string; usage: any } | null> {
+async function callVision(ai: any, imageUrl: string, question: string, retries = 2, gate?: { supa: any; userId: string }): Promise<{ text: string; usage: any } | null> {
   const sys = `You are Mawjood, a warm assistant inside a family memory app. The user attached a photo and asks about it. Look at the image carefully and answer their question directly in the SAME language they used (Levantine Arabic if they write Arabic). Be concise: 1-3 sentences. Describe only what you actually see — never invent details, people, or text that is not in the image. Reply with ONLY the answer, no preamble.`;
   try {
     // deno-lint-ignore no-explicit-any
@@ -941,6 +949,13 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
         ],
       },
     ];
+    // 💸 atomic per-attempt charge (0044): text payload measured, the
+    // image priced at the flat IMAGE_TOKEN_BOUND. Denial throws
+    // __SPEND_CAP__ — the call site maps it to the cap answer.
+    if (gate) {
+      const g = await chargeModelCall(gate.supa, gate.userId, { inputChars: payloadChars(vmsgs), maxOutTokens: 400, images: 1 });
+      if (!g.allowed) throw new Error('__SPEND_CAP__');
+    }
     // deno-lint-ignore no-explicit-any
     const vbody: Record<string, any> = { model: ai.visionModel, max_tokens: 400, messages: vmsgs };
     if (ai.supportsTemperature) vbody.temperature = 0.2;
@@ -952,7 +967,7 @@ async function callVision(ai: any, imageUrl: string, question: string, retries =
     if (!aiRes.ok) {
       if (retries > 0 && (aiRes.status === 429 || aiRes.status === 503)) {
         await sleep(retryDelayMs(2 - retries));
-        return callVision(ai, imageUrl, question, retries - 1);
+        return callVision(ai, imageUrl, question, retries - 1, gate);
       }
       return null;
     }
@@ -1053,7 +1068,7 @@ Deno.serve(async (req) => {
     // request and enforced ONLY on the model-bound paths below (vision
     // call, split call, agent loop). Deterministic fast paths never
     // consult it.
-    const spend = await checkSpendCap(admin, userId, undefined, estimateWorstCaseChargeUsd('gpt-5-mini', 7, 2000)); // worst case: vision+split+5 agent calls
+    const spend = await checkSpendCap(admin, userId); // read-only pre-check; the binding charge happens per attempt inside callModel/callVision
 
     // 🧠 governance: verify the vault session (ownership proof, server-side)
     // + load the admin's rulebook. A failed vault check is a hard 403.
@@ -1281,7 +1296,21 @@ Deno.serve(async (req) => {
         });
       }
       const vStart = Date.now();
-      const vres = await callVision(ai, photoUrl, t);
+      let vres: { text: string; usage: any } | null = null;
+      try {
+        vres = await callVision(ai, photoUrl, t, 2, { supa: admin, userId });
+      } catch (e) {
+        if (e instanceof Error && e.message === '__SPEND_CAP__') {
+          await logOps(admin, {
+            user_id: userId, request_id: requestId,
+            kind: 'spend_cap.hit', ok: false, detail: 'vision:charge_denied',
+          });
+          return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions: ['save_note'] }), {
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+        throw e;
+      }
       if (admin) {
         await logAi(admin, {
           user_id: userId, request_id: requestId, fn: 'chat',
@@ -1435,7 +1464,7 @@ Deno.serve(async (req) => {
         { role: 'system', content: SPLIT_SYSTEM },
         // deno-lint-ignore no-explicit-any
         { role: 'user', content: t } as any,
-      ]).catch(() => null);
+      ], 2, { supa: admin, userId }).catch(() => null);
       if (splitRes && admin) {
         await logAi(admin, {
           user_id: userId, request_id: requestId, fn: 'chat',
@@ -1541,7 +1570,21 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     let turnProposal: any = null;
     for (let step = 0; step < 5; step++) {
-      const res = await callModel(ai, messages);
+      let res: { text: string; usage: any; status: number; latencyMs: number };
+      try {
+        res = await callModel(ai, messages, 2, { supa: admin, userId });
+      } catch (e) {
+        if (e instanceof Error && e.message === '__SPEND_CAP__') {
+          await logOps(admin, {
+            user_id: userId, request_id: requestId,
+            kind: 'spend_cap.hit', ok: false, detail: 'agent:charge_denied',
+          });
+          return new Response(JSON.stringify({ answer: spendCapMessage(ar), actions }), {
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+        throw e;
+      }
       if (admin) {
         await logAi(admin, {
           user_id: userId, request_id: requestId, fn: 'chat',

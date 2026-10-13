@@ -192,9 +192,9 @@ export const ASSERTIONS = [
   },
   {
     name: 'ai spend ledger is atomic + service-role only (0044)',
-    sql: `select (has_function_privilege('service_role', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
-                 and not has_function_privilege('authenticated', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
-                 and not has_function_privilege('anon', 'public.charge_ai_spend(uuid,date,numeric)', 'execute')
+    sql: `select (has_function_privilege('service_role', 'public.try_charge_ai_spend(uuid,date,numeric,numeric)', 'execute')
+                 and not has_function_privilege('authenticated', 'public.try_charge_ai_spend(uuid,date,numeric,numeric)', 'execute')
+                 and not has_function_privilege('anon', 'public.try_charge_ai_spend(uuid,date,numeric,numeric)', 'execute')
                  and (select relrowsecurity from pg_class where oid = 'public.ai_spend_daily'::regclass)) as ok`,
   }
 ];
