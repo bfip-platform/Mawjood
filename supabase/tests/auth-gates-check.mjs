@@ -38,11 +38,6 @@ const GATE_MARKERS = {
 // claiming to be public fails loudly.
 const ALLOW_PUBLIC = {
   'public-config': 'read-only remote-config (feature catalog + plan prices); no user data, no secrets, no writes',
-  // ⚠ stateless AI helpers: no DB, no secrets — but anonymous calls burn the
-  // server AI key's quota. Currently not invoked by the client; if that
-  // changes (or abuse appears), add a user-jwt gate.
-  classify: 'stateless text classifier, no DB/secrets (AI-quota burn risk documented)',
-  route: 'stateless input router, no DB/secrets (AI-quota burn risk documented)',
 };
 
 // Expected gate class(es) per function directory. Dual-gate functions
@@ -61,7 +56,9 @@ const MANIFEST = {
   // chat: user-jwt primary; isInternal() appears only for the eval_mode
   // impersonation override, which still requires eval_mode + a uuid-shaped id
   chat: ['user-jwt'],
-  classify: ['public'],
+  // Stage 1b (2026-10-12): the client DID start invoking these, so the
+  // documented trigger fired and both now carry the user-jwt gate.
+  classify: ['user-jwt'],
   extract: ['user-jwt', 'internal-secret'],
   'family-members': ['user-jwt'],
   'join-family': ['user-jwt'],
@@ -70,7 +67,10 @@ const MANIFEST = {
   notify: ['user-jwt', 'internal-secret'],
   'public-config': ['public'],
   'report-error': ['user-jwt'],
-  route: ['public'],
+  route: ['user-jwt'],
+  // telemetry-janitor: service_role Bearer or x-cron-secret only (same
+  // posture as memory-consolidate); never callable from the client.
+  'telemetry-janitor': ['cron-secret'],
   transcribe: ['user-jwt'],
   // vault-master: user JWT (getUser -> 401) for every action; management
   // actions additionally require the HMAC mgmt capability (VAULT_MGMT_SECRET)

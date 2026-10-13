@@ -45,7 +45,9 @@ const MIGRATION_TABLES = `t.tablename <> ALL(ARRAY['schema_migrations','supabase
 // user. All reads/writes go through audited edge functions using service_role
 // (which bypasses RLS): governance (ai_*), admin console (broadcasts,
 // promotions, subscription_*, feature_flags via the public-config fn),
-// and internal telemetry (ops_events, rate_limits). Verified: the mobile
+// and internal telemetry (ops_events, rate_limits). ai_spend_daily
+// (migration 0044) is the AI spend-cap ledger: edge functions read and
+// charge it through service-role-only RPCs; clients never touch it. Verified: the mobile
 // client never queries these tables directly (grep over apps/mobile/src).
 // Adding permissive policies here would WEAKEN security, so the audit
 // allowlists them instead of demanding policies.
@@ -53,7 +55,7 @@ const SYSTEM_TABLES = `t.tablename <> ALL(ARRAY[
   'ai_evals','ai_events','ai_governance','ai_governance_audit','pending_actions',
   'broadcasts','feature_flags','promotions','subscription_plans',
   'subscription_grants','user_subscriptions',
-  'ops_events','rate_limits'
+  'ops_events','rate_limits','ai_spend_daily'
 ])`;
 
 try {

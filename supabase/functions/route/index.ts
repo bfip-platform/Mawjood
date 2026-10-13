@@ -1,4 +1,7 @@
 import { aiConfig, chatBody } from '../_shared/ai.ts';
+import { authUserId, json401, adminClient } from '../_shared/edge-auth.ts';
+import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
+import { chargeModelCall, byteLen } from '../_shared/spend.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -71,6 +74,22 @@ Deno.serve(async (req) => {
     const { text, history } = await req.json();
     if (!text?.trim()) throw new Error('text is required');
     const t = text.slice(0, 500);
+
+    // ── authorization (Stage 1b — D0 MEDIUM) ──────────────────────
+    // Invoked only by the app with the caller's session. Without a user
+    // JWT this was a public AI-spend oracle: the published anon key
+    // alone reached the model. Anonymous-trial sessions carry a real
+    // JWT and keep working; the client falls back to local heuristics
+    // on 401/429.
+    const callerId = await authUserId(req);
+    if (!callerId) return json401();
+    const rl = await checkRateLimit(adminClient(), callerId, 'route');
+    if (!rl.allowed) {
+      return new Response(JSON.stringify({ error: rateLimitMessage(false) }), {
+        status: 429,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
     const hist: HistMsg[] = Array.isArray(history) ? history.slice(-6) : [];
 
     // instant layer
@@ -87,39 +106,49 @@ Deno.serve(async (req) => {
       const convo = hist
         .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.text}`)
         .join('\n');
-      const aiRes = await fetch(`${ai.base}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ai.key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(chatBody(ai, {
-          max_tokens: 200,
-          messages: [
-            { role: 'system', content: SYSTEM },
-            {
-              role: 'user',
-              content: `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`,
-            },
-          ],
-        })),
+      // 💸 atomic charge (0044), measured on the assembled payload. A
+      // denial skips the model call: routing falls back to the default
+      // space (the chat path re-routes with full context anyway).
+      const userContent = `Conversation:\n${convo || '(none)'}\n\nLast user message: ${t}\n\nReply with ONLY the JSON object.`;
+      const gate = await chargeModelCall(adminClient(), callerId, {
+        inputBytes: byteLen(SYSTEM) + byteLen(userContent),
+        maxOutTokens: 200,
       });
-      if (!aiRes.ok) {
-        const b = await aiRes.text();
-        throw new Error(`${ai.provider} ${aiRes.status}: ${b.slice(0, 120)}`);
-      }
-      const j = await aiRes.json();
-      const raw = (j.choices?.[0]?.message?.content ?? '').trim();
-      const clean = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '');
-      try {
-        const p = JSON.parse(clean);
-        if (['question', 'note', 'correction'].includes(p.action)) action = p.action;
-        if (['private', 'family', 'work'].includes(p.space_type)) space_type = p.space_type;
-      } catch {
-        const m = clean.match(/"(question|note|correction)"/);
-        if (m) action = m[1] as typeof action;
+      if (gate.allowed) {
+        const aiRes = await fetch(`${ai.base}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${ai.key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chatBody(ai, {
+            max_tokens: 200,
+            messages: [
+              { role: 'system', content: SYSTEM },
+              {
+                role: 'user',
+                content: userContent,
+              },
+            ],
+          })),
+        });
+        if (!aiRes.ok) {
+          const b = await aiRes.text();
+          throw new Error(`${ai.provider} ${aiRes.status}: ${b.slice(0, 120)}`);
+        }
+        const j = await aiRes.json();
+        const raw = (j.choices?.[0]?.message?.content ?? '').trim();
+        const clean = raw
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, '');
+        try {
+          const p = JSON.parse(clean);
+          if (['question', 'note', 'correction'].includes(p.action)) action = p.action;
+          if (['private', 'family', 'work'].includes(p.space_type)) space_type = p.space_type;
+        } catch {
+          const m = clean.match(/"(question|note|correction)"/);
+          if (m) action = m[1] as typeof action;
+        }
       }
     }
 

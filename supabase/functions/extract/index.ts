@@ -8,6 +8,7 @@
 
 import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
+import { checkSpendCap, chargeModelCall, spendCapMessage, byteLen } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import { sanitizeTimezone } from '../_shared/time.ts';
 import {
@@ -140,6 +141,19 @@ Deno.serve(async (req) => {
           headers: { ...cors, 'Content-Type': 'application/json' },
         });
       }
+      // 💸 daily AI spend cap (T-D2-4, fail-closed) — counts against the
+      // note owner, same as the rate limit above.
+      const spend = await checkSpendCap(supabase, rlUser); // pre-check; binding charge per attempt below
+      if (!spend.allowed) {
+        await logOps(supabase, {
+          user_id: rlUser, request_id: requestId,
+          kind: 'spend_cap.hit', ok: false, detail: spend.reason ?? 'cap_reached',
+        });
+        return new Response(JSON.stringify({ ok: false, error: spendCapMessage(true) }), {
+          status: 429,
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     const empty = { ok: true, items: [] };
@@ -179,6 +193,23 @@ Deno.serve(async (req) => {
     let aiRes: Response | null = null;
     let lastErr = '';
     for (let attempt = 0; attempt < 3; attempt++) {
+      // 💸 atomic per-attempt charge (0044), measured on the assembled
+      // system prompt + the note transcript. Denial stops extraction
+      // (the note stays intact and re-runnable) with the cap response.
+      const gate = await chargeModelCall(supabase, rlUser, {
+        inputBytes: byteLen(systemPrompt) + byteLen(String(note.transcript ?? '')),
+        maxOutTokens: 1200,
+      });
+      if (!gate.allowed) {
+        await logOps(supabase, {
+          user_id: rlUser, request_id: requestId,
+          kind: 'spend_cap.hit', ok: false, detail: `extract:charge_denied:${gate.reason ?? 'cap_reached'}`,
+        });
+        return new Response(JSON.stringify({ ok: false, error: spendCapMessage(true) }), {
+          status: 429,
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
       if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
       aiRes = await fetch(`${aiCfg.base}/chat/completions`, {
         method: 'POST',

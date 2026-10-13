@@ -270,6 +270,54 @@ export async function loadMemoryFacts(
     }));
 }
 
+/** Normalize a fact line for duplicate identity — mirrors the server
+ *  engine's normAr essentials (case, diacritics, hamza/ة/ى). */
+function normFactLine(s: string): string {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/[ً-ٰٟ]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[^ء-غف-يa-z0-9\s:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface MemoryMaintenanceScan {
+  /** groups of 2+ facts with identical normalized lines (distinct keys) */
+  duplicateGroups: number;
+  /** facts the gardener flagged review_candidate (metadata only) */
+  reviewFlagged: number;
+}
+
+/**
+ * Maintenance scan (D6 T-D6-1) — READ-ONLY surfacing data for the app:
+ * counts duplicate groups + gardener review flags over memory rows.
+ * It performs NO writes and NO deletions: acting on what it surfaces
+ * goes through chat (the merge/forget confirmation rails), never here.
+ * Same-key rows are excluded from duplicate groups — the upsert path
+ * owns those (and retry duplicates share a key by construction).
+ */
+export function scanMemoryMaintenance(
+  rows: { id: string; title: string; details: string | null; meta: any }[],
+): MemoryMaintenanceScan {
+  const byLine = new Map<string, Set<string>>();
+  let reviewFlagged = 0;
+  for (const r of rows) {
+    if (r.meta?.review_candidate === true) reviewFlagged++;
+    const line = normFactLine(`${r.title}: ${r.details ?? ''}`);
+    if (!line) continue;
+    const keys = byLine.get(line) ?? new Set<string>();
+    keys.add(String(r.meta?.mkey ?? r.id));
+    byLine.set(line, keys);
+  }
+  let duplicateGroups = 0;
+  for (const keys of byLine.values()) if (keys.size > 1) duplicateGroups++;
+  return { duplicateGroups, reviewFlagged };
+}
+
 /** Upsert by key: same key overwrites, never duplicates. */
 export async function upsertMemoryFact(
   client: MemoryClient,

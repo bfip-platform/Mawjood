@@ -13,6 +13,7 @@ import { aiConfig, chatBody } from '../_shared/ai.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { adminClient } from '../_shared/edge-auth.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
+import { chargeModelCall, byteLen } from '../_shared/spend.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import {
   learnSystem,
@@ -27,7 +28,16 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-async function callModel(ai: any, system: string, user: string): Promise<string> {
+async function callModel(ai: any, system: string, user: string, gate?: { supa: any; userId: string }): Promise<string> {
+  // 💸 atomic per-attempt charge (0044), measured on the assembled
+  // system + user payload. Denial throws __SPEND_CAP__ — the caller
+  // treats it as a silent skip (learning is best-effort by design).
+  if (gate) {
+    const g = await chargeModelCall(gate.supa, gate.userId, {
+      inputBytes: byteLen(system) + byteLen(user), maxOutTokens: 500,
+    });
+    if (!g.allowed) throw new Error('__SPEND_CAP__');
+  }
   const r = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
@@ -105,6 +115,7 @@ Deno.serve(async (req) => {
       ai,
       learnSystem(existing, ui_lang !== 'en'),
       `user: ${t}\nassistant: ${a}`,
+      { supa: admin, userId },
     );
     await logAi(admin, {
       user_id: userId, request_id: requestId, fn: 'memory-learn',

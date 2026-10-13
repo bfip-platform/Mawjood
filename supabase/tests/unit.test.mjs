@@ -12,7 +12,7 @@ import {
   SCENARIO_TABS,
 } from '../functions/_shared/routing.scenarios.ts';
 import { routeText } from '../functions/_shared/routing.ts';
-import { resolveTabName } from '../functions/_shared/tabs.ts';
+import { resolveTabName, listTabs, getTabNotes } from '../functions/_shared/tabs.ts';
 import {
   normAr,
   scoreFact,
@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -761,7 +761,12 @@ describe('D1 correction — confirmed forget (preview-only AI + user-sent code)'
 
   it('GUARD: governed executor fails closed on unknown action types (no delete-space fall-through)', () => {
     const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
-    assert.ok(chat.includes("return { error: 'unknown action_type' }"));
+    // PR-B/M4 restructure: the executor runs inside the atomic-claim
+    // try block, so the unknown-type branch ASSIGNS the error (the claim
+    // is then released and the error returned) instead of returning
+    // inline. The invariant is unchanged: unknown types error out and
+    // never fall through to a destructive executor.
+    assert.ok(chat.includes("res = { error: 'unknown action_type' }"));
     assert.ok(!/else res = await executeDeleteSpace/.test(chat),
       'executeDeleteSpace must never be a default branch');
   });
@@ -836,5 +841,1218 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('Post-D1 bugfix — notes.deleted_at stale filters (dropped in 0019)', () => {
+  it('GUARD: no function filters any query on deleted_at (the column is gone)', () => {
+    const root = new URL('../functions/', import.meta.url);
+    const files = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.ts')) files.push(p);
+      }
+    };
+    walk(root);
+    assert.ok(files.length > 10, 'guard must actually scan the functions tree');
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      assert.ok(!/\.(is|eq|filter|not|or)\(\s*['"][^'"]*deleted_at/.test(src),
+        `${f.pathname} filters on deleted_at — dropped by 0019; PostgREST errors 42703 and the read silently returns nothing`);
+    }
+  });
+
+  // Fake PostgREST over the CANONICAL schema: notes has no deleted_at, so a
+  // query filtering on it errors exactly like the real API (data: null,
+  // 42703). Before the fix, listTabs/getTabNotes hit that error and
+  // silently returned zeros/empties; the assertions below prove the reads
+  // now return real data through the same paths.
+  function fakeTabsSupa({ tabs = [], notes = [] }) {
+    function builder(table) {
+      const filters = [];
+      let countMode = false;
+      let limitN = null;
+      let orderCol = null;
+      const rows = table === 'notes' ? notes : tabs;
+      const b = {
+        select(_c, opts) { if (opts?.count) countMode = true; return b; },
+        eq(c, v) { filters.push(['eq', c, v]); return b; },
+        is(c, v) { filters.push(['is', c, v]); return b; },
+        neq(c, v) { filters.push(['neq', c, v]); return b; },
+        or() { return b; },
+        order(c) { orderCol = c; return b; },
+        limit(n) { limitN = n; return b; },
+        then: (resolve) => {
+          if (table === 'notes' && filters.some(([, c]) => c === 'deleted_at')) {
+            return resolve({ data: null, count: null, error: { code: '42703', message: 'column notes.deleted_at does not exist' } });
+          }
+          let out = rows.filter((r) => filters.every(([op, c, v]) =>
+            op === 'eq' ? r[c] === v : op === 'is' ? (v === null ? r[c] == null : r[c] === v) : r[c] !== v));
+          if (orderCol) out = [...out].sort((a, z) => (String(a[orderCol]) < String(z[orderCol]) ? 1 : -1));
+          if (countMode) return resolve({ data: null, count: out.length, error: null });
+          if (limitN) out = out.slice(0, limitN);
+          return resolve({ data: out, count: null, error: null });
+        },
+      };
+      return b;
+    }
+    return { from: (t) => builder(t) };
+  }
+
+  const seedNotes = [
+    { id: 'n1', space_id: 'S1', tab_id: null, transcript: 'passport is in the drawer', created_at: '2026-10-01T10:00:00Z' },
+    { id: 'n2', space_id: 'S1', tab_id: null, transcript: 'buy milk tomorrow', created_at: '2026-10-02T10:00:00Z' },
+    { id: 'n3', space_id: 'S1', tab_id: 'papers', transcript: 'passport renewal appointment', created_at: '2026-10-03T10:00:00Z' },
+    { id: 'n4', space_id: 'S1', tab_id: 'secret', transcript: 'vault note — must stay excluded', created_at: '2026-10-04T10:00:00Z' },
+  ];
+
+  it('listTabs returns REAL note counts (pre-fix: silently zeroed by the 42703 error)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const tabs = await listTabs(supa, 'S1', 'private');
+    assert.equal(tabs.find((t) => t.id === 'main').noteCount, 2);
+    assert.equal(tabs.find((t) => t.id === 'papers').noteCount, 1);
+  });
+
+  it('getTabNotes returns the tab notes + total (pre-fix: always empty)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const main = await getTabNotes(supa, 'S1', 'main');
+    assert.equal(main.totalCount, 2);
+    assert.deepEqual(main.notes.map((n) => n.id), ['n2', 'n1']); // newest first
+    const papers = await getTabNotes(supa, 'S1', 'papers');
+    assert.equal(papers.totalCount, 1);
+    assert.equal(papers.notes[0].id, 'n3');
+  });
+
+  it('the secret tab stays excluded from counts and reads (vault boundary preserved)', async () => {
+    const supa = fakeTabsSupa({ tabs: [], notes: seedNotes });
+    const tabs = await listTabs(supa, 'S1', 'private');
+    const total = tabs.reduce((a, t) => a + t.noteCount, 0);
+    assert.equal(total, 3, 'the secret note (n4) must never be counted');
+  });
+});
+describe('Stage 1 — photo isolation guard (D0 HIGH)', () => {
+  const ME = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const OTHER = 'bbbbbbbb-1111-2222-3333-444444444444';
+  const own = `https://proj.supabase.co/storage/v1/object/public/item-photos/${ME}/photo1.jpg`;
+  const foreign = `https://proj.supabase.co/storage/v1/object/public/item-photos/${OTHER}/secret.jpg`;
+
+  it('keeps the caller\'s OWN storage photo URL', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl(own, ME), own);
+  });
+
+  it('NEGATIVE: drops a FOREIGN user\'s storage photo URL (the planted-reference attack)', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl(foreign, ME), null);
+  });
+
+  it('keeps external (non-storage) https image URLs for the vision flow', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    const ext = 'https://example.com/some/image.png';
+    assert.equal(sanitizePhotoUrl(ext, ME), ext);
+  });
+
+  it('rejects non-https, non-strings, and traversal-shaped folders', async () => {
+    const { sanitizePhotoUrl } = await import('../functions/_shared/photo-guard.ts');
+    assert.equal(sanitizePhotoUrl('http://x/item-photos/' + ME + '/a.jpg', ME), null);
+    assert.equal(sanitizePhotoUrl(null, ME), null);
+    assert.equal(sanitizePhotoUrl(42, ME), null);
+    assert.equal(sanitizePhotoUrl(`https://p/storage/v1/object/public/item-photos/../${OTHER}/s.jpg`, ME), null);
+    assert.equal(sanitizePhotoUrl(`https://p/storage/v1/object/public/item-photos/%2e%2e/${OTHER}/s.jpg`, ME), null);
+  });
+
+  it('GUARD: chat wires the sanitizer after auth, before any photo use', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("sanitizePhotoUrl(photoUrl, userId)"),
+      'the handler must re-sanitize the client photo_url against the authenticated user');
+    assert.ok(chat.includes("from '../_shared/photo-guard.ts'"));
+  });
+});
+
+describe('Stage 1b — route/classify auth gate (D0 MEDIUM: public AI-spend oracle)', () => {
+  for (const fn of ['classify', 'route']) {
+    it(`${fn}: requires a user JWT and rate-limits BEFORE any model call`, () => {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes("from '../_shared/edge-auth.ts'") && src.includes('authUserId(req)'),
+        `${fn} must resolve the caller from the JWT`);
+      assert.ok(src.includes('if (!callerId) return json401();'),
+        `${fn} must 401 when no user is resolved`);
+      assert.ok(src.includes(`checkRateLimit(adminClient(), callerId, '${fn}')`),
+        `${fn} must rate-limit per user`);
+      const authAt = src.indexOf('authUserId(req)');
+      const aiAt = src.indexOf('chat/completions');
+      assert.ok(authAt !== -1 && aiAt !== -1 && authAt < aiAt,
+        `${fn}: the gate must precede the model fetch`);
+    });
+  }
+
+  it('auth-gates manifest no longer lists classify/route as public', () => {
+    const check = readFileSync(new URL('./auth-gates-check.mjs', import.meta.url), 'utf8');
+    assert.ok(check.includes("classify: ['user-jwt']") && check.includes("route: ['user-jwt']"));
+    assert.ok(!check.includes("'stateless text classifier'") && !check.includes("'stateless input router'"),
+      'the stale public exceptions (and their no-longer-true rationale) must be gone');
+  });
+});
+
+describe('T-D2-4 — per-user daily AI spend cap (F-SEC-03)', () => {
+  // OWNER AUDIT (final correction): authorization + charge are ONE
+  // atomic RPC — try_charge_ai_spend applies the charge only when the
+  // resulting total stays <= cap, else returns NULL. This fake mirrors
+  // the SQL contract exactly (incl. invalid-input rejection).
+  const ledgerSupa = (initial = 0, failAt = null) => {
+    const state = { total: initial, rpcCalls: 0 };
+    return {
+      _state: state,
+      rpc: async (fn, args) => {
+        state.rpcCalls++;
+        if (failAt === fn) return { data: null, error: { message: 'rpc down' } };
+        if (fn === 'ai_spend_total') return { data: state.total, error: null };
+        if (fn === 'try_charge_ai_spend') {
+          const { p_amount, p_cap } = args;
+          if (p_amount == null || p_amount < 0 || p_cap == null || p_cap <= 0 || p_amount > p_cap) return { data: null, error: null };
+          if (state.total + p_amount > p_cap) return { data: null, error: null };
+          state.total += p_amount;
+          return { data: state.total, error: null };
+        }
+        return { data: null, error: { message: 'unknown fn' } };
+      },
+    };
+  };
+  const throwingSupa = () => ({
+    rpc: () => { throw new Error('rpc exploded'); },
+  });
+
+  it('estimates cost from published rates; unknown models price at the premium fallback', async () => {
+    const { estimateCostUsd, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    // 1M in + 1M out on gpt-5-mini = 0.25 + 2.00
+    assert.equal(estimateCostUsd('gpt-5-mini', 1_000_000, 1_000_000), 2.25);
+    assert.equal(estimateCostUsd('gpt-4o-mini', 1_000_000, 0), 0.15);
+    assert.equal(estimateCostUsd('some-future-model', 1_000_000, 0), FALLBACK_RATE.input);
+    assert.equal(estimateCostUsd('gpt-5-mini', null, undefined), 0);
+    assert.equal(estimateCostUsd('gpt-5-mini', -5, -5), 0);
+    assert.ok(Number.isFinite(estimateCostUsd('gpt-5-mini', 'abc', {})), 'garbage token values never yield NaN');
+  });
+
+  it('parses cap config: default $2, env override, kill-switch disables', async () => {
+    const { parseSpendCapUsd } = await import('../functions/_shared/spend.ts');
+    assert.equal(parseSpendCapUsd(undefined, undefined), 2.0);
+    assert.equal(parseSpendCapUsd('0.50', undefined), 0.5);
+    assert.equal(parseSpendCapUsd('garbage', undefined), 2.0);
+    assert.equal(parseSpendCapUsd('-3', undefined), 2.0);
+    assert.equal(parseSpendCapUsd('5', '1'), null);
+  });
+
+  it('pre-check is READ-ONLY: allows under the cap without charging; denies at/over it', async () => {
+    const { checkSpendCap } = await import('../functions/_shared/spend.ts');
+    const s1 = ledgerSupa(0.5);
+    assert.equal((await checkSpendCap(s1, 'u1', 2.0)).allowed, true);
+    assert.equal(s1._state.total, 0.5, 'the pre-check never charges — enforcement is per-attempt');
+    const denied = await checkSpendCap(ledgerSupa(2.0), 'u1', 2.0);
+    assert.equal(denied.allowed, false);
+    assert.equal(denied.reason, 'cap_reached');
+  });
+
+  it('chargeModelCall: ONE atomic authorize+charge — applies under the cap, NULL at the boundary denies', async () => {
+    const { chargeModelCall, estimateCallChargeUsd } = await import('../functions/_shared/spend.ts');
+    const spec = { inputBytes: 4000, maxOutTokens: 2000 };
+    const charge = estimateCallChargeUsd(spec);
+    assert.ok(Number.isFinite(charge) && charge > 0);
+    const s1 = ledgerSupa(2.0 - charge / 2); // headroom for only half a charge
+    const r1 = await chargeModelCall(s1, 'u1', spec, 2.0);
+    assert.equal(r1.allowed, false, 'a charge that would cross the cap is rejected atomically');
+    assert.equal(r1.reason, 'cap_reached');
+    assert.equal(s1._state.total, 2.0 - charge / 2, 'a rejected charge leaves the ledger untouched');
+    const s2 = ledgerSupa(0);
+    const r2 = await chargeModelCall(s2, 'u1', spec, 2.0);
+    assert.equal(r2.allowed, true);
+    assert.ok(Math.abs(s2._state.total - charge) < 1e-9, 'an accepted charge lands exactly once');
+  });
+
+  it('charge math is a PROVEN bound: UTF-8 bytes (byte-level BPE) + envelope + image bound, at the derived max rate', async () => {
+    const { estimateCallChargeUsd, estimateCostUsd, ENVELOPE_TOKEN_ALLOWANCE, IMAGE_TOKEN_BOUND, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    const c = estimateCallChargeUsd({ inputBytes: 10000, maxOutTokens: 2000 });
+    const expect = estimateCostUsd('__fallback__', 10000 + ENVELOPE_TOKEN_ALLOWANCE, 2000);
+    assert.ok(Math.abs(c - expect) < 1e-12);
+    const withImg = estimateCallChargeUsd({ inputBytes: 0, maxOutTokens: 400, images: 1 });
+    assert.ok(Math.abs(withImg - estimateCostUsd('__fallback__', ENVELOPE_TOKEN_ALLOWANCE + IMAGE_TOKEN_BOUND, 400)) < 1e-12);
+    assert.ok(FALLBACK_RATE.input >= 0.8 && FALLBACK_RATE.output >= 4.0, 'priced at the component-wise table maximum (qwen rates dominate)');
+  });
+
+  it('NEGATIVE: FALLBACK_RATE dominates EVERY rate-table entry (a pricier future model cannot silently break the bound)', async () => {
+    const { MODEL_RATES_USD_PER_1M, FALLBACK_RATE } = await import('../functions/_shared/spend.ts');
+    for (const [model, r] of Object.entries(MODEL_RATES_USD_PER_1M)) {
+      assert.ok(FALLBACK_RATE.input >= r.input && FALLBACK_RATE.output >= r.output, `${model} exceeds the fallback rate`);
+    }
+    // The round-3 violation this pins: qwen output $4.00 > gpt-5-mini $2.00.
+    assert.ok(MODEL_RATES_USD_PER_1M['qwen/qwen3.8-27b'].output > MODEL_RATES_USD_PER_1M['gpt-5-mini'].output);
+  });
+
+  it('NEGATIVE: the byte bound cannot be undercut by dense tokenization (Arabic/emoji payloads measure in BYTES, not chars)', async () => {
+    const { byteLen, payloadBytes, estimateCallChargeUsd } = await import('../functions/_shared/spend.ts');
+    const ar = 'ذاكرة'; // 5 Arabic chars, 10 UTF-8 bytes
+    assert.equal(byteLen(ar), 10);
+    assert.equal(byteLen('🔥'), 4); // 1 visible char, 2 UTF-16 units, 4 bytes
+    assert.equal(payloadBytes([{ role: 'user', content: ar }]), 10);
+    // A char-based estimate would have charged ceil(6 x 0.75) = 5 tokens;
+    // the byte bound charges 10 — dense-script input can no longer slip
+    // under the reservation.
+    const charge = estimateCallChargeUsd({ inputBytes: byteLen(ar), maxOutTokens: 10 });
+    const charEra = (Math.ceil(5 * 0.75) + 96) * 0.8 / 1e6 + 10 * 4.0 / 1e6;
+    assert.ok(charge > charEra - 1e-12, 'byte-bound charge covers the old char-era underestimate');
+  });
+
+  it('NEGATIVE: IMAGE_TOKEN_BOUND covers the documented gpt-4o-mini worst case (2,833 + 8 tiles x 5,667 = 48,169)', async () => {
+    const { IMAGE_TOKEN_BOUND } = await import('../functions/_shared/spend.ts');
+    assert.ok(IMAGE_TOKEN_BOUND >= 48169, `bound ${IMAGE_TOKEN_BOUND} must cover the documented tile-algorithm worst case`);
+  });
+
+  it('FAIL-CLOSED: invalid estimates deny WITHOUT any RPC (missing/NaN/negative)', async () => {
+    const { chargeModelCall } = await import('../functions/_shared/spend.ts');
+    for (const spec of [{ inputBytes: NaN, maxOutTokens: 100 }, { inputBytes: -5, maxOutTokens: 100 }, { inputBytes: 100, maxOutTokens: 0 }, { inputBytes: 100 }, {}, null]) {
+      const s1 = ledgerSupa(0);
+      const r = await chargeModelCall(s1, 'u1', spec, 2.0);
+      assert.equal(r.allowed, false, `spec ${JSON.stringify(spec)} must deny`);
+      assert.equal(r.reason, 'check_failed');
+      assert.equal(s1._state.rpcCalls, 0, 'no RPC is attempted for an invalid estimate');
+    }
+  });
+
+  it('FAIL-CLOSED: pre-check read error denies; charge RPC error denies; thrown RPC denies', async () => {
+    const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
+    assert.equal((await checkSpendCap(ledgerSupa(0, 'ai_spend_total'), 'u1', 2.0)).reason, 'check_failed');
+    const rc = await chargeModelCall(ledgerSupa(0, 'try_charge_ai_spend'), 'u1', { inputBytes: 100, maxOutTokens: 100 }, 2.0);
+    assert.equal(rc.allowed, false); assert.equal(rc.reason, 'check_failed');
+    const rt = await chargeModelCall(throwingSupa(), 'u1', { inputBytes: 100, maxOutTokens: 100 }, 2.0);
+    assert.equal(rt.allowed, false); assert.equal(rt.reason, 'check_failed');
+    const rp = await checkSpendCap(throwingSupa(), 'u1', 2.0);
+    assert.equal(rp.allowed, false); assert.equal(rp.reason, 'check_failed');
+  });
+
+  it('kill-switch (cap=null) allows pre-check AND charges without touching the ledger', async () => {
+    const { checkSpendCap, chargeModelCall } = await import('../functions/_shared/spend.ts');
+    assert.equal((await checkSpendCap(throwingSupa(), 'u1', null)).allowed, true);
+    assert.equal((await chargeModelCall(throwingSupa(), 'u1', { inputBytes: 100, maxOutTokens: 100 }, null)).allowed, true);
+  });
+
+  it('AUDIT REGRESSION: enforcement binds regardless of ai_events volume (the gate never sums events)', async () => {
+    const { chargeModelCall } = await import('../functions/_shared/spend.ts');
+    // Ledger at cap + empty events table -> still denied. The pre-0044
+    // gate would have summed zero events and allowed.
+    const r = await chargeModelCall(ledgerSupa(2.0), 'heavy-user', { inputBytes: 10, maxOutTokens: 10 }, 2.0);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, 'cap_reached');
+  });
+
+  it('sumSpendFromEvents paginates FULLY: exact total past the old 5,000-row limit (PostgREST page cap emulated)', async () => {
+    const { sumSpendFromEvents, estimateCostUsd } = await import('../functions/_shared/spend.ts');
+    // 6,000 events; the fake honors PostgREST semantics: .range(a,b)
+    // returns at most the requested window, and any single response is
+    // capped at 1,000 rows — the old .limit(5000) read would have seen
+    // at most 1,000-5,000 of these rows and undercounted.
+    const rows = Array.from({ length: 6000 }, () => ({ model: 'gpt-4o-mini', prompt_tokens: 1000, completion_tokens: 0 }));
+    const pagedSupa = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            gte: () => ({
+              order: () => ({
+                range: async (a, b) => ({ data: rows.slice(a, Math.min(b + 1, a + 1000)), error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    };
+    const total = await sumSpendFromEvents(pagedSupa, 'u1');
+    const expected = 6000 * estimateCostUsd('gpt-4o-mini', 1000, 0);
+    assert.ok(Math.abs(total - expected) < 1e-6, `expected exact ${expected}, got ${total}`);
+    assert.ok(5000 * estimateCostUsd('gpt-4o-mini', 1000, 0) < total, 'the truncated read would have undercounted');
+  });
+
+  it('GUARD: chat/ask/extract enforce the cap on their model paths', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    const ask = readFileSync(new URL('../functions/ask/index.ts', import.meta.url), 'utf8');
+    const extract = readFileSync(new URL('../functions/extract/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes('checkSpendCap(admin, userId)'), 'chat pre-checks the ledger once per request');
+    assert.ok(chat.includes('chargeModelCall(gate.supa, gate.userId'), 'chat charges per attempt inside its model wrappers');
+    assert.ok(chat.includes('__SPEND_CAP__') && chat.includes('spendCapMessage(ar)'),
+      'a denied charge surfaces the graceful cap answer');
+    assert.ok(chat.includes('spend.allowed && !inVault'), 'chat split path still respects the pre-check');
+    assert.ok(ask.includes('checkSpendCap(admin, userId)') && ask.includes('chargeModelCall(admin, userId'), 'ask pre-checks and charges per attempt');
+    assert.ok(extract.includes('checkSpendCap(supabase, rlUser)') && extract.includes('chargeModelCall(supabase, rlUser'), 'extract pre-checks and charges per attempt against the note owner');
+    const learn = readFileSync(new URL('../functions/memory-learn/index.ts', import.meta.url), 'utf8');
+    assert.ok(learn.includes('chargeModelCall'), 'memory-learn (an AI path) is charged too');
+    // INVENTORY (owner correction round 2): EVERY edge function that
+    // calls a model endpoint charges the ledger — route, classify and
+    // memory-consolidate included. transcribe is the sole exclusion
+    // (per-audio-minute Whisper on the free tier, rate-limited, no
+    // token telemetry — disclosed in the audit register).
+    for (const fn of ['route', 'classify']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('chat/completions') && src.includes('chargeModelCall'), `${fn} charges its model call`);
+    }
+    const cons = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(cons.includes('chargeModelCall'), 'memory-consolidate charges its per-user episode call');
+    assert.ok(chat.includes("if (e instanceof Error && e.message === '__SPEND_CAP__') throw e;"),
+      'callVision rethrows cap denials instead of swallowing them as vision failures');
+  });
+
+  it('R1: the vision path is gated AND metered (it was neither)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    const visionAt = chat.indexOf('vres = await callVision');
+    assert.ok(visionAt !== -1, 'vision call site present');
+    const before = chat.slice(Math.max(0, visionAt - 1500), visionAt);
+    assert.ok(before.includes('if (!spend.allowed)'), 'vision model call must sit behind the spend gate');
+    assert.ok(before.includes("detail: `vision:"), 'vision denial is ops-logged as a spend_cap hit');
+    const after = chat.slice(visionAt, visionAt + 900);
+    assert.ok(after.includes('logAi(admin,') && after.includes('ai.visionModel') && after.includes('prompt_tokens'),
+      'vision calls are metered into ai_events with usage');
+    assert.ok(chat.includes('Promise<{ text: string; usage: any } | null>'),
+      'callVision returns usage for metering');
+  });
+});
+
+describe('PR-B hardening — F-SEC-04/05/06/07/08', () => {
+  it('timingSafeEqual: exact match only, length- and content-sensitive', async () => {
+    const { timingSafeEqual } = await import('../functions/_shared/edge-auth.ts');
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret-token'), true);
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret-tokem'), false);
+    assert.equal(timingSafeEqual('s3cret-token', 's3cret'), false);
+    assert.equal(timingSafeEqual('', ''), false);
+    assert.equal(timingSafeEqual('', 'x'), false);
+    assert.equal(timingSafeEqual('x', ''), false);
+  });
+
+  it('GUARD: no admin function compares the token with !== anymore', () => {
+    for (const fn of ['admin-ai-governance', 'admin-broadcast', 'admin-catalog', 'admin-set-limits', 'admin-stats', 'admin-subscribe', 'admin-user']) {
+      const src = readFileSync(new URL(`../functions/${fn}/index.ts`, import.meta.url), 'utf8');
+      assert.ok(src.includes('timingSafeEqual(got, expected)'), `${fn} must use the constant-time compare`);
+      assert.ok(!src.includes('got !== expected'), `${fn} must not early-exit compare the admin token`);
+    }
+    const mc = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(mc.includes('timingSafeEqual(cronHeader, cronSecret)'), 'cron secret compare is constant-time too');
+  });
+
+  it('sanitizeTelemetryText strips secrets, PII shapes, and control chars', async () => {
+    const { sanitizeTelemetryText } = await import('../functions/_shared/sanitize.ts');
+    const dirty = 'Boom at https://x.co/p?token=abc123&u=4 for user@mail.com\nnext line\ttab';
+    const clean = sanitizeTelemetryText(dirty, 200);
+    assert.ok(!clean.includes('abc123') && !clean.includes('user@mail.com'));
+    assert.ok(!clean.includes('\n') && !clean.includes('\t'));
+    const jwt = sanitizeTelemetryText('hdr eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig_here ok', 200);
+    assert.ok(!jwt.includes('eyJhbGciOiJIUzI1NiJ9'));
+    assert.ok(sanitizeTelemetryText('Bearer abc.def-123', 200).includes('[redacted]'));
+    assert.equal(sanitizeTelemetryText('x'.repeat(500), 50).length, 50);
+    assert.equal(sanitizeTelemetryText(null, 50), '');
+    // control characters are stripped (the whole point of the class):
+    const ctrl = sanitizeTelemetryText('abc', 50);
+    assert.ok(!ctrl.includes('') && !ctrl.includes(''));
+  });
+
+  it('retryDelayMs grows exponentially with bounded jitter', async () => {
+    const { retryDelayMs } = await import('../functions/_shared/backoff.ts');
+    const noJitter = () => 0;
+    assert.equal(retryDelayMs(0, 600, 8000, noJitter), 600);
+    assert.equal(retryDelayMs(1, 600, 8000, noJitter), 1200);
+    assert.equal(retryDelayMs(2, 600, 8000, noJitter), 2400);
+    assert.equal(retryDelayMs(10, 600, 8000, noJitter), 8000);
+    const j = retryDelayMs(0, 600, 8000, () => 0.999);
+    assert.ok(j >= 600 && j < 850);
+  });
+
+  it('GUARD: join-family claims invite uses atomically + rate-limits; codes are 10 chars', () => {
+    const jf = readFileSync(new URL('../functions/join-family/index.ts', import.meta.url), 'utf8');
+    assert.ok(jf.includes("rpc('claim_invite_use'"), 'redemption must claim via the atomic RPC');
+    assert.ok(!jf.includes('used_count: invite.used_count + 1'), 'the stale check-then-increment write must be gone');
+    assert.ok(jf.includes("checkRateLimit(admin, user.id, 'join-family')"), 'redemption attempts are rate-limited');
+    const mig = readFileSync(new URL('../migrations/0040_invite_atomic_claim.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('used_count < max_uses') && mig.includes('used_count = used_count + 1'),
+      'the claim is one conditional UPDATE');
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('new Uint8Array(10)'), 'new invite codes are 10 chars (~49.6 bits)');
+  });
+
+  it('GUARD: execute_action claims the row atomically; eval_mode is audit-logged', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes(".eq('status', 'approved')") && chat.includes("status: 'executing'"),
+      'execution requires winning the approved→executing claim');
+    assert.ok(chat.includes("kind: 'eval_mode.impersonation'"), 'impersonation is written to the audit log');
+    assert.ok(chat.includes('retryDelayMs(2 - retries)'), 'provider retries use exponential backoff');
+    assert.ok(!chat.includes('setTimeout(r, 1500)'), 'the fixed 1.5s retry is gone');
+    // review N1: approve/cancel must never touch an executing row
+    const n1 = (chat.match(/execution in progress/g) ?? []).length;
+    assert.ok(n1 >= 2, 'approve + cancel both refuse mid-execution rows');
+    assert.ok(chat.includes("if (row.status === 'executing') return { error: 'execution in progress' };"),
+      'the refusal is a status guard, not a comment');
+  });
+
+  it('GUARD: report-error stores only sanitized telemetry', () => {
+    const re = readFileSync(new URL('../functions/report-error/index.ts', import.meta.url), 'utf8');
+    assert.ok(re.includes('sanitizeTelemetryText(b?.message'), 'message is sanitized');
+    assert.ok(re.includes('sanitizeTelemetryText(b.stack') && re.includes('sanitizeTelemetryText(b.context'));
+    assert.ok(!re.includes('String(b?.message'), 'raw client text must not reach storage');
+  });
+});
+
+describe('D2 durable memory — dedup auditability, retention separation (spec §6/§10/§11)', async () => {
+  const { findDuplicateCandidates, mergeFacts, planMemoryMaintenance } = await import('../functions/_shared/memory.ts');
+  const row = (over) => ({
+    id: 'x', title: 'k', details: 'نفس النص', meta: { mkey: 'a', importance: 3 },
+    created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', ...over,
+  });
+
+  it('candidates: identical text with different keys is surfaced for the user', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', meta: { mkey: 'a', importance: 3 } }),
+      row({ id: '2', meta: { mkey: 'b', importance: 3 } }),
+    ]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].reason, 'same_text_diff_key');
+  });
+
+  it('candidates: retry duplicates (same key, created within 24h) are EXCLUDED — the job auto-merges those', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', created_at: '2026-10-01T00:00:00Z' }),
+      row({ id: '2', created_at: '2026-10-01T12:00:00Z' }),
+    ]);
+    assert.equal(pairs.length, 0);
+  });
+
+  it('candidates: same key but days apart is a stale duplicate for review', () => {
+    const pairs = findDuplicateCandidates([
+      row({ id: '1', created_at: '2026-10-01T00:00:00Z' }),
+      row({ id: '2', created_at: '2026-10-05T00:00:00Z' }),
+    ]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].reason, 'same_text_stale_dup');
+  });
+
+  it('candidates: episodes never appear; different text neither', () => {
+    assert.equal(findDuplicateCandidates([
+      row({ id: '1', meta: { mkey: 'a', mcat: 'episode' } }),
+      row({ id: '2', meta: { mkey: 'b', mcat: 'episode' } }),
+    ]).length, 0);
+    assert.equal(findDuplicateCandidates([
+      row({ id: '1' }), row({ id: '2', details: 'نص مختلف تماما', meta: { mkey: 'b' } }),
+    ]).length, 0);
+  });
+
+  it('mergeFacts: provenance preserved, importance bumped+capped, loser trashed (never deleted)', async () => {
+    const writes = [];
+    const fake = {
+      from() {
+        const chain = {
+          _op: null, _payload: null,
+          update(p) { chain._op = 'update'; chain._payload = p; return chain; },
+          eq() { return chain; },
+          async then(res) { writes.push(chain); res({ data: null, error: null }); },
+        };
+        return chain;
+      },
+    };
+    const keep = row({ id: 'k', meta: { mkey: 'a', importance: 5 } });
+    const loser = row({ id: 'l', details: 'النص القديم', meta: { mkey: 'b', importance: 2 } });
+    assert.equal(await mergeFacts(fake, keep, loser), true);
+    const keeperWrite = writes.find((w) => w._payload?.meta?.previous_versions);
+    assert.ok(keeperWrite, 'keeper write carries previous_versions');
+    assert.equal(keeperWrite._payload.meta.importance, 5, 'importance capped at 5');
+    assert.equal(keeperWrite._payload.meta.previous_versions.length, 1);
+    assert.equal(keeperWrite._payload.meta.previous_versions[0].from_id, 'l');
+    const loserWrite = writes.find((w) => w._payload?.status === 'trashed');
+    assert.ok(loserWrite, 'loser is trashed');
+    assert.equal(loserWrite._payload.meta.trash_reason, 'merged_duplicate');
+    assert.ok(!writes.some((w) => w._op === 'delete'), 'merge NEVER hard-deletes');
+  });
+
+  it('mergeFacts: merged_text overrides the keeper text; same-id is a no-op', async () => {
+    const writes = [];
+    const fake = {
+      from() {
+        const chain = {
+          _op: null, _payload: null,
+          update(p) { chain._op = 'update'; chain._payload = p; return chain; },
+          eq() { return chain; },
+          async then(res) { writes.push(chain); res({ data: null, error: null }); },
+        };
+        return chain;
+      },
+    };
+    const keep = row({ id: 'k' });
+    assert.equal(await mergeFacts(fake, keep, row({ id: 'l' }), 'النص المدمج'), true);
+    assert.equal(writes[0]._payload.details, 'النص المدمج');
+    assert.equal(await mergeFacts(fake, keep, keep), false);
+  });
+
+  it('GUARD: chat exposes the duplicate tools; MERGE IS PREVIEW-ONLY (owner delete-safety ruling)', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(chat.includes("case 'list_memory_duplicates'"), 'list_memory_duplicates dispatched');
+    assert.ok(chat.includes("case 'merge_memories'"), 'merge_memories dispatched');
+    assert.ok(chat.includes('memory not found in your private space'), 'ids are validated against the caller\u2019s own facts');
+    // F1: the model tool may ONLY create a preview — the merge itself
+    // runs in the deterministic fast path after the user sends the code.
+    const toolStart = chat.indexOf('async function toolMergeMemories');
+    const toolRegion = chat.slice(toolStart, toolStart + 2400);
+    assert.ok(toolRegion.includes('createMergePreview'), 'the tool creates a preview');
+    assert.ok(toolRegion.includes('needs_confirmation: true'), 'the tool returns a confirmation code');
+    assert.ok(!toolRegion.includes('mergeFacts('), 'the tool must NEVER execute the merge itself');
+    assert.ok(!toolRegion.includes('trashFact'), 'the tool must never trash anything');
+    assert.ok(chat.includes(".in('action_type', ['forget_memory', 'merge_memory'])"), 'the fast path serves both rails');
+    assert.ok(chat.includes('executeConfirmedMerge(admin, claimed)'), 'merge executes only after validate + atomic claim');
+    const brain = readFileSync(new URL('../functions/_shared/app-brain.ts', import.meta.url), 'utf8');
+    assert.ok(brain.includes('PREVIEW-ONLY like forget_fact'), 'the model contract states preview-only');
+    assert.ok(brain.includes('NEVER confirm on the user'), 'no model-side confirmation');
+  });
+
+  it('GUARD: consolidate dry-run writes nothing and every run reports to ops_events (§6.3)', () => {
+    const job = readFileSync(new URL('../functions/memory-consolidate/index.ts', import.meta.url), 'utf8');
+    assert.ok(job.includes("searchParams.get('dry_run') === '1'"), 'dry_run parsed');
+    assert.ok(job.includes('if (dryRun) report.merged++;'), 'dry-run counts merges without trashing');
+    assert.ok(job.includes('planMemoryMaintenance(facts, new Date())'), 'dry-run uses the pure planner');
+    assert.ok(job.includes("kind: dryRun ? 'memory.consolidate.dry_run' : 'memory.consolidate'"), 'runs are reported to ops_events');
+  });
+
+  it('GUARD (§10): the transcript sweep touches ONLY chat_sessions — never items', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const start = app.indexOf('const loadHistory');
+    assert.ok(start > 0, 'loadHistory located');
+    const region = app.slice(start, start + 1600);
+    assert.ok(region.includes("from('chat_sessions')") && region.includes(".lt('expires_at'"),
+      'expired sessions are swept on history load');
+    const sweepLine = region.split('\n').find((l) => l.includes("from('chat_sessions')") && l.includes('delete'));
+    assert.ok(sweepLine, 'the sweep is a chat_sessions delete');
+    assert.ok(!/from\('items'\)[^;]*\.delete\(\)/.test(region), 'the sweep region contains no items delete');
+  });
+
+  it('GUARD (§1 contract): the client memory delete goes through TRASH, not a hard delete', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const at = app.indexOf('deleteMemoryItem');
+    const region = app.slice(at, at + 1400);
+    assert.ok(region.includes("status: 'trashed'"), 'replaced facts are trashed');
+    assert.ok(region.includes("trash_reason: 'replaced_by_restatement'"), 'the trash reason is recorded');
+    assert.ok(!region.includes(".from('items').delete()"), 'no hard delete of a memory row remains in the client memory path');
+  });
+});
+
+describe('D2 merge rail — preview-only merge on the forget confirmation machinery (review F1)', async () => {
+  const { createMergePreview, executeConfirmedMerge, validateForgetConfirmation, claimForgetPreview, loadFacts } =
+    await import('../functions/_shared/memory.ts');
+  const UID = 'user-1';
+  const dupA = () => ({ id: 'a', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:a', importance: 2 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' });
+  const dupB = () => ({ id: 'b', title: 'العنوان', details: 'نفس النص', meta: { mkey: 'k:b', importance: 4 }, status: 'open', kind: 'memory', space_id: 'S1', created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z' });
+
+  it('preview issues a code and trashes NOTHING; non-duplicate pairs are refused', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    assert.ok(p && /^\d{6}$/.test(p.confirm_code), 'a 6-digit code is issued');
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'preview alone changes no memory');
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(row.action_type, 'merge_memory');
+    const notDup = await createMergePreview(supa, UID, 'S1', facts[0], { ...facts[1], id: 'z', details: 'نص مختلف' });
+    assert.equal(notDup, null, 'a pair that is not an identical-text duplicate gets no code');
+  });
+
+  it('full rail: validate + claim + execute merges with provenance and trashes the loser', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, true);
+    // loadFacts is newest-first: facts[0] (id 'b', the keeper) survives;
+    // facts[1] (id 'a', the loser) is trashed with provenance on 'b'.
+    const a = supa._db.items.find((i) => i.id === 'a');
+    const b = supa._db.items.find((i) => i.id === 'b');
+    assert.equal(a.status, 'trashed');
+    assert.equal(a.meta.trash_reason, 'merged_duplicate');
+    assert.equal(b.meta.previous_versions.length, 1);
+    assert.equal(b.meta.previous_versions[0].from_id, 'a');
+    assert.equal(b.meta.importance, 5, 'max(4,2)+1 capped at 5');
+    assert.equal(supa._db.pending_actions.find((r) => r.id === p.action_id).status, 'executed');
+  });
+
+  it('execution refuses when a fact changed since the preview (no longer duplicates)', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const claimed = await claimForgetPreview(supa, row.id);
+    supa._db.items.find((i) => i.id === 'b').details = 'اتعدلت بعد المعاينة';
+    const res = await executeConfirmedMerge(supa, claimed);
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'), 'nothing was trashed');
+  });
+
+  it('execution refuses an UNCLAIMED row — validation alone never merges', async () => {
+    const supa = fakeSupa([dupA(), dupB()]);
+    const facts = await loadFacts(supa, 'S1');
+    const p = await createMergePreview(supa, UID, 'S1', facts[0], facts[1]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    const res = await executeConfirmedMerge(supa, row); // still 'pending'
+    assert.equal(res.merged, false);
+    assert.ok(supa._db.items.every((i) => i.status === 'open'));
+  });
+});
+
+describe('BUGFIX 0042 — items.updated_at exists (memory engine selects/orders by it)', () => {
+  it('GUARD: migration 0042 adds the column, backfills, and installs the touch trigger', () => {
+    const mig = readFileSync(new URL('../migrations/0042_items_updated_at.sql', import.meta.url), 'utf8');
+    assert.ok(mig.includes('add column updated_at'), 'column added');
+    assert.ok(mig.includes("column_name = 'updated_at'"), 'the add+backfill are guarded on the column being absent (re-apply is a no-op)');
+    assert.ok(mig.includes('set updated_at = created_at'), 'existing rows backfilled from created_at');
+    assert.ok(mig.includes('create trigger items_touch_updated_at'), 'BEFORE UPDATE trigger keeps it current');
+    assert.ok(mig.includes('before update on public.items'), 'trigger is on items');
+  });
+
+  it('GUARD: every items select in the memory engine only names columns the schema has', () => {
+    const engine = readFileSync(new URL('../functions/_shared/memory.ts', import.meta.url), 'utf8');
+    const selects = engine.match(/\.select\('([^']+)'\)/g) ?? [];
+    assert.ok(selects.length > 0);
+    // The schema truth this guards: items columns per migrations 0002+
+    // plus 0035 (status values) and 0042 (updated_at).
+    const itemsCols = new Set(['id', 'space_id', 'note_id', 'kind', 'title', 'details', 'due_at', 'status', 'created_by', 'created_at', 'assigned_to', 'meta', 'list_id', 'bought_at', 'reminder_sent_at', 'vault_id', 'updated_at']);
+    // Only the items selects (they contain title/details/meta together)
+    const itemsSelects = selects.filter((s) => s.includes('details') && s.includes('meta'));
+    assert.ok(itemsSelects.length >= 3, 'loadFacts + trash/review listings found');
+    for (const s of itemsSelects) {
+      const cols = s.match(/\((.*)\)/)[1].replace(/'/g, '').split(',').map((c) => c.trim());
+      for (const c of cols) assert.ok(itemsCols.has(c), `column '${c}' must exist on items`);
+    }
+  });
+});
+
+describe('D3 PR-A — janitor allowlist, scrubber, index migration (T-D3-1/2/3)', async () => {
+  const { JANITOR_ALLOWLIST, JANITOR_NEVER, isJanitorTarget, janitorCutoff, runJanitor } =
+    await import('../functions/_shared/janitor.ts');
+  const { scrubSentryEvent, scrubString } = await import('../functions/_shared/sentry-scrub.ts');
+
+  it('the janitor allowlist is exactly the three telemetry tables', () => {
+    assert.deepEqual(JANITOR_ALLOWLIST.map((t) => t.table).sort(), ['ai_events', 'ops_events', 'rate_limits']);
+    for (const t of JANITOR_NEVER) assert.equal(isJanitorTarget(t), false, `${t} must never be a janitor target`);
+    assert.equal(isJanitorTarget('items'), false);
+    assert.equal(isJanitorTarget('pending_actions'), false);
+  });
+
+  it('cutoffs: rate_limits 2d, ai/ops events 90d', () => {
+    const now = new Date('2026-10-12T00:00:00Z');
+    const byTable = Object.fromEntries(JANITOR_ALLOWLIST.map((t) => [t.table, janitorCutoff(t, now)]));
+    assert.equal(byTable['rate_limits'], '2026-10-10T00:00:00.000Z');
+    assert.equal(byTable['ai_events'], '2026-07-14T00:00:00.000Z');
+    assert.equal(byTable['ops_events'], '2026-07-14T00:00:00.000Z');
+  });
+
+  it('runJanitor dry-run counts but deletes NOTHING; execute deletes only allowlisted rows', async () => {
+    const mkDb = () => ({
+      rate_limits: [{ window_start: '2026-10-01T00:00:00Z' }, { window_start: '2026-10-12T00:00:00Z' }],
+      ai_events: [{ id: 1, created_at: '2026-01-01T00:00:00Z' }, { id: 2, created_at: '2026-10-12T00:00:00Z' }],
+      ops_events: [{ id: 1, created_at: '2026-01-01T00:00:00Z' }],
+      items: [{ id: 'keep-me', created_at: '2020-01-01T00:00:00Z' }],
+    });
+    const fakeFor = (db) => ({
+      from(table) {
+        const filters = [];
+        let op = 'select';
+        const rows = () => (db[table] ?? []).filter((r) => filters.every(([o, c, v]) => (o === '<' ? r[c] < v : r[c] >= v)));
+        const b = {
+          select(_c, o) { if (o?.head) { b._head = true; } return b; },
+          lt(c, v) { filters.push(['<', c, v]); return b; },
+          gte(c, v) { filters.push(['>=', c, v]); return b; },
+          order() { return b; },
+          limit() { return b; },
+          in(_c, vals) { b._in = vals; return b; },
+          delete() { op = 'delete'; return b; },
+          then(res) {
+            if (op === 'delete') {
+              if (b._in) db[table] = db[table].filter((r) => !b._in.includes(r.id));
+              else db[table] = db[table].filter((r) => !rows().includes(r));
+              return res({ error: null });
+            }
+            const m = rows();
+            return res(b._head ? { data: null, count: m.length, error: null } : { data: m, error: null });
+          },
+        };
+        return b;
+      },
+    });
+    const now = new Date('2026-10-12T00:00:00Z');
+    const db1 = mkDb();
+    const dry = await runJanitor(fakeFor(db1), { execute: false, now });
+    assert.ok(dry.every((r) => r.deleted === 0), 'dry-run deletes nothing');
+    assert.equal(dry.find((r) => r.table === 'ai_events').would_delete, 1);
+    assert.equal(db1.ai_events.length, 2, 'dry-run left rows intact');
+    const db2 = mkDb();
+    const wet = await runJanitor(fakeFor(db2), { execute: true, now });
+    assert.equal(db2.ai_events.length, 1, 'only the stale ai_event is gone');
+    assert.equal(db2.ops_events.length, 0);
+    assert.equal(db2.rate_limits.length, 1);
+    assert.equal(db2.items.length, 1, 'user data is structurally unreachable');
+    assert.ok(wet.every((r) => r.deleted <= r.would_delete));
+  });
+
+  it('GUARD: the janitor function is double-gated and reports to ops', () => {
+    const fn = readFileSync(new URL('../functions/telemetry-janitor/index.ts', import.meta.url), 'utf8');
+    assert.ok(fn.includes("searchParams.get('execute') === '1'"), 'execute requires the query flag');
+    assert.ok(fn.includes("Deno.env.get('JANITOR_ENABLED') === '1'"), 'execute requires the env kill-switch');
+    assert.ok(fn.includes('execute = wantExecute && enabled'), 'both gates must agree');
+    assert.ok(!fn.includes("from('items')") && !fn.includes("from('notes')"), 'the function never names user tables');
+  });
+
+  it('scrubber: credentials, JWTs, emails, URL queries and user objects never survive', () => {
+    const ev = scrubSentryEvent({
+      message: 'failed for user a.b@example.com with Bearer abc.def.ghi',
+      user: { id: 'u1', email: 'a.b@example.com' },
+      request: { url: 'https://x.supabase.co/storage/v1/object/sign/item-photos/u/p.jpg?token=SECRET', data: { note: 'حليب' }, headers: { authorization: 'Bearer abc' } },
+      extra: { api_key: 'sk-123', nested: { jwt: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature' }, keep: 'plain' },
+    });
+    const s = JSON.stringify(ev);
+    assert.ok(!s.includes('a.b@example.com'), 'emails stripped');
+    assert.ok(!s.includes('SECRET') && !s.includes('sk-123'), 'secrets stripped');
+    assert.ok(!s.includes('eyJhbGciOiJIUzI1NiJ9'), 'JWTs stripped');
+    assert.equal(ev.user, undefined, 'user object removed');
+    assert.equal(ev.request.data, undefined, 'request body removed');
+    assert.equal(ev.extra.keep, 'plain', 'innocuous fields survive');
+    assert.ok(scrubString('x'.repeat(500)).length <= 300, 'strings are capped');
+    // review N2: an opaque-token URL under a non-'url' key loses its query
+    const ev2 = scrubSentryEvent({ photo: 'https://cdn.example.com/p.jpg?sig=OPAQUESECRET123&dl=1' });
+    assert.equal(ev2.photo, 'https://cdn.example.com/p.jpg', 'URL queries are stripped under ANY key');
+  });
+
+  it('GUARD (review N1): the janitor counts via each target\u2019s own column — rate_limits has no id', () => {
+    const j = readFileSync(new URL('../functions/_shared/janitor.ts', import.meta.url), 'utf8');
+    assert.ok(j.includes(".select(target.column, { count: 'exact', head: true })"), 'count selects the timestamp column');
+    assert.ok(!j.includes(".select('id', { count: 'exact', head: true })"), 'the id-count bug cannot return');
+  });
+
+  it('GUARD: migration 0043 carries the measured index set + pg_trgm', () => {
+    const mig = readFileSync(new URL('../migrations/0043_d3_search_indexes.sql', import.meta.url), 'utf8');
+    for (const name of ['items_title_trgm', 'items_details_trgm', 'notes_transcript_trgm', 'items_note_id_idx', 'items_space_kind_status_idx']) {
+      assert.ok(mig.includes(name), `${name} present`);
+    }
+    assert.ok(mig.includes('create extension if not exists pg_trgm'), 'pg_trgm enabled');
+    assert.ok(mig.includes('gin_trgm_ops'), 'trigram GIN opclass used');
+  });
+});
+
+describe('D3 PR-B — offline outbox/cache + createItem idempotency (T-D3-4/5/6)', async () => {
+  const { OfflineSync } = await import('../../packages/voice-engine/src/offline.ts');
+  const memKv = () => {
+    const m = new Map();
+    return {
+      get: async (k) => m.get(k) ?? null,
+      set: async (k, v) => { m.set(k, v); },
+      delete: async (k) => { m.delete(k); },
+      _map: m,
+    };
+  };
+  let seq = 0;
+  const ids = () => `id-${++seq}`;
+
+  it('list cache: round-trips rows with a timestamp; corrupt entries read as null', async () => {
+    const off = new OfflineSync(memKv(), { newId: ids, now: () => new Date('2026-10-12T00:00:00Z') });
+    assert.equal(await off.readList('items:S1'), null);
+    await off.cacheList('items:S1', [{ id: 'a' }, { id: 'b' }]);
+    const got = await off.readList('items:S1');
+    assert.equal(got.rows.length, 2);
+    assert.equal(got.cachedAt, '2026-10-12T00:00:00.000Z');
+  });
+
+  it('outbox: FIFO flush, stop-at-first-failure, attempts counted, order preserved', async () => {
+    seq = 0;
+    const off = new OfflineSync(memKv(), { newId: ids });
+    await off.enqueueCreate({ id: 'item-1', title: 'one' });
+    await off.enqueueCreate({ id: 'item-2', title: 'two' });
+    await off.enqueueCreate({ id: 'item-3', title: 'three' });
+    const seen = [];
+    const r1 = await off.flush(async (op) => {
+      seen.push(op.payload.id);
+      return op.payload.id === 'item-2' ? 'retry' : 'ok';
+    });
+    assert.deepEqual(seen, ['item-1', 'item-2'], 'flush stops at the first failure — item-3 never attempted');
+    assert.deepEqual(r1, { sent: 1, remaining: 2, deadLettered: 0 });
+    const pending = await off.pending();
+    assert.deepEqual(pending.map((p) => p.payload.id), ['item-2', 'item-3'], 'order preserved');
+    assert.equal(pending[0].attempts, 1);
+    const r2 = await off.flush(async () => 'ok');
+    assert.deepEqual(r2, { sent: 2, remaining: 0, deadLettered: 0 });
+  });
+
+  it('outbox: a throwing sender is a retry, not a lost op; queued payload carries its stable id', async () => {
+    const off = new OfflineSync(memKv(), { newId: ids });
+    const op = await off.enqueueCreate({ id: 'stable-1', title: 'x' });
+    assert.equal(op.payload.id, 'stable-1');
+    const r = await off.flush(async () => { throw new Error('network down'); });
+    assert.deepEqual(r, { sent: 0, remaining: 1, deadLettered: 0 });
+    assert.equal((await off.pending())[0].attempts, 1);
+  });
+
+  it('dead-letter: a permanently failing op stops blocking the queue after MAX attempts (review N1)', async () => {
+    const { MAX_FLUSH_ATTEMPTS } = await import('../../packages/voice-engine/src/offline.ts');
+    const off = new OfflineSync(memKv(), { newId: ids });
+    await off.enqueueCreate({ id: 'poison', title: 'bad' });
+    await off.enqueueCreate({ id: 'behind', title: 'good' });
+    const send = async (op) => (op.payload.id === 'poison' ? 'retry' : 'ok');
+    for (let i = 0; i < MAX_FLUSH_ATTEMPTS; i++) await off.flush(send);
+    const r = await off.flush(send);
+    assert.equal(r.deadLettered, 1, 'the poison op was dead-lettered');
+    assert.equal(r.sent, 1, 'the op behind it finally flowed');
+    assert.equal(r.remaining, 0);
+    const dead = await off.deadLettered();
+    assert.equal(dead.length, 1);
+    assert.equal(dead[0].payload.id, 'poison');
+  });
+
+  it('error classification (review N1): coded server errors are NOT queueable; transport errors are', async () => {
+    const { isQueueableError } = await import('../../packages/voice-engine/src/offline.ts');
+    assert.equal(isQueueableError({ code: '23514' }), false, 'CHECK violation is permanent');
+    assert.equal(isQueueableError({ code: '42501' }), false, 'RLS denial is permanent');
+    assert.equal(isQueueableError({ code: 'PGRST301' }), false, 'PostgREST errors are permanent');
+    assert.equal(isQueueableError(new TypeError('Failed to fetch')), true, 'fetch failure is transport');
+    assert.equal(isQueueableError(new Error('socket hangup')), true, 'uncoded errors are transport');
+  });
+
+  it('cache keys separate pages (review N2); corrupt outbox is preserved, not discarded (review N4)', async () => {
+    const { listCacheKey } = await import('../../packages/voice-engine/src/offline.ts');
+    assert.notEqual(listCacheKey('items:S1', 60, 0), listCacheKey('items:S1', 100, 0));
+    assert.notEqual(listCacheKey('items:S1', 100, 0), listCacheKey('items:S1', 100, 100));
+    const kv = memKv();
+    await kv.set('offline:outbox:v1', '{corrupt json');
+    const off = new OfflineSync(kv, { newId: ids });
+    assert.deepEqual(await off.pending(), [], 'corrupt outbox reads as empty');
+    const sideKeys = [...kv._map.keys()].filter((k) => k.includes(':corrupt:'));
+    assert.equal(sideKeys.length, 1, 'the corrupt payload was preserved under a side key');
+  });
+
+  it('GUARD (T-D3-6): createItem assigns a client id and resolves 23505 to the existing row', () => {
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('const id = input.id ?? uuid4();'), 'id is client-assigned and stable across retries');
+    assert.ok(client.includes("code === '23505'"), 'PK conflict is detected');
+    assert.ok(client.includes("eq('id', id)"), 'conflict resolves by fetching the existing row');
+    assert.ok(client.includes('createItemOfflineFirst'), 'offline-first create exists');
+    assert.ok(client.includes('listItemsCached'), 'cached list read exists');
+    assert.ok(client.includes('flushOutbox'), 'outbox flush is wired to createItem');
+  });
+});
+
+describe('D4 — entitlements fail-closed + vault gate OFF (decision #4) + webhook idempotency core', async () => {
+  const ent = await import('../functions/_shared/entitlements.ts');
+  const wh = await import('../functions/_shared/stripe-webhook-core.ts');
+
+  it('entitled: deny-by-default for unknown plan/feature/garbage', () => {
+    assert.equal(ent.entitled('free', 'extra_family_slot'), false);
+    assert.equal(ent.entitled('family_plus', 'extra_family_slot'), true);
+    assert.equal(ent.entitled('family_plus', 'priority_support'), true);
+    assert.equal(ent.entitled('family_plus', 'nonsense'), false);
+    assert.equal(ent.entitled('enterprise', 'extra_family_slot'), false);
+    assert.equal(ent.entitled(null, 'extra_family_slot'), false);
+    assert.equal(ent.entitled(undefined, undefined), false);
+    assert.equal(ent.entitled('', ''), false);
+  });
+
+  it('DECISION #4 PROOF: the vault paid gate is OFF — vault_ai denied for every plan', () => {
+    assert.equal(ent.VAULT_PAID_GATE_ENABLED, false);
+    for (const p of ent.PLANS) assert.equal(ent.entitled(p, 'vault_ai'), false, `${p} must not have vault_ai while the gate is off`);
+  });
+
+  it('planFromMirror: only active/trialing known plans resolve; dunning grace honors the paid period (review N4)', () => {
+    assert.equal(ent.planFromMirror(null), 'free');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'active' }), 'family_plus');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'trialing' }), 'family_plus');
+    assert.equal(
+      ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due', current_period_end: '2026-11-01T00:00:00Z' }, '2026-10-15T00:00:00Z'),
+      'family_plus',
+      'past_due inside the paid period keeps the plan (no mid-period cutoff)',
+    );
+    assert.equal(
+      ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due', current_period_end: '2026-10-01T00:00:00Z' }, '2026-10-15T00:00:00Z'),
+      'free',
+      'past_due past the paid period resolves to free',
+    );
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'past_due' }), 'free', 'past_due without a period end fails closed');
+    assert.equal(ent.planFromMirror({ plan_id: 'family_plus', status: 'canceled' }), 'free');
+    assert.equal(ent.planFromMirror({ plan_id: 'gold', status: 'active' }), 'free');
+    assert.equal(ent.planFromMirror({}), 'free');
+  });
+
+  it('webhook decisions: duplicate skipped, stale skipped, unknown types ignored, fresh processed', () => {
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: true, mirrorWatermark: 0 }), { action: 'skip_duplicate' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 50, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'skip_stale' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' }, 'equal watermark is not stale');
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'charge.refunded', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 0 }), { action: 'ignore_type' });
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'customer.subscription.updated', eventCreated: 200, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' });
+    assert.deepEqual(
+      wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: NaN, alreadyClaimed: false, mirrorWatermark: 0 }),
+      { action: 'skip_stale' },
+      'a malformed created fails closed — never falls through to process (review N3)',
+    );
+  });
+
+  it('GUARD: the D4 design package exists and legal drafts carry the not-final marking', () => {
+    for (const f of ['STRIPE_ARCHITECTURE.md', 'ENTITLEMENTS.md', 'QUOTA_PRICE_OPTIONS.md', 'LEGAL_DRAFTS.md', 'ACCOUNT_LIFECYCLE.md']) {
+      assert.ok(existsSync(new URL(`../../docs/autonomous/d4/${f}`, import.meta.url)), `missing docs/autonomous/d4/${f}`);
+    }
+    const legal = readFileSync(new URL('../../docs/autonomous/d4/LEGAL_DRAFTS.md', import.meta.url), 'utf8');
+    assert.ok(legal.includes('NOT LEGAL ADVICE'), 'legal drafts must be marked non-final');
+    const quota = readFileSync(new URL('../../docs/autonomous/d4/QUOTA_PRICE_OPTIONS.md', import.meta.url), 'utf8');
+    assert.ok(quota.includes('OD-01/02 remain OPEN'), 'quota paper must not finalize numbers');
+  });
+});
+
+describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
+  it('GUARD: the demo-seed button and panel are dev-only (__DEV__ gate)', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('{__DEV__ && showDemo && ('), 'the demo panel render is __DEV__-gated');
+    const toggleIdx = app.indexOf('setShowDemo((v) => !v)');
+    const gateIdx = app.lastIndexOf('{__DEV__ && (', toggleIdx);
+    assert.ok(gateIdx > -1 && toggleIdx - gateIdx < 300, 'the 🧪 toggle button sits inside a __DEV__ block');
+    // The seed capability itself remains for dev use (engine method untouched).
+    assert.ok(app.includes('engine.seedDemoData'), 'seedDemoData still wired for dev builds');
+  });
+});
+
+describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
+  const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
+
+  it('parseDeepLink: only well-formed join intents survive; everything else is null', () => {
+    assert.deepEqual(parseDeepLink('mawjood://family/join?code=abc123'), { kind: 'join-family', code: 'ABC123' });
+    assert.deepEqual(parseDeepLink('https://bfip-platform.github.io/join?code=XYZ987'), { kind: 'join-family', code: 'XYZ987' });
+    assert.deepEqual(
+      parseDeepLink('https://bfip-platform.github.io/Mawjood/join?code=XYZ987'),
+      { kind: 'join-family', code: 'XYZ987' },
+      'one deployment-subpath segment is tolerated for https (review N1)',
+    );
+    assert.equal(parseDeepLink('https://x.example/a/b/join?code=XYZ987'), null, 'two prefix segments are NOT tolerated');
+    assert.equal(parseDeepLink('mawjood://x/family/join?code=XYZ987'), null, 'the app scheme stays strict');
+    assert.equal(parseDeepLink('mawjood://family/join?code=short'), null, 'too-short code rejected');
+    assert.equal(parseDeepLink('mawjood://family/join'), null, 'missing code rejected');
+    assert.equal(parseDeepLink('mawjood://vault/open?path=secret'), null, 'unknown path rejected');
+    assert.deepEqual(
+      parseDeepLink('mawjood://family/join?code=ABC123&token=leak'),
+      { kind: 'join-family', code: 'ABC123' },
+      'extra params are never read — only the allowlisted code is extracted',
+    );
+    assert.equal(parseDeepLink('https://evil.example/join?code=../../etc'), null, 'malicious code rejected');
+    assert.equal(parseDeepLink('javascript:alert(1)'), null);
+    assert.equal(parseDeepLink(''), null);
+    assert.equal(parseDeepLink(null), null);
+    assert.equal(parseDeepLink(42), null);
+    assert.equal(parseDeepLink('not a url'), null);
+  });
+
+  it('GUARD: app.json carries the static SEO shell; OG/manifest are injected by useWebMeta; manifest + robots exist; links route through the parser', () => {
+    const appJson = JSON.parse(readFileSync(new URL('../../apps/mobile/app.json', import.meta.url), 'utf8'));
+    assert.ok(appJson.expo.web.description?.length > 20, 'static meta description via app.json');
+    assert.equal(appJson.expo.web.themeColor, '#FAF7F2', 'static theme-color via app.json');
+    const layout = readFileSync(new URL('../../apps/mobile/src/app/_layout.tsx', import.meta.url), 'utf8');
+    assert.ok(layout.includes('useWebMeta'), 'OG/manifest runtime injector exists');
+    assert.ok(layout.includes("link.setAttribute('rel', 'manifest')"), 'manifest link injected (relative href)');
+    assert.ok(layout.includes("'og:title'"), 'OG title injected');
+    const manifest = JSON.parse(readFileSync(new URL('../../apps/mobile/public/manifest.webmanifest', import.meta.url), 'utf8'));
+    assert.equal(manifest.display, 'standalone');
+    assert.equal(manifest.short_name, 'Mawjood');
+    assert.ok(manifest.icons.every((i) => !i.src.startsWith('assets/')), 'manifest icons resolve to public/ files, not bundle assets');
+    assert.ok(existsSync(new URL('../../apps/mobile/public/robots.txt', import.meta.url)), 'robots.txt exists');
+    assert.ok(existsSync(new URL('../../apps/mobile/public/icon-1024.png', import.meta.url)), 'PWA icon exists in public/');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('parseDeepLink(raw)'), 'the app routes links through the fail-closed parser');
+    assert.ok(app.includes("Linking.addEventListener('url'"), 'live link subscription wired');
+  });
+
+  it('GUARD (T-D5-5): BRAND tokens carry the Decision #11 baseline; OD-39 stays open', () => {
+    const theme = readFileSync(new URL('../../apps/mobile/src/lib/theme.ts', import.meta.url), 'utf8');
+    assert.ok(theme.includes("accentBlue: '#3B82C4'"), 'soft blue token (Decision #11)');
+    assert.ok(theme.includes("accentSage: '#5E7E63'"), 'muted sage token (Decision #11)');
+    assert.ok(theme.includes('IBM Plex Sans Arabic'), 'arabic font token');
+    assert.ok(theme.includes('OD-39'), 'the not-final caveat travels with the tokens');
+  });
+});
+
+describe('D5 PR-2 — responsive foundation (T-D5-1)', () => {
+  it('GUARD: wide web gets a centered 880px column; native/narrow untouched; no hooks violations', () => {
+    const layout = readFileSync(new URL('../../apps/mobile/src/app/_layout.tsx', import.meta.url), 'utf8');
+    assert.ok(layout.includes("Platform.OS === 'web' && width >= 1024"), 'the wide treatment is web-only and breakpoint-gated');
+    assert.ok(layout.includes('maxWidth: 880'), 'readable column cap');
+    assert.ok(layout.includes('useWindowDimensions'), 'breakpoint comes from the window hook');
+    // The hook calls sit in InnerLayout before any conditional return.
+    const hookIdx = layout.indexOf('useWindowDimensions()');
+    const innerIdx = layout.indexOf('function InnerLayout');
+    assert.ok(hookIdx > innerIdx, 'hook is inside the layout component');
+  });
+});
+
+describe('D5 PR-3 — a11y pass on primary surfaces + in-app support (T-D5-3/4)', () => {
+  it('GUARD: primary controls carry roles/labels; support lives in Profile and rides report-error', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes("accessibilityLabel={t('a11yMenu')}"), 'menu button labeled');
+    assert.ok(app.includes('accessibilityRole="tab"'), 'tabs expose the tab role');
+    assert.ok(app.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'composer action announces its current mode');
+    assert.ok(app.includes("context: 'support'"), 'support messages ride the report-error channel with the support context');
+    assert.ok(app.includes("invoke('report-error'"), 'support uses the existing function — no new endpoint');
+    // Decision #12: support must NOT add a drawer destination.
+    const drawerRegion = app.slice(app.indexOf('side drawer menu'), app.indexOf('side drawer menu') + 200);
+    assert.ok(app.includes("{t('supportSection')}"), 'support section renders (inside Profile)');
+  });
+  it('GUARD: i18n carries the new keys in BOTH languages', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['a11yMenu', 'a11yAttachPhoto', 'a11ySend', 'a11yRecord', 'a11yStopRecording', 'supportSection', 'supportHint', 'supportSend', 'supportSent', 'supportFailed']) {
+      const hits = i18n.split(`${k}:`).length - 1;
+      assert.ok(hits >= 2, `${k} must exist in AR and EN (found ${hits})`);
+    }
+  });
+});
+
+describe('D6 — AI-E2E harness: journeys + injection regression pack (T-D6-3/4)', async () => {
+  const { INJECTION_CORPUS } = await import('./ai-e2e/injection-corpus.mjs');
+  const UID = 'user-1';
+
+  it('INJECTION PACK: every payload fails the confirmation parser — or is inert without a pending row', async () => {
+    for (const p of INJECTION_CORPUS) {
+      assert.equal(parseForgetConfirmation(p.text), p.parse, `${p.id}: parser outcome drifted`);
+    }
+    // The inertness half: a parsed code with NO pending row for the user
+    // validates nothing and executes nothing.
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    assert.equal(validateForgetConfirmation(null, UID, '123456', new Date()).ok, false);
+    assert.equal(await claimForgetPreview(supa, 'nonexistent-row'), null);
+    assert.equal(supa._db.items[0].status, 'open', 'corpus payloads changed no state');
+  });
+
+  it('STRUCTURAL INVARIANTS: chat cannot trash; the tree-wide trashFact census is exactly the sanctioned callers', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(!/trashFact\s*\(/.test(chat), 'chat/index.ts must never call trashFact');
+    // Tree-wide census (review N3): walk every function file — a future
+    // caller in a NEW file must fail this test loudly.
+    const callers = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.ts')) {
+          const src = readFileSync(p, 'utf8');
+          const hits = (src.match(/trashFact\s*\(/g) ?? []).length;
+          // the definition line counts once in memory.ts; calls elsewhere count fully
+          if (hits > 0) callers.push(`${p.split('/functions/')[1]}:${hits}`);
+        }
+      }
+    };
+    walk(new URL('../functions', import.meta.url).pathname);
+    assert.deepEqual(
+      callers.sort(),
+      ['_shared/memory.ts:3', 'memory-consolidate/index.ts:1'],
+      'trashFact may exist only as: engine definition + claimed forget executor + mergeFacts (memory.ts ×3 incl. def) and the §6.1 call (consolidate ×1)',
+    );
+    // INTEGRATION (audit): mergeFacts — the third engine site — must be
+    // reachable ONLY from executeConfirmedMerge (the claimed rail).
+    const engine = readFileSync(new URL('../functions/_shared/memory.ts', import.meta.url), 'utf8');
+    assert.equal((engine.match(/mergeFacts\(supa/g) ?? []).length, 1, 'mergeFacts has exactly one caller');
+    assert.ok(engine.includes('executeConfirmedMerge'), 'that caller is the claimed merge executor');
+  });
+
+  it('JOURNEY: learn → recall → gardener (flags only) → forget via rail → restore → purge window', async () => {
+    const supa = fakeSupa([
+      mkFact('keep', 4, 10),
+      mkFact('drop', 3, 10),
+      mkFact('stale', 1, 200),
+    ]);
+    // Recall sees all three.
+    let facts = await loadFacts(supa, 'S1');
+    assert.equal(facts.length, 3);
+    // Gardener: plan + apply — statuses must be UNTOUCHED (no auto-delete).
+    const plan = planMemoryMaintenance(facts, NOW);
+    assert.ok(plan.flagReview.includes('stale'), 'stale low-importance fact is flagged for review');
+    await applyMemoryMaintenance(supa, 'S1', NOW);
+    for (const f of supa._db.items) assert.equal(f.status, 'open', `gardener must never change status (${f.id})`);
+    assert.equal(supa._db.items.find((f) => f.id === 'stale').meta.review_candidate, true, 'the review flag landed as metadata only');
+    // Forget journey for 'drop': preview → forged code refused → real code executes.
+    facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', [facts.find((f) => f.id === 'drop')]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, '000000', new Date()).ok, false, 'forged code refused');
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 1);
+    assert.equal(supa._db.items.find((f) => f.id === 'drop').status, 'trashed');
+    assert.equal(supa._db.items.find((f) => f.id === 'keep').status, 'open');
+    // Restore: the fact returns to open and recall.
+    const restored = await restoreFact(supa, 'S1', 'drop');
+    assert.ok(restored && restored.status === 'open');
+    // Purge: a freshly trashed fact is NEVER purge-eligible.
+    await trashFact(supa, supa._db.items.find((f) => f.id === 'drop'), 'test');
+    const purged = await purgeExpiredTrashedFacts(supa, 30);
+    assert.equal(purged, 0, 'purge respects the retention window');
+    assert.equal(supa._db.items.length, 3, 'nothing was hard-deleted in the whole journey');
+  });
+
+  it('HARNESS DOC: the live-model protocol exists and names its gates', () => {
+    const doc = readFileSync(new URL('../../docs/autonomous/d6/AI_E2E_HARNESS.md', import.meta.url), 'utf8');
+    assert.ok(doc.includes('NOT in CI'), 'the live layer is honestly separated from CI');
+    assert.ok(doc.includes('Injection drill'), 'the live protocol includes the injection drill');
+  });
+});
+
+describe('D6 PR-2 — search relevance ranking (T-D6-2)', async () => {
+  const { rankByRelevance, trigramSimilarity } = await import('../../packages/voice-engine/src/rank.ts');
+
+  it('an exact older match outranks a newer partial hit; ties keep recency', () => {
+    const rows = [
+      { id: 'partial-new', text: 'حليب بالشوكولاتة وحلويات' },
+      { id: 'exact-old', text: 'حليب الأطفال' },
+      { id: 'partial-older', text: 'بودره حليب للقهوه' },
+    ];
+    const ranked = rankByRelevance(rows, 'حليب الأطفال', (r) => r.text);
+    assert.equal(ranked[0].id, 'exact-old', 'the exact match wins despite being older');
+  });
+
+  it('trigram similarity ranks a typo-tolerant near-match above noise', () => {
+    const sim = trigramSimilarity('حليب', 'حليب الأطفال');
+    const noise = trigramSimilarity('حليب', 'مفاتيح السيارة');
+    assert.ok(sim > noise, `near (${sim}) > noise (${noise})`);
+    assert.ok(trigramSimilarity('milk', 'milk') === 1, 'identity is 1');
+    assert.equal(trigramSimilarity('', 'x'), 0);
+  });
+
+  it('GUARD: search() ranks its candidate pool and keeps the classic page sizes', () => {
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('rankByRelevance(i.data as Item[], q,'), 'items are ranked');
+    assert.ok(client.includes('.slice(0, 30)') && client.includes('.slice(0, 20)'), 'page sizes preserved (30 items / 20 notes)');
+  });
+});
+
+describe('D6 PR-3 — maintenance surfacing (T-D6-1)', async () => {
+  const { scanMemoryMaintenance } = await import('../../apps/mobile/src/lib/userMemory.ts');
+  const row = (id, title, details, meta = {}) => ({ id, title, details, meta });
+
+  it('scan: identical normalized lines with distinct keys form a duplicate group; same-key rows do not', () => {
+    const rows = [
+      row('1', 'بيناديني', 'أبو كريم', { mkey: 'identity:name' }),
+      row('2', 'بيناديني', 'ابو كريم', { mkey: 'identity:nickname' }),
+      row('3', 'الخضرة عندي', 'بندورة', { mkey: 'meaning:veg' }),
+      row('4', 'الخضرة عندي', 'بندورة', { mkey: 'meaning:veg' }), // retry dup — same key
+      row('5', 'سيارتي', 'أودي', { mkey: 'fact:car', review_candidate: true }),
+    ];
+    const scan = scanMemoryMaintenance(rows);
+    assert.equal(scan.duplicateGroups, 1, 'only the name pair (hamza-variant lines, distinct keys) groups');
+    assert.equal(scan.reviewFlagged, 1);
+  });
+
+  it('scan is read-only by construction and the banner surface writes nothing', () => {
+    const lib = readFileSync(new URL('../../apps/mobile/src/lib/userMemory.ts', import.meta.url), 'utf8');
+    const start = lib.indexOf('export function scanMemoryMaintenance');
+    const scanBody = lib.slice(start, lib.indexOf('\nexport ', start + 10));
+    assert.ok(!/delete|update|insert|trash/i.test(scanBody), 'the scan performs no mutation calls');
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(app.includes('scanMemoryMaintenance(rows)'), 'banner is fed by the scan');
+    assert.ok(app.includes("onSendText(t('maintAsk'))"), 'acting on the banner goes through chat (the rails), not a local delete');
+  });
+
+  it('GUARD: maint i18n keys exist in both languages', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['maintBanner', 'maintAsk', 'maintDismiss']) {
+      assert.ok((i18n.split(`${k}:`).length - 1) >= 2, `${k} in AR + EN`);
+    }
   });
 });
