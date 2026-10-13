@@ -24,7 +24,7 @@ As a unified diff:
 
 ```diff
 @@ rls-audit job, after the migrate-check step @@
-       - name: Migrate check — full chain applies twice + schema assertions
+       - name: Build scratch database (migrate-check)
          run: node supabase/tests/migrate-check.mjs
          env:
            DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
