@@ -58,7 +58,7 @@ order 0035 → 0045**, verifying after each with its probe (the
 | # | Content | Verify | Rollback |
 |---|---|---|---|
 | 0035 | items `'trashed'` status; profiles trash floor ≥30 + clamp trigger | status check text; trigger `profiles_trash_floor` exists | Forward-fix preferred: once `'trashed'` rows exist the CHECK cannot narrow safely. Trigger drop is safe: `drop trigger profiles_trash_floor on public.profiles;` |
-| 0036 | `pending_actions` (forget preview rail) | table + RLS on | `drop table public.pending_actions;` (only if no previews in flight; loses nothing durable) |
+| 0036 | `pending_actions` CHECKs gain `forget_memory` (the table + RLS themselves were created in 0034; 0036 only extends them) | constraint text names `forget_memory` | Reversing 0036 alone = narrow the CHECK back. `drop table public.pending_actions;` removes 0034's governed-actions table too — only as a last resort, and only if no previews are in flight |
 | 0037 | claim states (`executing`) | constraint text includes `executing` | Narrow the CHECK only when zero rows are `executing` |
 | 0038 | `can_read_photo` hardened | function body requires folder = note author | Restore the pre-0038 body from migration history (0024-era) — NOT recommended; it reopens the HIGH finding |
 | 0039 | `notes_preserve_authorship` trigger | trigger exists on notes | `drop trigger notes_preserve_authorship on public.notes;` (reopens the forgeability hole — not recommended) |
