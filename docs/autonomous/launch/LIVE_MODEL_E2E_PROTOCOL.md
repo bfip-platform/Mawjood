@@ -2,6 +2,14 @@
 
 **Status: PROTOCOL READY — EXECUTION BLOCKED (owner action required).**
 
+*Update 2026-10-13: the RC is now fully merged (`main @ 7f4bad04`, PRs
+#42 + #43). The staging deployment + test plans are prepared in
+`STAGING_DEPLOYMENT_PLAN.md` / `STAGING_TEST_PLAN.md` (scratch reuse
+audited; strict staging spend proposal: $0.50/user/day cap, $10 total
+ceiling, hard stops). Remaining blockers are the plan's B1–B5: owner
+approval, a scratch access route, owner-set provider secrets, Auth URL
+configuration, and migration 0046 on scratch (carried there: 0001–0045).*
+
 ## Why it cannot run under current authorization
 
 The D6 harness (`docs/autonomous/d6/AI_E2E_HARNESS.md`,

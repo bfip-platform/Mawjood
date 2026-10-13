@@ -2,14 +2,14 @@
 
 Consolidated from every stage of the program. One pass through this list unblocks everything the agent cannot do itself.
 
-## 1. Merge the Draft PR queue — ✅ DONE 2026-10-12 (via PR #36)
+## 1. Merge the Draft PR queue — ✅ DONE (PR #36; launch delta via PR #42 + PR #43)
 
-The queue was integrated in dependency order into PR #36 (with the owner's audit corrections) and the owner merged it: `main` = `0cd7546e7bb847887e0b8db72b57b1bbf60a0779`. Remaining merges are the post-merge launch-readiness PRs: **#37** (LOW closures) → **#38** (18+, migration 0045) → **#39** (offline wiring) → **#40** (a11y) → **#41** (launch docs). Each is independently reviewed + CI-green at its exact head; merge in any order (no shared files except test/ledger appends).
+The queue was integrated in dependency order into PR #36 (with the owner's audit corrections) and the owner merged it: `main` = `0cd7546e7bb847887e0b8db72b57b1bbf60a0779`. The launch-readiness PRs #37–#41 were then combined into integration PR **#42** (owner-merged), followed by **#43** (F-LAUNCH-01 Option B, migration 0046, owner-approved + merged). Current `main` = `7f4bad04cbc208adc06b80d643f190ae515e30c6` — this is the Codex-gate RC.
 
 ## 2. Production rollout (separate approval)
 
 - [ ] Verify production's current migration state (the open D0 question) — including whether `items.updated_at` already exists out of band.
-- [ ] Apply migrations **0035 → 0045** in order; deploy the corresponding edge functions. Full procedure + per-migration rollback: `docs/autonomous/launch/PROD_ROLLOUT_RUNBOOK.md`.
+- [ ] Apply migrations **0035 → 0046** in order; deploy the corresponding edge functions. Full procedure + per-migration rollback: `docs/autonomous/launch/PROD_ROLLOUT_RUNBOOK.md`.
 - [ ] Use `CREATE INDEX CONCURRENTLY` for 0043 per its header runbook if prod tables are large.
 - [ ] Confirm production backup posture (daily backups / PITR) in the dashboard.
 
@@ -37,5 +37,5 @@ The queue was integrated in dependency order into PR #36 (with the owner's audit
 
 - [ ] Screen-reader walkthrough (VoiceOver/TalkBack) of the primary flows (PR #29 scoped the code pass; device sign-off is yours).
 - [ ] Lighthouse on a deployed web build (PR #27 foundations are export-verified; the deployed check is post-deploy).
-- [ ] Run the D6 live-model protocol against a staging deployment of the RC with real keys (prepared + blocked analysis: `docs/autonomous/launch/LIVE_MODEL_E2E_PROTOCOL.md` — needs a staging deploy + keys + DOB-seeded test users).
+- [ ] Approve the staging plan + spend budget and stage the live-model E2E: `docs/autonomous/launch/STAGING_DEPLOYMENT_PLAN.md` (isolation audit, deploy sequence, secrets inventory, strict $0.50/user/day staging cap + $10 exercise ceiling + hard stops) and `STAGING_TEST_PLAN.md` (accounts/DOB matrix, lifecycle, corpus, offline, authorization, ledger verification). Blockers B1–B5 are itemized in the plan §7.
 - [ ] ChatGPT ↔ GitHub OAuth link (your standing plan) — D9's gate package depends on it.
