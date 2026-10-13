@@ -31,9 +31,10 @@ and are deliberate, user-initiated flows:
 | Site | Flow | Trash semantics |
 |---|---|---|
 | `trashItem` (~L1279) | user trashes an item | inserts a full snapshot into `trash_bin` **first**, then deletes the row — restorable until `emptyTrash`/expiry |
-| `deleteNote` / note cascades (~L1179, 1192, 1221, 1253) | user deletes a note | its extracted items are deleted with it |
-| list cascade (~L1303) | `trashShoppingList` / list delete | list + items moved to trash (or permanent when retention ≤ 0, the user's explicit choice) |
-| `deleteSpaceTab`, `deleteSpace` | tab/space deletion | move-to-trash options via the same snapshot pattern |
+| `trashNote` (~L1221), `trashSecretNote` (~L1253) | user trashes a note | snapshot pattern; the note's extracted items are deleted with it |
+| `deleteSpaceTab` cascade (~L1179), `deleteTabForever` (~L1192) | user deletes a custom tab (forever) | the tab's items are deleted with it |
+| list cascade (~L1303) | `trashShoppingList` | list + items moved to trash (or permanent when retention ≤ 0, the user's explicit choice) |
+| `deleteSpace` (L1544) | owner deletes a whole space | deletes the `spaces` row directly — `items.space_id` is **ON DELETE CASCADE** (0002:6), so items cascade with **no trash snapshot**. Owner-only (`spaces_owner_all` policy), so the member-scope exposure is unchanged, but it is a third parent-cascade surface alongside lists |
 
 Two schema facts matter for any fix:
 
@@ -44,9 +45,12 @@ Two schema facts matter for any fix:
   Parent-table deletes are part of the same surface.
 
 Server side is unaffected by this finding: the AI/engine paths never rely on
-the client policy. The engine's only `items` delete is
-`purgeExpiredTrashedFacts` (service role; trashed + past-retention only),
-and AI trashing goes through the 0036/0037/0041 confirmation rails.
+the client policy. Within the memory engine (`_shared/memory.ts`) the only
+`items` delete is `purgeExpiredTrashedFacts` (service role; trashed +
+past-retention only); the one other server-side items delete is
+`account-delete` (service role; erases the user's own spaces on account
+closure — intended). AI trashing goes through the 0036/0037/0041
+confirmation rails.
 
 ## 3. Does it bypass the intended confirmation/trash behavior?
 
@@ -78,7 +82,10 @@ insider/bug/hijack hole open in shared spaces. Zero work.
    identically; the engine purge (service role) is untouched.
 4. Same treatment flagged for the parent cascade (`shopping_lists` delete +
    `list_id` CASCADE) if the owner wants defense in depth; list deletion
-   already snapshots first via `trashShoppingList`.
+   already snapshots first via `trashShoppingList`. The spaces cascade
+   (`deleteSpace`, §2) should be named in the same scope: it is owner-only
+   today, and Option B can leave it as an explicit owner prerogative or
+   route it through the same RPC — owner's choice when scoping 0046.
 
 *Impact:* one additive migration (policy split + one function; rollback =
 restore the FOR ALL policy, which re-opens the hole but breaks nothing) +
