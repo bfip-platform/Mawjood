@@ -29,6 +29,8 @@ import {
   parseDirectedShopping,
   splitShoppingItems,
   resolveFamilyMember,
+  isAdult,
+  parseBirthDate,
 } from '@mawjood/voice-engine';
 import type { FamilyMember, Item, Note, Space, SpaceTab, SpaceType, TrashKind, TrashRow } from '@mawjood/voice-engine';
 import { supabase } from '../lib/supabase';
@@ -629,6 +631,12 @@ export default function HomeScreen() {
 
   // ── Auth: real accounts + family invites ──
   const [authState, setAuthState] = useState<'loading' | 'signed-out' | 'signed-in'>('loading');
+  // 🔞 18+ gate (Decision #5): 'checking' until the profile's declared
+  // birth date is known; 'needed' = not declared; 'blocked' = under 18.
+  const [ageStatus, setAgeStatus] = useState<'checking' | 'needed' | 'adult' | 'blocked'>('checking');
+  const [dobDraft, setDobDraft] = useState('');
+  const [dobError, setDobError] = useState<string | null>(null);
+  const [dobSaving, setDobSaving] = useState(false);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [upgradeEmail, setUpgradeEmail] = useState('');
   const [upgradeSent, setUpgradeSent] = useState(false);
@@ -1824,6 +1832,8 @@ export default function HomeScreen() {
         .then((p) => {
           setDisplayName(p?.display_name ?? null);
           setNameDraft(p?.display_name ?? '');
+          const bd = p?.birth_date ?? null;
+          setAgeStatus(bd ? (isAdult(bd) ? 'adult' : 'blocked') : 'needed');
         })
         .catch(() => {});
       setSpaces(await engine.ensureDefaultSpaces(user.id));
@@ -3690,10 +3700,93 @@ export default function HomeScreen() {
     );
   }
 
+  const submitDob = async () => {
+    const iso = parseBirthDate(dobDraft);
+    if (!iso) {
+      setDobError(t('ageGateInvalid'));
+      return;
+    }
+    setDobSaving(true);
+    setDobError(null);
+    try {
+      await engine.setMyBirthDate(iso);
+      setAgeStatus(isAdult(iso) ? 'adult' : 'blocked');
+    } catch {
+      setDobError(t('ageGateSaveFail'));
+    } finally {
+      setDobSaving(false);
+    }
+  };
+
   if (authState === 'signed-out') {
     return (
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
         <AuthScreen />
+      </SafeAreaView>
+    );
+  }
+
+  // 🔞 18+ gate screens (Decision #5) — before any main UI renders.
+  if (authState === 'signed-in' && ageStatus === 'checking') {
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color={P.accent} />
+        <Text style={styles.muted}>loading Mawjood…</Text>
+      </SafeAreaView>
+    );
+  }
+  if (authState === 'signed-in' && ageStatus === 'needed') {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: P.ink }}>{t('ageGateTitle')}</Text>
+          <Text style={{ fontSize: 15, lineHeight: 22, color: P.ink }}>{t('ageGateBody')}</Text>
+          <Text style={{ fontSize: 13, color: P.muted }}>{t('ageGateDobLabel')}</Text>
+          <TextInput
+            value={dobDraft}
+            onChangeText={setDobDraft}
+            placeholder={t('ageGateDobPlaceholder')}
+            placeholderTextColor={P.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="numbers-and-punctuation"
+            accessibilityLabel={t('ageGateDobLabel')}
+            style={{
+              borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 14,
+              fontSize: 17, color: P.ink, backgroundColor: P.input,
+            }}
+          />
+          {dobError ? <Text style={{ color: '#B3261E', fontSize: 14 }}>{dobError}</Text> : null}
+          <Pressable
+            onPress={submitDob}
+            disabled={dobSaving}
+            accessibilityRole="button"
+            accessibilityLabel={t('ageGateSubmit')}
+            style={{ backgroundColor: P.accent, borderRadius: 12, padding: 15, alignItems: 'center', opacity: dobSaving ? 0.6 : 1 }}
+          >
+            {dobSaving
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{t('ageGateSubmit')}</Text>}
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  if (authState === 'signed-in' && ageStatus === 'blocked') {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: P.ink }}>{t('ageGateBlockedTitle')}</Text>
+          <Text style={{ fontSize: 15, lineHeight: 22, color: P.ink }}>{t('ageGateBlockedBody')}</Text>
+          <Pressable
+            onPress={async () => { await signOut(); setAgeStatus('checking'); setAuthState('signed-out'); }}
+            accessibilityRole="button"
+            accessibilityLabel={t('ageGateSignOut')}
+            style={{ borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 15, alignItems: 'center' }}
+          >
+            <Text style={{ color: P.ink, fontSize: 16, fontWeight: '600' }}>{t('ageGateSignOut')}</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }

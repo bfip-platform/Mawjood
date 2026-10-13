@@ -486,6 +486,16 @@ const ar = {
   smartHint: 'قول "ضيفهم" وبضيفهم لقائمة جديدة 👍',
   smartNone: 'ما لقطت إيقاع شراء واضح بعد — كل ما بتسجلوا مشتريات أكتر بصير أذكى 🧠',
   smartAdded: '✅ ضفتهم لقائمة "{title}": {items}',
+  ageGateTitle: 'موجود للبالغين فقط',
+  ageGateBody: 'لازم نأكّد إن عمرك 18 سنة أو أكتر قبل ما تكمل. عبّي تاريخ ميلادك — بنحفظه بحسابك وبس.',
+  ageGateDobLabel: 'تاريخ الميلاد',
+  ageGateDobPlaceholder: 'YYYY-MM-DD',
+  ageGateSubmit: 'تأكيد',
+  ageGateInvalid: 'التاريخ مش مظبوط — عبّيه زي المثال: 1990-05-17',
+  ageGateSaveFail: 'ما قدرنا نحفظ التاريخ — جرّب كمان مرة',
+  ageGateBlockedTitle: 'موجود مخصص للبالغين (18+)',
+  ageGateBlockedBody: 'حسب تاريخ الميلاد اللي عبّيته، الخدمة مش متاحة تحت 18 سنة. لو في غلطة بالتاريخ، تواصل مع الدعم.',
+  ageGateSignOut: 'تسجيل الخروج',
   smartListTitle: '🛒 تسوق ذكي',
 };
 
@@ -958,6 +968,16 @@ const en: Record<keyof typeof ar, string> = {
   smartHint: 'Say "add them" and I\'ll start a new list 👍',
   smartNone: 'No clear buying rhythm yet — the more you log, the smarter I get 🧠',
   smartAdded: '✅ Added them to "{title}": {items}',
+  ageGateTitle: 'Mawjood is adults-only',
+  ageGateBody: 'We need to confirm you are 18 or older before you continue. Enter your date of birth — it is stored only on your account.',
+  ageGateDobLabel: 'Date of birth',
+  ageGateDobPlaceholder: 'YYYY-MM-DD',
+  ageGateSubmit: 'Confirm',
+  ageGateInvalid: 'That date does not look right — use the format 1990-05-17',
+  ageGateSaveFail: 'Could not save the date — please try again',
+  ageGateBlockedTitle: 'Mawjood is for adults (18+)',
+  ageGateBlockedBody: 'Based on the date of birth you entered, the service is not available under 18. If the date was a mistake, contact support.',
+  ageGateSignOut: 'Sign out',
   smartListTitle: '🛒 Smart shopping',
 };
 

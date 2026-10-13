@@ -5,3 +5,4 @@ export * from './answer';
 export * from './family';
 export * from './offline';
 export * from './rank';
+export * from './age';
