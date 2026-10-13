@@ -1882,6 +1882,13 @@ export default function HomeScreen() {
         setView('chat');
         setIsAnonymous(false);
         setAuthState('signed-out');
+        // D6 review N1: clear the maintenance scan so a second user in
+        // the same session never sees the first user's counts (and gets
+        // their own scan). The setters are declared later in this
+        // component; this handler only runs after render completes.
+        setMaintScan(null);
+        setMaintDismissed(false);
+        maintScanDoneRef.current = false;
       } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
         // magic-link return, or anonymous → permanent upgrade
         boot();
@@ -2653,13 +2660,15 @@ export default function HomeScreen() {
   const maintScanDoneRef = useRef(false);
   useEffect(() => {
     if (authState !== 'signed-in' || maintScanDoneRef.current) return;
-    maintScanDoneRef.current = true;
     (async () => {
       try {
         const pid = spaceIdByType('private');
         if (!pid) return;
         const rows = await memoryClient.listMemoryItems(pid);
         setMaintScan(scanMemoryMaintenance(rows));
+        // Mark done only AFTER a successful scan (review N2) — a
+        // transient failure must not suppress the banner all session.
+        maintScanDoneRef.current = true;
       } catch {
         /* surfacing is best-effort — silence is the failure mode */
       }
