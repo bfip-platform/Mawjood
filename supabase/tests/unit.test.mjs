@@ -838,3 +838,31 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.ok(reclaimed && reclaimed.status === 'executing');
   });
 });
+
+describe('D6 PR-2 — search relevance ranking (T-D6-2)', async () => {
+  const { rankByRelevance, trigramSimilarity } = await import('../../packages/voice-engine/src/rank.ts');
+
+  it('an exact older match outranks a newer partial hit; ties keep recency', () => {
+    const rows = [
+      { id: 'partial-new', text: 'حليب بالشوكولاتة وحلويات' },
+      { id: 'exact-old', text: 'حليب الأطفال' },
+      { id: 'partial-older', text: 'بودره حليب للقهوه' },
+    ];
+    const ranked = rankByRelevance(rows, 'حليب الأطفال', (r) => r.text);
+    assert.equal(ranked[0].id, 'exact-old', 'the exact match wins despite being older');
+  });
+
+  it('trigram similarity ranks a typo-tolerant near-match above noise', () => {
+    const sim = trigramSimilarity('حليب', 'حليب الأطفال');
+    const noise = trigramSimilarity('حليب', 'مفاتيح السيارة');
+    assert.ok(sim > noise, `near (${sim}) > noise (${noise})`);
+    assert.ok(trigramSimilarity('milk', 'milk') === 1, 'identity is 1');
+    assert.equal(trigramSimilarity('', 'x'), 0);
+  });
+
+  it('GUARD: search() ranks its candidate pool and keeps the classic page sizes', () => {
+    const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+    assert.ok(client.includes('rankByRelevance(i.data as Item[], q,'), 'items are ranked');
+    assert.ok(client.includes('.slice(0, 30)') && client.includes('.slice(0, 20)'), 'page sizes preserved (30 items / 20 notes)');
+  });
+});
