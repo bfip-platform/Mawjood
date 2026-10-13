@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
       const rows: any[] = [];
       for (let from = 0; from < PAGE * 200; from += PAGE) {
         // deno-lint-ignore no-explicit-any
-        let q: any = admin.from(table).select(columns);
+        let q: any = admin.from(table).select(columns).order('id', { ascending: true });
         if (apply) q = apply(q);
         const { data, error } = await q.range(from, from + PAGE - 1);
         if (error) throw error;
