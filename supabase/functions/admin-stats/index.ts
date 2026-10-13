@@ -69,11 +69,33 @@ Deno.serve(async (req) => {
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
       .slice(0, 100);
 
+
+    // F-INT-05: fetch ALL rows of a light column set via .range()
+    // pagination — a bare row limit silently truncates aggregates at
+    // scale (the register's LOW finding). Pages of 1,000 until a
+    // short page, hard-capped at 200 pages as a runaway guard.
+    // deno-lint-ignore no-explicit-any
+    const fetchAll = async (table: string, columns: string, apply?: (q: any) => any): Promise<any[]> => {
+      const PAGE = 1000;
+      // deno-lint-ignore no-explicit-any
+      const rows: any[] = [];
+      for (let from = 0; from < PAGE * 200; from += PAGE) {
+        // deno-lint-ignore no-explicit-any
+        let q: any = admin.from(table).select(columns);
+        if (apply) q = apply(q);
+        const { data, error } = await q.range(from, from + PAGE - 1);
+        if (error) throw error;
+        rows.push(...(data ?? []));
+        if (!data || data.length < PAGE) break;
+      }
+      return rows;
+    };
+
     // ---- spaces ----
     const { count: spacesTotal } = await admin.from('spaces').select('id', { count: 'exact', head: true });
-    const { data: spaceTypes } = await admin.from('spaces').select('type').limit(5000);
+    const spaceTypes = await fetchAll('spaces', 'type');
     const byType: Record<string, number> = {};
-    for (const s of spaceTypes ?? []) byType[s.type] = (byType[s.type] ?? 0) + 1;
+    for (const s of spaceTypes) byType[s.type] = (byType[s.type] ?? 0) + 1;
 
     const { count: membersTotal } = await admin
       .from('space_members')
@@ -82,35 +104,43 @@ Deno.serve(async (req) => {
     // ---- notes ----
     const { count: notesTotal } = await admin.from('notes').select('id', { count: 'exact', head: true });
     const noteByDay: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
-    const { data: recentNotes } = await admin
-      .from('notes')
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(2000);
-    for (const n of recentNotes ?? []) {
+    // Only the 14-day window feeds the chart — fetch it fully
+    // (paginated), not the 2,000 most recent rows overall.
+    const windowStart = new Date(`${days[0]}T00:00:00.000Z`);
+    const recentNotes: Array<{ created_at: string }> = [];
+    for (let from = 0; from < 200_000; from += 1000) {
+      const { data, error } = await admin
+        .from('notes')
+        .select('created_at')
+        .gte('created_at', windowStart.toISOString())
+        .order('created_at', { ascending: true })
+        .range(from, from + 999);
+      if (error) throw error;
+      recentNotes.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    for (const n of recentNotes) {
       const d = (n.created_at as string).slice(0, 10);
       if (d in noteByDay) noteByDay[d]++;
     }
 
     // ---- items ----
     const { count: itemsTotal } = await admin.from('items').select('id', { count: 'exact', head: true });
-    const { data: itemKinds } = await admin.from('items').select('kind').limit(5000);
+    const itemKinds = await fetchAll('items', 'kind');
     const byKind: Record<string, number> = {};
-    for (const k of itemKinds ?? []) byKind[k.kind] = (byKind[k.kind] ?? 0) + 1;
+    for (const k of itemKinds) byKind[k.kind] = (byKind[k.kind] ?? 0) + 1;
 
     // ---- invites ----
-    const { data: invites } = await admin.from('space_invites').select('used_count').limit(5000);
-    const invitesTotal = invites?.length ?? 0;
-    const invitesUsed = (invites ?? []).reduce((a, r) => a + (r.used_count ?? 0), 0);
+    const { count: invitesCount } = await admin.from('space_invites').select('id', { count: 'exact', head: true });
+    const invites = await fetchAll('space_invites', 'used_count');
+    const invitesTotal = invitesCount ?? invites.length;
+    const invitesUsed = invites.reduce((a, r) => a + (r.used_count ?? 0), 0);
 
     // ---- limits / subscriptions (manual side until Stripe is wired) ----
-    const { data: profs } = await admin
-      .from('profiles')
-      .select('id, family_slots, chat_retention_days, trash_retention_days, secret_vaults_limit, custom_tabs_limit')
-      .limit(5000);
-    const { data: famSpaces } = await admin.from('spaces').select('owner_id').eq('type', 'family').limit(5000);
+    const profs = await fetchAll('profiles', 'id, family_slots, chat_retention_days, trash_retention_days, secret_vaults_limit, custom_tabs_limit');
+    const famSpaces = await fetchAll('spaces', 'owner_id', (q) => q.eq('type', 'family'));
     const famCount: Record<string, number> = {};
-    for (const s of famSpaces ?? []) famCount[s.owner_id] = (famCount[s.owner_id] ?? 0) + 1;
+    for (const s of famSpaces) famCount[s.owner_id] = (famCount[s.owner_id] ?? 0) + 1;
     const emailById: Record<string, string | null> = {};
     const createdById: Record<string, string> = {};
     for (const u of users) {
@@ -124,7 +154,7 @@ Deno.serve(async (req) => {
       (p.trash_retention_days ?? 0) > 0 ||
       (p.chat_retention_days ?? 7) > 7 ||
       (p.custom_tabs_limit ?? 3) > 3;
-    const limitUsers = (profs ?? [])
+    const limitUsers = profs
       .map((p) => ({
         id: p.id,
         email: emailById[p.id] ?? null,

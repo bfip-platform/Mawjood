@@ -7,8 +7,9 @@ import { APP_BRAIN } from '../_shared/app-brain.ts';
 import { looksLikeShoppingList, parseShoppingItems } from '../_shared/shopping.ts';
 import { sanitizePhotoUrl } from '../_shared/photo-guard.ts';
 import { checkSpendCap, chargeModelCall, payloadBytes, spendCapMessage } from '../_shared/spend.ts';
+import { chainToExtract } from '../_shared/extract-chain.ts';
 import { retryDelayMs, sleep } from '../_shared/backoff.ts';
-import { internalHeaders, adminClient, isInternal } from '../_shared/edge-auth.ts';
+import { adminClient, isInternal } from '../_shared/edge-auth.ts';
 import { checkRateLimit, rateLimitMessage } from '../_shared/rate-limit.ts';
 import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import { sanitizeTimezone } from '../_shared/time.ts';
@@ -214,15 +215,14 @@ async function toolSaveNote(supa: Supa, userId: string, spaceByType: Record<stri
     ...(inVault ? { vault_id: vctx!.vaultId } : {}),
   }).select('id').single();
   if (error) return { error: error.message };
-  // fire-and-forget extraction (same as the transcribe pipeline)
-  try {
-    const base = Deno.env.get('SUPABASE_URL')!;
-    fetch(`${base}/functions/v1/extract`, {
-      method: 'POST',
-      headers: internalHeaders(),
-      body: JSON.stringify({ note_id: data.id }),
+  // fire-and-forget extraction (same as the transcribe pipeline),
+  // retried with final-failure ops logging (F-INT-07).
+  void chainToExtract(data.id, async (nid) => {
+    await logOps(supa, {
+      kind: 'extract.chain_failed', user_id: userId,
+      detail: `chat:note=${nid}`,
     }).catch(() => {});
-  } catch { /* ignore */ }
+  });
   return { note_id: data.id, space_type: st, space_label: SPACE_LABEL[st], tab_id: tabId };
 }
 

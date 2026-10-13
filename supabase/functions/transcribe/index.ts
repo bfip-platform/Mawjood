@@ -17,9 +17,9 @@ import { logAi, logOps, newRequestId } from '../_shared/log.ts';
 import {
   adminClient,
   authUserId,
-  internalHeaders,
   userClient,
 } from '../_shared/edge-auth.ts';
+import { chainToExtract } from '../_shared/extract-chain.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -146,14 +146,14 @@ Deno.serve(async (req) => {
 
     // fire-and-forget: pull actionable items out of the transcript.
     // extract is internal-only — prove it with the shared secret.
-    try {
-      const base = Deno.env.get('SUPABASE_URL')!;
-      fetch(`${base}/functions/v1/extract`, {
-        method: 'POST',
-        headers: internalHeaders(),
-        body: JSON.stringify({ note_id }),
+    // Retried chaining (F-INT-07): a final failure is ops-logged, not
+    // swallowed, so a stranded note is visible and re-runnable.
+    void chainToExtract(note_id, async (nid) => {
+      await logOps(adminClient(), {
+        kind: 'extract.chain_failed', user_id: callerId,
+        detail: `transcribe:note=${nid}`,
       }).catch(() => {});
-    } catch { /* ignore */ }
+    });
 
     return new Response(JSON.stringify({ ok: true, text: tr.text }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
