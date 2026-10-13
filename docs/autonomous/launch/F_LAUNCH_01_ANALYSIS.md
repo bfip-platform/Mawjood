@@ -106,3 +106,19 @@ with the scratch proof and an extended census guard (no `.from('items')
 .delete(` may remain in client code; the RPC is the only path). Until then,
 F-LAUNCH-01 stays open at MEDIUM with Option A as the interim posture —
 which is a launch-gate input for the owner, not a silent acceptance.
+
+---
+
+## Status update (2026-10-13)
+
+The owner approved Option B. It is implemented as **Draft PR #43**
+(migration `0046_items_delete_rpc.sql`; `hard_delete_items(uuid[])`
+SECURITY DEFINER, `search_path` pinned empty, authenticated/service_role
+grants only, all-or-nothing per-row `can_access_space` validation; all
+nine client delete sites in `voice-engine/src/client.ts` routed through
+the RPC — the implementation census found two multi-line sites, 352 and
+1747, beyond the seven originally cited). Behavioral proof:
+`supabase/tests/hard-delete-check.mjs` (owner/member/outsider/atomicity/
+concurrency/rollback on real PostgreSQL). The spaces-cascade question
+(§2/§4) stays as documented: `deleteSpace` remains an owner-only direct
+path, unchanged.

@@ -16,3 +16,5 @@
 - Links to ledger entries: docs/autonomous/EXECUTION_LEDGER.md (post-merge entry); register: docs/autonomous/audit/INTEGRATION_FINDINGS_REGISTER.md.
 
 - **Final integration (2026-10-13):** PRs #37–#41 combined on `integration/launch-readiness-37-41` — suite 174/174 (assertion union rebuilt verbatim), migrate-check/ledger/rls/authz/auth-gates ALL GREEN locally, app tsc + lint + web export green. One combination-only defect found and fixed in-branch: stray conflict markers in the index.tsx hooks block (age-gate state + offline indicator unioned). F-LAUNCH-01 investigated in `docs/autonomous/launch/F_LAUNCH_01_ANALYSIS.md` (Option B recommended; owner approval required).
+
+- **F-LAUNCH-01 Option B (2026-10-13):** Draft PR #43 on `security/f-launch-01-option-b` from main `843c8734` — migration 0046 + RPC + client reroute; see the ledger entry of the same date. Awaiting owner merge; production unchanged.

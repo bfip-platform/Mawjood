@@ -1,14 +1,15 @@
-# Production rollout runbook — migrations 0035 → 0045 + function deploy
+# Production rollout runbook — migrations 0035 → 0046 + function deploy
 
 **Status: PREPARED, NOT EXECUTED.** Production is never touched without
 the owner's separate, explicit approval. This runbook is written so the
 owner (or the agent, on the owner's go) can execute it in one sitting
 with verification at every step and a defined way back.
 
-Release candidate: `main` @ `0cd7546e7bb847887e0b8db72b57b1bbf60a0779`
-(PR #36 merge). Launch-readiness PRs #37–#40 (LOW closures, 18+ gate,
-offline wiring, a11y) extend the range to **0045** when merged; this
-runbook covers the full 0035→0045 range.
+Release candidate: `main` @ `843c8734128dd4d3fb55a794f722cf60c779ddf6`
+(PR #42 merge — includes the launch-readiness PRs #37–#41). This runbook
+covers 0035→0045 for that RC. The F-LAUNCH-01 remediation (PR #43,
+migration **0046**) extends the range by one when the owner merges it;
+its row is in the table below.
 
 ## 0. Pre-flight (read-only; run ALL before changing anything)
 
@@ -68,6 +69,7 @@ order 0035 → 0045**, verifying after each with its probe (the
 | 0043 | trigram indexes | indexes exist | `drop index concurrently <name>;` per index |
 | 0044 | `ai_spend_daily` + `try_charge_ai_spend` / `ai_spend_total` | RPCs service-role only; RLS on, no client policies | `drop function` ×2 + `drop table` (loses spend history — keep unless necessary) |
 | 0045 | `profiles.birth_date` | column type `date` | `alter table public.profiles drop column birth_date;` (loses declarations — keep unless necessary) |
+| 0046 | items policy split (no client DELETE) + `hard_delete_items` RPC (F-LAUNCH-01 Option B; PR #43) | `pg_policies` for items shows INSERT/UPDATE policies only (no ALL/DELETE); `hard_delete_items` prosecdef + authenticated-executable, anon NOT | Restore the pre-0046 posture: `drop function public.hard_delete_items(uuid[]); drop policy "items_member_insert" on public.items; drop policy "items_member_update" on public.items; create policy "items_member_write" on public.items for all using (public.can_access_space(space_id)) with check (public.can_access_space(space_id));` — safe in any order vs the client (the RPC path and the restored direct path coexist); re-opens F-LAUNCH-01 by definition |
 
 **0043 at scale:** if production `items`/`notes` are large, do NOT run
 0043's plain `CREATE INDEX` inside the migration transaction — build

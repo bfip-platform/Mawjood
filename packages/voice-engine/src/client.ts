@@ -346,13 +346,29 @@ export class VoiceEngine {
     if (noteErr) throw noteErr;
   }
 
+  /**
+   * Permanent items deletion — the ONLY client path (F-LAUNCH-01, migration
+   * 0046): clients hold no direct DELETE grant on items; the
+   * hard_delete_items RPC re-validates the caller + space access for every
+   * row, all-or-nothing.
+   */
+  private async hardDeleteItems(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const { error } = await this.supabase.rpc('hard_delete_items', { p_ids: ids });
+    if (error) throw error;
+  }
+
+  /** Permanent-delete every item extracted from the given note(s). */
+  private async hardDeleteItemsByNote(noteIds: string[]): Promise<void> {
+    if (noteIds.length === 0) return;
+    const { data, error } = await this.supabase.from('items').select('id').in('note_id', noteIds);
+    if (error) throw error;
+    await this.hardDeleteItems(((data ?? []) as { id: string }[]).map((r) => r.id));
+  }
+
   /** Delete a note and its extracted items. */
   async deleteNote(noteId: string): Promise<void> {
-    const { error: itemsErr } = await this.supabase
-      .from('items')
-      .delete()
-      .eq('note_id', noteId);
-    if (itemsErr) throw itemsErr;
+    await this.hardDeleteItemsByNote([noteId]);
     const { error: noteErr } = await this.supabase
       .from('notes')
       .delete()
@@ -1176,7 +1192,7 @@ export class VoiceEngine {
     });
     if (insErr) throw insErr;
     if (noteIds.length > 0) {
-      await this.supabase.from('items').delete().in('note_id', noteIds);
+      await this.hardDeleteItems(items.map((i) => i.id));
       await this.supabase.from('notes').delete().in('id', noteIds);
     }
     await this.supabase.from('space_tabs').delete().eq('id', tabId);
@@ -1189,7 +1205,7 @@ export class VoiceEngine {
     for (const r of rows) await this.tryDeletePhoto(r.photo_url);
     const ids = rows.map((n) => n.id);
     if (ids.length > 0) {
-      await this.supabase.from('items').delete().in('note_id', ids);
+      await this.hardDeleteItemsByNote(ids);
       await this.supabase.from('notes').delete().in('id', ids);
     }
     const { error } = await this.supabase.from('space_tabs').delete().eq('id', tabId);
@@ -1218,7 +1234,7 @@ export class VoiceEngine {
       expires_at: this.trashExpiry(retentionDays),
     });
     if (error) throw error;
-    await this.supabase.from('items').delete().eq('note_id', noteId);
+    await this.hardDeleteItems(((items ?? []) as { id: string }[]).map((i) => i.id));
     await this.supabase.from('notes').delete().eq('id', noteId);
   }
 
@@ -1250,7 +1266,7 @@ export class VoiceEngine {
       expires_at: this.trashExpiry(retentionDays),
     });
     if (error) throw error;
-    await this.supabase.from('items').delete().eq('note_id', noteId);
+    await this.hardDeleteItems(((items ?? []) as { id: string }[]).map((i) => i.id));
     await this.supabase.from('notes').delete().eq('id', noteId);
   }
 
@@ -1260,8 +1276,7 @@ export class VoiceEngine {
     if (!item) return;
     const kind = this.trashKindForItemKind((item as any).kind);
     if (retentionDays <= 0) {
-      const { error } = await this.supabase.from('items').delete().eq('id', itemId);
-      if (error) throw error;
+      await this.hardDeleteItems([itemId]);
       await this.tryDeletePhoto((item as any).meta?.photo_url);
       return;
     }
@@ -1276,8 +1291,7 @@ export class VoiceEngine {
       expires_at: this.trashExpiry(retentionDays),
     });
     if (error) throw error;
-    const { error: delErr } = await this.supabase.from('items').delete().eq('id', itemId);
-    if (delErr) throw delErr;
+    await this.hardDeleteItems([itemId]);
   }
 
   /** Move a shopping list (+ its items) into the trash. retentionDays <= 0 → permanent. */
@@ -1300,7 +1314,7 @@ export class VoiceEngine {
       expires_at: this.trashExpiry(retentionDays),
     });
     if (error) throw error;
-    await this.supabase.from('items').delete().eq('list_id', listId);
+    await this.hardDeleteItems(((items ?? []) as { id: string }[]).map((i) => i.id));
     await this.supabase.from('shopping_lists').delete().eq('id', listId);
   }
 
@@ -1745,11 +1759,7 @@ export class VoiceEngine {
 
   /** Permanently delete a secret note (two-tap confirm in UI; never goes to trash). */
   async deleteSecretNote(noteId: string): Promise<void> {
-    const { error: itemsErr } = await this.supabase
-      .from('items')
-      .delete()
-      .eq('note_id', noteId);
-    if (itemsErr) throw itemsErr;
+    await this.hardDeleteItemsByNote([noteId]);
     const { error: noteErr } = await this.supabase
       .from('notes')
       .delete()

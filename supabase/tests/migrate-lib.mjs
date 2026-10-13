@@ -202,5 +202,19 @@ export const ASSERTIONS = [
     sql: `select exists (select 1 from information_schema.columns
                         where table_schema = 'public' and table_name = 'profiles'
                           and column_name = 'birth_date' and data_type = 'date') as ok`,
+  },
+  {
+    name: 'items: no client policy covers DELETE (0046, F-LAUNCH-01)',
+    sql: `select not exists (select 1 from pg_policies
+                             where schemaname = 'public' and tablename = 'items'
+                               and cmd in ('ALL', 'DELETE')) as ok`,
+  },
+  {
+    name: 'hard_delete_items is definer + authenticated/service only (0046)',
+    sql: `select (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'hard_delete_items' and p.prosecdef)
+                  and has_function_privilege('authenticated', 'public.hard_delete_items(uuid[])', 'execute')
+                  and has_function_privilege('service_role', 'public.hard_delete_items(uuid[])', 'execute')
+                  and not has_function_privilege('anon', 'public.hard_delete_items(uuid[])', 'execute')) as ok`,
   }
 ];

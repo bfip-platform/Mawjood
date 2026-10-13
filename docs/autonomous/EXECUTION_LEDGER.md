@@ -42,3 +42,11 @@
 - Security/privacy impact: age gate adds a profile DOB (self-declared, owner-writable only under existing RLS). No production contact. No credentials handled.
 - Rollback anchors: each PR reverts independently; main remains at the RC until the owner merges.
 - Unresolved blockers (owner): merges #37–#41; production rollout decision (0035→0045) + prod schema/backup answers; Stripe activation; OD-01/02 quota/pricing; $2/day cap confirmation; credential revocations; ChatGPT↔GitHub link for the Codex gate (RC fixed at 0cd7546e, or the post-#41 main HEAD); device a11y walkthrough; staging live-model run.
+
+## 2026-10-13 — F-LAUNCH-01 Option B implemented (owner-approved), Draft PR #43
+
+- Migration **0046**: `items_member_write` (FOR ALL) split into INSERT/UPDATE policies — clients hold **no DELETE policy** on items; permanent deletion routes through `public.hard_delete_items(uuid[])` (SECURITY DEFINER, `search_path=''`, auth.uid() required, per-row can_access_space validation, all-or-nothing 42501, EXECUTE to authenticated + service_role only).
+- Client: all **9** items-delete sites in `voice-engine/src/client.ts` (incl. two multi-line sites the original census missed: deleteNote L352, deleteSecretNote L1747) now call the RPC via `hardDeleteItems`/`hardDeleteItemsByNote`; trash flows unchanged (snapshots precede the RPC call — guard-pinned).
+- Server paths untouched (service role): engine purge + account-delete.
+- Tests: unit suite 179/179 incl. a multiline-aware zero-direct-delete census guard; migrate-lib 21 assertions; behavioral proof `hard-delete-check.mjs` (owner/member/outsider/atomicity/concurrency/rollback).
+- PR #42 verified merged at `843c8734` before branching. No merge/deploy/production change.
