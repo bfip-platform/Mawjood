@@ -50,3 +50,10 @@
 - Server paths untouched (service role): engine purge + account-delete.
 - Tests: unit suite 180/180 incl. a multiline-aware zero-direct-delete census guard; migrate-lib 22 assertions; behavioral proof `hard-delete-check.mjs` (owner/member/outsider/atomicity/concurrency/rollback).
 - PR #42 verified merged at `843c8734` before branching. No merge/deploy/production change.
+
+## 2026-10-13 — Staging & live-E2E preparation (owner-ordered; nothing deployed)
+
+- PR #43 verified merged at `7f4bad04` (= current main, the Codex RC). Merged tree re-verified locally: suite 180/180, migrate-check ALL GREEN.
+- Prepared `docs/autonomous/launch/STAGING_DEPLOYMENT_PLAN.md`: scratch-reuse isolation audit (distinct refs, no prod data ever, residue disclosed; live re-verification is an execution-time preflight — the agent's prior scratch access route no longer exists), reuse-vs-provision table, 24-function deploy list, secrets inventory (names only), 8-step gated sequence with per-step rollback, spend proposal (staging cap $0.50/user/day, ≤6 accounts, $10 total exercise ceiling, four hard stops; production $2 default untouched).
+- Prepared `docs/autonomous/launch/STAGING_TEST_PLAN.md`: 6-account matrix (owner/member/outsider/undeclared/underage/anonymous) with DOB fixtures, age-gate + memory-lifecycle + F-LAUNCH-01 live probes, 25-payload corpus acceptance, offline sync, authorization, and spend-ledger reconciliation + cap-trip scenarios.
+- D9 package amended: RC fixed at `7f4bad04`; D8 checklist + protocol status updated. Blockers B1–B5 itemized (owner approval, scratch access, owner-set secrets, Auth URLs, 0046-on-scratch).
