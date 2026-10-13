@@ -71,3 +71,12 @@ Governed-action executions (forget/merge/execute_action) all claim atomically (0
 
 ## Merge recommendation
 **NO-GO for a PR-by-PR merge of #16–#35 as they stand** — PR #19 carries F-INT-01 (HIGH) in its original form. **GO for the integration branch's content as the merge vehicle** (or for the PR queue once PR #19 is amended with the 0044 fix), conditional on the owner's standard gates: production rollout approval, Item-8 blockers dispositioned, and the Codex gate (PR #35 package) run against the resulting release-candidate SHA. No critical finding remains open on the integration HEAD; F-INT-05 (LOW) is the only open code item and is admin-only.
+
+
+## Post-merge launch readiness (2026-10-12, PRs #37–#41)
+
+- **F-INT-05 → CLOSED by PR #37** (pending owner merge): admin-stats aggregates fully paginated / exact-counted; the no-`.limit(` guard pins it.
+- **F-INT-07 → CLOSED by PR #37** (pending owner merge): extract chaining retried (3 attempts, backoff) with final failures ops-logged as `extract.chain_failed` from both transcribe and chat.
+- **F-INT-06 (rate-limit fail-open)**: unchanged posture — accepted design (the spend ledger fails closed independently); no action.
+- **F-INT-08 (bounded working sets)**: unchanged — product limits, documented.
+- Item-8 blockers disposition: 18+ enforcement BUILT (PR #38, migration 0045); offline UI wiring DONE (PR #39); accessibility code pass COMPLETED (PR #40; device sign-off remains owner-side); live-model protocol PREPARED, execution blocked on an owner-staged deployment + keys (docs/autonomous/launch/LIVE_MODEL_E2E_PROTOCOL.md); D7 ADOPTs still owner-blocked (factory publishes); production rollout runbook prepared (0035→0045) and NOT executed.
