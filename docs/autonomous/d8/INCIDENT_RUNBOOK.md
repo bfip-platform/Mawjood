@@ -10,7 +10,7 @@ Operational procedures for Mawjood production. Only mechanisms that exist in the
 | SEV-2 | a core flow down (chat/extract/transcribe) for all users | Check function logs + provider status; rollback if a deploy correlates. |
 | SEV-3 | degraded (slow search, one provider down) | Failover paths exist (Groq↔OpenAI config in `_shared/ai.ts`); schedule fix. |
 
-## Kill switches & levers that EXIST today
+## Kill switches & levers that exist in the program code (deploy state per LAUNCH_GATE.md)
 
 - **AI spend:** the daily spend cap (PR #19) fails closed on telemetry errors; set `AI_SPEND_CAP_OFF=1` only to *restore* service deliberately — to STOP spend, lower `AI_DAILY_SPEND_CAP_USD` or disable the provider key **[owner, Supabase secrets]**.
 - **Telemetry janitor:** inert unless `JANITOR_ENABLED=1` + `?execute=1` (PR #23) — it can never be the cause of user-data loss (allowlist: rate_limits/ai_events/ops_events only).

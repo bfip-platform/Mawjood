@@ -33,6 +33,7 @@ Finding → closing evidence → status. **The agent does not sign the launch ga
 | Legal (Terms/Privacy/DPA) | PR #25 drafts | ⛔ **counsel review required — drafts are NOT legal advice** |
 | 18+ launch | Decision #5 | ⛔ age-gate implementation/verification is a launch task, not yet built |
 | Vault paid gate | PR #25 entitlements (`VAULT_PAID_GATE_ENABLED=false`, test-proven) | ✅ correctly OFF until billing |
+| Brand finalization (OD-39) | Brand v1.2 baseline is the design floor (PR #27 tokens) | ⚠️ final logo / final hex lock-in / polished screens still open — an owner decision; not code-blocking, but a public launch usually wants it closed |
 
 ## Infrastructure & owner-held items
 
