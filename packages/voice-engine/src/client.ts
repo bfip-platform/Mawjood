@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Borrow, Item, ItemKind, Note, RecordedAudio, Space, SpaceTab, SpaceType, TabProposal } from './types';
 import { suggestSpaceType } from './suggest';
 import { isCorrection, isQuestion } from './answer';
+import { rankByRelevance } from './rank';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 /**
@@ -2209,7 +2210,10 @@ export class VoiceEngine {
       .eq('space_id', spaceId)
       .or(`title.ilike.${pattern},details.ilike.${pattern}`);
     if (opts.kinds && opts.kinds.length > 0) itemsQ = itemsQ.in('kind', opts.kinds);
-    const itemsP = itemsQ.order('created_at', { ascending: false }).limit(30);
+    // D6 T-D6-2: fetch a wider candidate pool (the 0043 trigram indexes
+    // keep it fast), rank by relevance locally, then cut to the classic
+    // page sizes — a perfect older match now beats a newer partial hit.
+    const itemsP = itemsQ.order('created_at', { ascending: false }).limit(60);
     const notesP = includeNotes
       ? this.supabase
           .from('notes')
@@ -2218,12 +2222,14 @@ export class VoiceEngine {
           .or('tab_id.is.null,tab_id.neq.secret') // trashed + vault notes never surface in search
           .ilike('transcript', pattern)
           .order('created_at', { ascending: false })
-          .limit(20)
+          .limit(40)
       : Promise.resolve({ data: [] as Note[], error: null });
     const [n, i] = await Promise.all([notesP, itemsP]);
     if (n.error) throw n.error;
     if (i.error) throw i.error;
-    return { notes: n.data as Note[], items: i.data as Item[] };
+    const items = rankByRelevance(i.data as Item[], q, (it) => `${it.title} ${it.details ?? ''}`).slice(0, 30);
+    const notes = rankByRelevance(n.data as Note[], q, (nt) => nt.transcript ?? '').slice(0, 20);
+    return { notes, items };
   }
 
   // ── Q&A (Phase 2) ─────────────────────────────────────────
