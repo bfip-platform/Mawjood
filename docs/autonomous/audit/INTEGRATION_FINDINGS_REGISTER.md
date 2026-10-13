@@ -1,0 +1,54 @@
+# Owner audit — findings register (integration of PRs #16–#35)
+
+Audit ordered 2026-10-12 (owner): individual green CI does not prove the combination works. This register records what the integration found, fixed, and what remains. Integration branch `integration/program-16-35`, from main `0a4df1087c178ec0ff05cfc0621dda1676b083de`. **Nothing here is merged or deployed.**
+
+## Combination verification (all on the integrated tree)
+
+- Unit suite: **160/160** (branches individually carried 79–83).
+- Migration chain: local PostgreSQL 16, `migrate-check` **ALL GREEN** — migrations 0001–0044 applied fresh, applied AGAIN (idempotency), all 18 schema assertions pass.
+- Upgraded-schema path: migration 0044 applied cleanly onto the scratch project (0001–0043 progressive + ~100k rows) with privilege verification.
+- Mobile: `npx expo lint` 0 errors; app `tsc --noEmit` clean; voice-engine `tsc --noEmit` clean; `npx expo export --platform web` succeeds (manifest/icons/robots in dist).
+- Auth-gates tripwire: passes at the integrated HEAD (route=user-jwt, telemetry-janitor=cron-secret).
+
+## Findings
+
+### F-INT-01 — HIGH (owner-raised) — AI spend cap undercounts past 5,000 events/day — FIXED
+`supabase/functions/_shared/spend.ts` (PR #19): the gate summed `ai_events` fetched with `.limit(5000)` ordered ascending — past 5,000 events (and past PostgREST's own row cap) the sum covered only the oldest rows, so the cap stopped binding exactly when spend was highest. **Fix:** migration `0044_ai_spend_ledger.sql` — per-user/day ledger updated by one atomic upsert RPC (`charge_ai_spend`, service-role only, RLS on with no client policies); the gate reads the single-row total, denies at/over cap, and pre-charges a worst-case estimate per request (`estimateWorstCaseChargeUsd`; chat 7 calls, ask 1, extract 3 attempts). The events sum survives as `sumSpendFromEvents()` (reporting only), now fully paginated via `.range()`. **Proofs:** concurrency — 20 parallel `charge_ai_spend` × $0.10 on real Postgres → total exactly 2.000000, one row, no lost increments; unit regressions — gate binds with an EMPTY events table, charge/read RPC errors deny (fail-closed), 6,000-event paginated sum is exact where the truncated read undercounts; scratch — 0044 applied + privileges verified. Residual bound (documented in spend.ts): concurrent in-flight requests can push the LEDGER past the cap by at most their combined worst-case charges; actual provider spend stays below the ledger. **Note:** PR #19's own branch still contains the superseded implementation — if the owner merges PR-by-PR instead of using this integration, #19 must be amended with 0044 + the new spend.ts first (or the integration branch used as the merge vehicle).
+
+### F-INT-02 — MEDIUM — merge-union hazard silently reverted a security fix — FIXED during integration
+The auth-gates manifest (`supabase/tests/auth-gates-check.mjs`) conflict produced duplicate `route:` keys; naive union left `route: ['public']` LAST, which in a JS object literal silently wins — reverting PR #18's fix in the checker. Caught because the tripwire was run during integration (it failed), fixed to `route: ['user-jwt']` + the telemetry-janitor entry; tripwire green. Lesson recorded: shared registries/manifests are conflict-hot and must be verified semantically, not unioned textually.
+
+### F-INT-03 — MEDIUM — shared test-infra file (migrate-lib.mjs) mangled by textual union — FIXED during integration
+Repeated union merges concatenated assertion fragments across object boundaries (missing closers, one assertion nested inside another) — the file was syntactically invalid at the integrated HEAD (`node --check` failed). Rebuilt by assertion-name union from the branch sources: 18 assertions, each exactly once, syntax valid, migrate-check green. Same class as F-INT-02.
+
+### F-INT-04 — LOW — stale guard tests after legitimate restructures (2 instances) — FIXED during integration
+(a) The D1 guard asserting `return { error: 'unknown action_type' }` failed in combination because PR #20's atomic-claim restructure legitimately changed it to `res = { error: … }` inside the claim's try block (fail-closed behavior unchanged — verified by reading both executor versions); the test had already been updated on PR #20's branch — the integration takes that version. (b) PR #30's trashFact census (`memory.ts:2`) predated PR #21's mergeFacts; combined truth is `memory.ts:3` (definition + claimed forget executor + mergeFacts) + `memory-consolidate:1`. Verified mergeFacts has exactly ONE caller — `executeConfirmedMerge`, the claimed rail with identity re-verification — and the census now asserts that containment.
+
+### F-INT-05 — LOW — admin-stats counts truncate at 5,000/2,000 rows — OPEN (pre-existing, main)
+`supabase/functions/admin-stats/index.ts:74,89,97` fetches rows with `.limit(5000)`/`.limit(2000)` and counts client-side: at scale the admin dashboard silently understates. Same class as F-INT-01 but admin-only, no user/security impact. Fix (count queries / head-count) is a small follow-up; not bundled here to keep the audit diff reviewable.
+
+### F-INT-06 — LOW — deliberate fail-open rate limiter (documented trade-off) — NOTED
+`_shared/rate-limit.ts` bumps counters through the atomic `bump_rate_limit` RPC (no read-then-write race) but fails OPEN on counter errors by design (a broken counter store must not take chat offline). In combination this is acceptable because the spend ledger (F-INT-01 fix) fails CLOSED independently — spend stays bounded even if rate limiting is degraded. Recorded so the posture is a decision, not an accident.
+
+### F-INT-07 — LOW — fire-and-forget extraction chaining can silently miss — NOTED (pre-existing)
+`transcribe/index.ts:155` and `chat/index.ts:224` chain to `extract` with `.catch(() => {})`. If the chain call fails, the note remains unextracted (its transcript is intact and extraction is re-runnable — no data loss), but nothing retries it. Follow-up candidate: a retry/queue (also covers the D8 runbook's known gap). Extract's own item-insert fallback (index.ts:317) was inspected: it degrades ONLY on column-missing errors naming the column and rethrows everything else — not a swallowed-error defect.
+
+### F-INT-08 — INFORMATIONAL — bounded working sets are product limits, not truncations
+`loadFacts` (memory.ts, `.limit(300)`) bounds recall/dedup/gardener to the 300 newest facts per space; chat search/context limits (5–60 rows) bound model context. These are deliberate product behaviors; the dedup window limitation is recorded for the owner's awareness.
+
+### Race/truncation sweep — negative results
+Governed-action executions (forget/merge/execute_action) all claim atomically (0037, PR #20, 0041) — no read-then-write races remain in the destructive paths. Invite redemption is atomic (0040). Rate limiting is atomic (RPC). `checkSpendCap` was the only money-path read-then-act left, now ledger-atomic. Auth helpers fail closed (`authUserId` → null). `parseSpendCapUsd` maps garbage env to the $2 default (never unlimited); the kill-switch requires the exact value `1`.
+
+## Item 7 — D4 Stripe labeling: VERIFIED ACCURATE
+`docs/autonomous/d4/STRIPE_ARCHITECTURE.md` is headed "DESIGN ONLY — no activation… No live keys, no Stripe account changes, no charge path exists." The entitlements module keeps `VAULT_PAID_GATE_ENABLED = false` with a test pinning `vault_ai` denied for every plan; the paywall's purchase affordance is disabled with "Payments coming soon". No surface claims a completed production billing integration. D4 is design/foundation work, correctly labeled.
+
+## Item 8 — incomplete product requirements (launch blockers, owner-held)
+1. **18+ enforcement** (Decision #5): no age gate is implemented anywhere — launch task, owner decision on mechanism.
+2. **Real-model testing**: the D6 Layer-2 live protocol exists but has never run (needs staging keys, owner-gated). CI proves deterministic layers only.
+3. **Accessibility**: PR #29 is a primary-surface pass, explicitly not full WCAG 2.2 AA; TalkBack/VoiceOver device walkthrough is owner-side and outstanding.
+4. **Offline UI wiring**: PR #24's engine layer is complete and tested, but no app screen calls it yet (no NetInfo auto-flush, no cache-first reads in screens).
+5. **D7 ADOPTs**: blocked on owner publishing ai-provider-core + ops-telemetry-core (PR #33 evidence).
+6. **Production state**: migrations 0035–0044 undeployed; production schema (incl. whether `items.updated_at` exists out of band) unverified; deployed-build Lighthouse not run.
+
+## Merge recommendation
+**NO-GO for a PR-by-PR merge of #16–#35 as they stand** — PR #19 carries F-INT-01 (HIGH) in its original form. **GO for the integration branch's content as the merge vehicle** (or for the PR queue once PR #19 is amended with the 0044 fix), conditional on the owner's standard gates: production rollout approval, Item-8 blockers dispositioned, and the Codex gate (PR #35 package) run against the resulting release-candidate SHA. No critical finding remains open on the integration HEAD; F-INT-05 (LOW) is the only open code item and is admin-only.
