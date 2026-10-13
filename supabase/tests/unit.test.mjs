@@ -38,7 +38,7 @@ import {
   purgeExpiredTrashedFacts,
 } from '../functions/_shared/memory.ts';
 import * as memoryEngine from '../functions/_shared/memory.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 // edge-auth.ts imports supabase-js from esm.sh — resolve it to our stub
 // BEFORE the dynamic import below.
@@ -836,5 +836,90 @@ describe('D1 hardening — atomic claim + fail-closed expiry (owner re-review)',
     assert.equal(row.status, 'pending');
     const reclaimed = await claimForgetPreview(supa, p.action_id); // retry works
     assert.ok(reclaimed && reclaimed.status === 'executing');
+  });
+});
+
+describe('D6 — AI-E2E harness: journeys + injection regression pack (T-D6-3/4)', async () => {
+  const { INJECTION_CORPUS } = await import('./ai-e2e/injection-corpus.mjs');
+  const UID = 'user-1';
+
+  it('INJECTION PACK: every payload fails the confirmation parser — or is inert without a pending row', async () => {
+    for (const p of INJECTION_CORPUS) {
+      assert.equal(parseForgetConfirmation(p.text), p.parse, `${p.id}: parser outcome drifted`);
+    }
+    // The inertness half: a parsed code with NO pending row for the user
+    // validates nothing and executes nothing.
+    const supa = fakeSupa([mkFact('a', 3, 1)]);
+    assert.equal(validateForgetConfirmation(null, UID, '123456', new Date()).ok, false);
+    assert.equal(await claimForgetPreview(supa, 'nonexistent-row'), null);
+    assert.equal(supa._db.items[0].status, 'open', 'corpus payloads changed no state');
+  });
+
+  it('STRUCTURAL INVARIANTS: chat cannot trash; the tree-wide trashFact census is exactly the sanctioned callers', () => {
+    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
+    assert.ok(!/trashFact\s*\(/.test(chat), 'chat/index.ts must never call trashFact');
+    // Tree-wide census (review N3): walk every function file — a future
+    // caller in a NEW file must fail this test loudly.
+    const callers = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.ts')) {
+          const src = readFileSync(p, 'utf8');
+          const hits = (src.match(/trashFact\s*\(/g) ?? []).length;
+          // the definition line counts once in memory.ts; calls elsewhere count fully
+          if (hits > 0) callers.push(`${p.split('/functions/')[1]}:${hits}`);
+        }
+      }
+    };
+    walk(new URL('../functions', import.meta.url).pathname);
+    assert.deepEqual(
+      callers.sort(),
+      ['_shared/memory.ts:2', 'memory-consolidate/index.ts:1'],
+      'trashFact may exist only as: engine definition + claimed executor (memory.ts ×2 incl. def) and the §6.1 call (consolidate ×1)',
+    );
+  });
+
+  it('JOURNEY: learn → recall → gardener (flags only) → forget via rail → restore → purge window', async () => {
+    const supa = fakeSupa([
+      mkFact('keep', 4, 10),
+      mkFact('drop', 3, 10),
+      mkFact('stale', 1, 200),
+    ]);
+    // Recall sees all three.
+    let facts = await loadFacts(supa, 'S1');
+    assert.equal(facts.length, 3);
+    // Gardener: plan + apply — statuses must be UNTOUCHED (no auto-delete).
+    const plan = planMemoryMaintenance(facts, NOW);
+    assert.ok(plan.flagReview.includes('stale'), 'stale low-importance fact is flagged for review');
+    await applyMemoryMaintenance(supa, 'S1', NOW);
+    for (const f of supa._db.items) assert.equal(f.status, 'open', `gardener must never change status (${f.id})`);
+    assert.equal(supa._db.items.find((f) => f.id === 'stale').meta.review_candidate, true, 'the review flag landed as metadata only');
+    // Forget journey for 'drop': preview → forged code refused → real code executes.
+    facts = await loadFacts(supa, 'S1');
+    const p = await createForgetPreview(supa, UID, 'S1', [facts.find((f) => f.id === 'drop')]);
+    const row = supa._db.pending_actions.find((r) => r.id === p.action_id);
+    assert.equal(validateForgetConfirmation(row, UID, '000000', new Date()).ok, false, 'forged code refused');
+    assert.equal(validateForgetConfirmation(row, UID, p.confirm_code, new Date()).ok, true);
+    const claimed = await claimForgetPreview(supa, row.id);
+    const { trashed } = await executeConfirmedForget(supa, claimed);
+    assert.equal(trashed.length, 1);
+    assert.equal(supa._db.items.find((f) => f.id === 'drop').status, 'trashed');
+    assert.equal(supa._db.items.find((f) => f.id === 'keep').status, 'open');
+    // Restore: the fact returns to open and recall.
+    const restored = await restoreFact(supa, 'S1', 'drop');
+    assert.ok(restored && restored.status === 'open');
+    // Purge: a freshly trashed fact is NEVER purge-eligible.
+    await trashFact(supa, supa._db.items.find((f) => f.id === 'drop'), 'test');
+    const purged = await purgeExpiredTrashedFacts(supa, 30);
+    assert.equal(purged, 0, 'purge respects the retention window');
+    assert.equal(supa._db.items.length, 3, 'nothing was hard-deleted in the whole journey');
+  });
+
+  it('HARNESS DOC: the live-model protocol exists and names its gates', () => {
+    const doc = readFileSync(new URL('../../docs/autonomous/d6/AI_E2E_HARNESS.md', import.meta.url), 'utf8');
+    assert.ok(doc.includes('NOT in CI'), 'the live layer is honestly separated from CI');
+    assert.ok(doc.includes('Injection drill'), 'the live protocol includes the injection drill');
   });
 });

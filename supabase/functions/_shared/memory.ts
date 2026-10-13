@@ -505,7 +505,18 @@ export function newForgetCode(): string {
  */
 export function parseForgetConfirmation(text: string): string | null {
   const latin = (text ?? '').replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
-  const m = normAr(latin).match(/^(?:نفذ|confirm)\s+(\d{6})$|^(\d{6})$/);
+  // Confirmation matching is deliberately TIGHTER than normAr: strip
+  // only Arabic diacritics/tatweel and unify hamza forms (so «نفّذ»
+  // matches), but do NOT erase punctuation — the user's message must be
+  // EXACTLY the confirmation and nothing else. A quote-wrapped or
+  // punctuated code is not a confirmation (D6 injection corpus:
+  // forge-quoted — normAr's punctuation erasure let it through).
+  const t = latin
+    .replace(/[ً-ٰٟ]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .trim();
+  const m = t.match(/^(?:نفذ|confirm)\s+(\d{6})$|^(\d{6})$/i);
   return m ? (m[1] ?? m[2]) : null;
 }
 
