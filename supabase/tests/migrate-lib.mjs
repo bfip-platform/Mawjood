@@ -216,5 +216,15 @@ export const ASSERTIONS = [
                   and has_function_privilege('authenticated', 'public.hard_delete_items(uuid[])', 'execute')
                   and has_function_privilege('service_role', 'public.hard_delete_items(uuid[])', 'execute')
                   and not has_function_privilege('anon', 'public.hard_delete_items(uuid[])', 'execute')) as ok`,
+  },
+  {
+    name: 'shopping_lists: no client DELETE policy + list RPC grants (0046)',
+    sql: `select (not exists (select 1 from pg_policies
+                              where schemaname = 'public' and tablename = 'shopping_lists'
+                                and cmd in ('ALL', 'DELETE'))
+                  and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                              where n.nspname = 'public' and p.proname = 'hard_delete_shopping_list' and p.prosecdef)
+                  and has_function_privilege('authenticated', 'public.hard_delete_shopping_list(uuid)', 'execute')
+                  and not has_function_privilege('anon', 'public.hard_delete_shopping_list(uuid)', 'execute')) as ok`,
   }
 ];

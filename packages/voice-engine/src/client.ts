@@ -358,6 +358,12 @@ export class VoiceEngine {
     if (error) throw error;
   }
 
+  /** Permanent-delete a shopping list (its items cascade) — RPC only (0046). */
+  private async hardDeleteShoppingList(listId: string): Promise<void> {
+    const { error } = await this.supabase.rpc('hard_delete_shopping_list', { p_id: listId });
+    if (error) throw error;
+  }
+
   /** Permanent-delete every item extracted from the given note(s). */
   private async hardDeleteItemsByNote(noteIds: string[]): Promise<void> {
     if (noteIds.length === 0) return;
@@ -1005,8 +1011,7 @@ export class VoiceEngine {
 
   /** Delete a list — its items cascade. */
   async deleteShoppingList(listId: string): Promise<void> {
-    const { error } = await this.supabase.from('shopping_lists').delete().eq('id', listId);
-    if (error) throw error;
+    await this.hardDeleteShoppingList(listId);
   }
 
   /**
@@ -1315,7 +1320,7 @@ export class VoiceEngine {
     });
     if (error) throw error;
     await this.hardDeleteItems(((items ?? []) as { id: string }[]).map((i) => i.id));
-    await this.supabase.from('shopping_lists').delete().eq('id', listId);
+    await this.hardDeleteShoppingList(listId);
   }
 
   /**

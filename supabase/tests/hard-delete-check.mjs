@@ -138,6 +138,28 @@ try {
   check('service_role direct delete still works (purge/erasure paths)', r.rowCount === 1);
   await c.end();
 
+  // ── 6b. shopping-list cascade: direct row delete dead, RPC works ──────
+  const L1 = 'ffffffff-0000-4000-8000-000000000001';
+  await admin.query('insert into public.shopping_lists (id, space_id, title) values ($1, $2, $3)', [L1, S, 'proof list']);
+  await seed(item(10), S);
+  await admin.query('update public.items set list_id = $1 where id = $2', [L1, item(10)]);
+  c = await asUser(B);
+  r = await c.query('delete from public.shopping_lists where id = $1', [L1]);
+  const listAlive = (await admin.query('select 1 from public.shopping_lists where id = $1', [L1])).rowCount > 0;
+  check('member direct list-row DELETE affects 0 rows and its items survive', r.rowCount === 0 && listAlive && (await exists(item(10))));
+  r = await c.query('select public.hard_delete_shopping_list($1::uuid) as n', [L1]);
+  const listGone = (await admin.query('select 1 from public.shopping_lists where id = $1', [L1])).rowCount === 0;
+  check('member RPC deletes the list; items cascade inside the authorized call', r.rows[0].n === 1 && listGone && !(await exists(item(10))));
+  await c.end();
+  c = await asUser(C);
+  err = null;
+  const L2 = 'ffffffff-0000-4000-8000-000000000002';
+  await admin.query('insert into public.shopping_lists (id, space_id, title) values ($1, $2, $3)', [L2, S, 'A list']);
+  try { await c.query('select public.hard_delete_shopping_list($1::uuid)', [L2]); } catch (e) { err = e; }
+  const l2Alive = (await admin.query('select 1 from public.shopping_lists where id = $1', [L2])).rowCount > 0;
+  check('outsider list RPC raises 42501, list intact', err?.code === '42501' && l2Alive, err?.message);
+  await c.end();
+
   // ── 7. rollback restores, re-apply closes ───────────────────────────────
   await admin.query(`drop function if exists public.hard_delete_items(uuid[]);
     drop policy if exists "items_member_insert" on public.items;

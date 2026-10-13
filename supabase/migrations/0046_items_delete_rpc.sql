@@ -63,3 +63,52 @@ revoke all on function public.hard_delete_items(uuid[]) from public;
 revoke all on function public.hard_delete_items(uuid[]) from anon;
 grant execute on function public.hard_delete_items(uuid[]) to authenticated;
 grant execute on function public.hard_delete_items(uuid[]) to service_role;
+
+-- Same bypass, one level up: shopping_lists_member (0014) is FOR ALL and
+-- items.list_id is ON DELETE CASCADE, so a direct list-row delete would
+-- cascade-wipe the list's items with no snapshot. Split it identically
+-- and route list deletion through its own scoped RPC (the items cascade
+-- then happens inside an authorized call, exactly as the client's
+-- deleteShoppingList behaves today).
+drop policy if exists "shopping_lists_member" on public.shopping_lists;
+drop policy if exists "shopping_lists_member_insert" on public.shopping_lists;
+create policy "shopping_lists_member_insert" on public.shopping_lists
+  for insert with check (public.can_access_space(space_id));
+drop policy if exists "shopping_lists_member_update" on public.shopping_lists;
+create policy "shopping_lists_member_update" on public.shopping_lists
+  for update using (public.can_access_space(space_id))
+  with check (public.can_access_space(space_id));
+-- (No DELETE policy on shopping_lists either.)
+
+create or replace function public.hard_delete_shopping_list(p_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_space uuid;
+begin
+  if v_uid is null then
+    raise exception 'authentication required' using errcode = '42501';
+  end if;
+  select l.space_id into v_space from public.shopping_lists l where l.id = p_id;
+  if v_space is null then
+    return 0;
+  end if;
+  if not public.can_access_space(v_space) then
+    raise exception 'not authorized for this list' using errcode = '42501';
+  end if;
+  delete from public.shopping_lists l where l.id = p_id;
+  return 1;
+end;
+$$;
+
+comment on function public.hard_delete_shopping_list(uuid) is
+  'F-LAUNCH-01: the only client path for deleting a shopping list (its items cascade inside this authorized call). SECURITY DEFINER; validates auth.uid() + can_access_space.';
+
+revoke all on function public.hard_delete_shopping_list(uuid) from public;
+revoke all on function public.hard_delete_shopping_list(uuid) from anon;
+grant execute on function public.hard_delete_shopping_list(uuid) to authenticated;
+grant execute on function public.hard_delete_shopping_list(uuid) to service_role;

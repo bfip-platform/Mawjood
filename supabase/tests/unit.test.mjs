@@ -2021,6 +2021,14 @@ describe('F-LAUNCH-01 Option B — no direct client items delete; RPC is the onl
     }
   });
 
+  it('the shopping_lists cascade is closed the same way (FOR ALL split + list RPC)', () => {
+    assert.ok(mig.includes('drop policy if exists "shopping_lists_member"'), 'lists FOR ALL dropped');
+    assert.ok(mig.includes('function public.hard_delete_shopping_list(p_id uuid)'), 'list RPC defined');
+    const listDeletes = client.match(/from\('shopping_lists'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
+    assert.equal(listDeletes.length, 0, 'no direct shopping_lists deletes remain in client code');
+    assert.ok(client.includes("rpc('hard_delete_shopping_list'"), 'client routes list deletion through the RPC');
+  });
+
   it('server-side deletes are untouched (service role: engine purge + account erasure)', () => {
     const mem = readFileSync(new URL('../../supabase/functions/_shared/memory.ts', import.meta.url), 'utf8');
     assert.ok(mem.includes('purgeExpiredTrashedFacts'), 'engine purge intact');

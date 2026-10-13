@@ -46,7 +46,7 @@
 ## 2026-10-13 — F-LAUNCH-01 Option B implemented (owner-approved), Draft PR #43
 
 - Migration **0046**: `items_member_write` (FOR ALL) split into INSERT/UPDATE policies — clients hold **no DELETE policy** on items; permanent deletion routes through `public.hard_delete_items(uuid[])` (SECURITY DEFINER, `search_path=''`, auth.uid() required, per-row can_access_space validation, all-or-nothing 42501, EXECUTE to authenticated + service_role only).
-- Client: all **9** items-delete sites in `voice-engine/src/client.ts` (incl. two multi-line sites the original census missed: deleteNote L352, deleteSecretNote L1747) now call the RPC via `hardDeleteItems`/`hardDeleteItemsByNote`; trash flows unchanged (snapshots precede the RPC call — guard-pinned).
+- Client: all **9** items-delete sites in `voice-engine/src/client.ts` (incl. two multi-line sites the original census missed: deleteNote L352, deleteSecretNote L1747) now call the RPC via `hardDeleteItems`/`hardDeleteItemsByNote`; trash flows unchanged (snapshots precede the RPC call — guard-pinned). The `shopping_lists` FOR ALL policy is split in the same migration (its items cascade was the same bypass one level up) with `hard_delete_shopping_list` as its only client delete path (2 client sites).
 - Server paths untouched (service role): engine purge + account-delete.
 - Tests: unit suite 179/179 incl. a multiline-aware zero-direct-delete census guard; migrate-lib 21 assertions; behavioral proof `hard-delete-check.mjs` (owner/member/outsider/atomicity/concurrency/rollback).
 - PR #42 verified merged at `843c8734` before branching. No merge/deploy/production change.
