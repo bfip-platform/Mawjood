@@ -152,12 +152,19 @@ jobs:
         # pg is a root devDependency — the audit talks to the scratch DB
         run: npm ci
 
+
       - name: Build scratch database (migrate-check)
         run: node supabase/tests/migrate-check.mjs
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
+      - name: Spend-ledger concurrency proof
+        run: node supabase/tests/spend-ledger-check.mjs
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
       - name: RLS audit — policies hold on the migrated schema
+
         run: node supabase/tests/rls-audit.mjs
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
