@@ -149,6 +149,9 @@ export function WelcomeScreen({
                 <Pressable
                   onPress={onMicPress}
                   disabled={mic === 'waiting' || mic === 'transcribing'}
+                  accessibilityRole="button"
+                  accessibilityLabel={mic === 'recording' ? t('a11yStopRecording') : t('a11yRecord')}
+                  accessibilityState={{ disabled: mic === 'waiting' || mic === 'transcribing' }}
                   style={[
                     styles.micBtn,
                     {
@@ -212,7 +215,7 @@ export function WelcomeScreen({
                 >
                   {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>{t('obSave')}</Text>}
                 </Pressable>
-                <Pressable onPress={() => setWriteMode(false)} hitSlop={8}>
+                <Pressable onPress={() => setWriteMode(false)} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yRecord')}>
                   <Text style={[styles.link, { color: P.accent }]}>🎙️</Text>
                 </Pressable>
               </>
@@ -276,6 +279,9 @@ export function WelcomeScreen({
                   setQuestion('');
                 }}
                 disabled={!question.trim() || asking}
+                accessibilityRole="button"
+                accessibilityLabel={t('a11ySend')}
+                accessibilityState={{ disabled: !question.trim() || asking }}
                 style={[styles.sendBtn, { backgroundColor: P.accent, opacity: !question.trim() || asking ? 0.5 : 1 }]}
               >
                 <Text style={styles.sendIcon}>➤</Text>

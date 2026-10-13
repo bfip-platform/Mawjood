@@ -1835,6 +1835,11 @@ describe('Launch readiness PR-C — accessibility completion (measured gaps only
       ['setActiveListId(null)', 'close'],
       ['restoreTrashRow(r)', 'a11yRestoreItem'],
       ['dismissProposal(item.id', 'a11yDismiss'],
+      // second sweep (independent review F1-F8): the first audit
+      // undercounted; these were found bare and are now labeled too
+      ['nukeTrashRow(r)', 'a11yDeleteForever'],
+      ['askPhotoSource(item)', 'a11yAttachPhoto'],
+      ['doRemoveMember(famSpace', 'a11yRemoveMember'],
     ];
     for (const [handler, key] of pairs) {
       // A handler may also appear as a swipe gesture or a definition;
@@ -1850,11 +1855,22 @@ describe('Launch readiness PR-C — accessibility completion (measured gaps only
     // exposes the long-press reaction via role + hint.
     assert.ok((app.match(/accessibilityLabel=\{t\('a11yViewPhoto'\)\}/g) ?? []).length >= 4, 'all four photo viewers labeled');
     assert.ok(app.includes("accessibilityHint={t('a11yReactHint')}"), 'bubble long-press is discoverable');
+    // reaction picker + tab icon picker: the emoji is the accessible name
+    assert.ok(app.includes('onPress={() => applyReaction(item, e)} hitSlop={6} accessibilityRole="button" accessibilityLabel={e}'), 'reaction buttons are labeled by their emoji');
+    assert.ok(app.includes('accessibilityLabel={ic}'), 'tab icon choices are labeled by their emoji');
+    // tasks checkbox carries a state-aware label
+    assert.ok(app.includes("accessibilityLabel={item.status === 'done' ? t('a11yMarkOpen') : t('a11yMarkDone')}"), 'tasks checkbox is state-labeled');
+    // components swept in the second pass
+    const swipe = readFileSync(new URL('../../apps/mobile/src/lib/SwipeRow.tsx', import.meta.url), 'utf8');
+    assert.ok(swipe.includes('accessibilityLabel={label ?? icon}'), 'SwipeRow side actions always carry an accessible name');
+    const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
+    assert.ok(welcome.includes("mic === 'recording' ? t('a11yStopRecording') : t('a11yRecord')"), 'welcome mic is state-labeled');
+    assert.ok(welcome.includes("accessibilityLabel={t('a11ySend')}"), 'welcome send is labeled');
   });
 
   it('the new a11y keys exist in both dictionaries', () => {
     const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
-    for (const k of ['a11yViewPhoto', 'a11yReactHint', 'a11yDeleteMessage', 'a11yGoodAnswer', 'a11yBadAnswer', 'a11yEdit', 'a11yDeleteSecret', 'a11yDismiss', 'a11yRemovePhoto', 'a11yDeleteChat', 'a11yAssign', 'a11ySearchSecrets', 'a11yRestoreItem', 'a11yDemoPanel']) {
+    for (const k of ['a11yViewPhoto', 'a11yReactHint', 'a11yDeleteMessage', 'a11yGoodAnswer', 'a11yBadAnswer', 'a11yEdit', 'a11yDeleteSecret', 'a11yDismiss', 'a11yRemovePhoto', 'a11yDeleteChat', 'a11yAssign', 'a11ySearchSecrets', 'a11yRestoreItem', 'a11yDemoPanel', 'a11yDeleteForever', 'a11yRemoveMember', 'a11yMarkDone', 'a11yMarkOpen']) {
       assert.ok((i18n.match(new RegExp(`^  ${k}:`, 'gm')) ?? []).length === 2, `${k} present in AR and EN`);
     }
   });

@@ -3395,7 +3395,7 @@ export default function HomeScreen() {
         {reacting && (
           <View style={styles.reactBar}>
             {REACTION_EMOJIS.map((e) => (
-              <Pressable key={e} onPress={() => applyReaction(item, e)} hitSlop={6}>
+              <Pressable key={e} onPress={() => applyReaction(item, e)} hitSlop={6} accessibilityRole="button" accessibilityLabel={e}>
                 <View style={[styles.reactHit, item.reaction === e && styles.reactHitOn]}>
                   <Text style={styles.reactEmoji}>{e}</Text>
                 </View>
@@ -3805,6 +3805,8 @@ export default function HomeScreen() {
                 onPress={() => askPhotoSource(item)}
                 style={styles.photoBtn}
                 disabled={uploadingPhotoId === item.id}
+                accessibilityRole="button"
+                accessibilityLabel={t('a11yAttachPhoto')}
               >
                 <Text style={styles.photoBtnText}>
                   {uploadingPhotoId === item.id ? '…' : '📷'}
@@ -4863,6 +4865,8 @@ export default function HomeScreen() {
                           styles.removeBtn,
                           confirmRemove === m.user_id && styles.removeBtnConfirm,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('a11yRemoveMember')}
                       >
                         <Text
                           style={[
@@ -5075,7 +5079,7 @@ export default function HomeScreen() {
                     onSwipeLeft={() => void askDeleteItem(item)}
                   >
                   <View style={styles.famRow}>
-                    <Pressable onPress={() => toggleItem(item)}>
+                    <Pressable onPress={() => toggleItem(item)} accessibilityRole="checkbox" accessibilityState={{ checked: item.status === 'done' }} accessibilityLabel={item.status === 'done' ? t('a11yMarkOpen') : t('a11yMarkDone')}>
                       <Text style={styles.itemIcon}>{item.status === 'done' ? '✅' : '⬜'}</Text>
                     </Pressable>
                     <View style={styles.itemBody}>
@@ -5257,6 +5261,9 @@ export default function HomeScreen() {
                   key={ic}
                   onPress={() => setTabIcon(ic)}
                   style={[styles.iconPick, tabIcon === ic && styles.iconPickActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={ic}
+                  accessibilityState={{ selected: tabIcon === ic }}
                 >
                   <Text style={styles.iconPickText}>{ic}</Text>
                 </Pressable>
@@ -6149,7 +6156,7 @@ export default function HomeScreen() {
                         <Pressable onPress={() => void restoreTrashRow(r)} style={styles.trashBtn} accessibilityRole="button" accessibilityLabel={t('a11yRestoreItem')}>
                           <Text style={styles.trashBtnText}>↩️</Text>
                         </Pressable>
-                        <Pressable onPress={() => void nukeTrashRow(r)} style={styles.trashBtn}>
+                        <Pressable onPress={() => void nukeTrashRow(r)} style={styles.trashBtn} accessibilityRole="button" accessibilityLabel={t('a11yDeleteForever')}>
                           <Text style={styles.trashBtnText}>{delForeverId === r.id ? '⚠️' : '✕'}</Text>
                         </Pressable>
                       </View>
