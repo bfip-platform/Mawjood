@@ -20,3 +20,5 @@
 - **F-LAUNCH-01 Option B (2026-10-13):** Draft PR #43 on `security/f-launch-01-option-b` from main `843c8734` — migration 0046 + RPC + client reroute; see the ledger entry of the same date. Awaiting owner merge; production unchanged.
 
 - **Staging prep (2026-10-13):** staging deployment + test plans prepared (launch/ STAGING_*), D9 RC re-fixed at `7f4bad04`. Execution blocked on owner approval + scratch access route + owner-set secrets (plan §7, B1–B5). Nothing deployed; no spend.
+
+- **Staging Phase 1 readiness (2026-10-13):** live read-only preflight of scratch PASSED (owner's transient token; isolation verified live, schema at 0045, 0046 absent proven two ways, zero secrets, zero functions, Auth URLs unset, benchmark counts 100,002/20,001/2 frozen; migration tracking schema absent — raw-SQL route is canonical for this DB). Readiness package prepared on `staging/phase1-readiness` from main `7237a17c`: `docs/autonomous/launch/staging-phase1/` (RUNBOOK gates G0–G7, PREFLIGHT_EVIDENCE, RISK_BLOCKER_REGISTER, OWNER_APPROVAL_CHECKLIST). Phase 1 execution NOT started; first gate = owner approval of the runbook + G1. Production untouched; $0 spent.
