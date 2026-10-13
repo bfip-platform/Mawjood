@@ -1979,6 +1979,63 @@ describe('Launch readiness PR-C — accessibility completion (measured gaps only
   });
 });
 
+describe('F-LAUNCH-01 Option B — no direct client items delete; RPC is the only path (0046)', () => {
+  const mig = readFileSync(new URL('../../supabase/migrations/0046_items_delete_rpc.sql', import.meta.url), 'utf8');
+  const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
+
+  it('0046 splits the FOR ALL policy and grants no client DELETE', () => {
+    assert.ok(mig.includes('drop policy if exists "items_member_write"'), 'FOR ALL policy dropped');
+    assert.ok(mig.includes('"items_member_insert"') && mig.includes('for insert'), 'insert policy kept');
+    assert.ok(mig.includes('"items_member_update"') && mig.includes('for update'), 'update policy kept');
+    assert.ok(!/create policy[^;]*for delete/i.test(mig), 'no DELETE policy is created');
+  });
+
+  it('the RPC is a hardened SECURITY DEFINER with tight grants', () => {
+    assert.ok(mig.includes('function public.hard_delete_items(p_ids uuid[])'), 'function defined');
+    assert.ok(mig.includes('security definer'), 'definer');
+    assert.ok(mig.includes("set search_path = ''"), 'search_path pinned empty');
+    assert.ok(mig.includes("raise exception 'authentication required'"), 'null uid rejected');
+    assert.ok(mig.includes('can_access_space'), 'per-row space authorization inside the RPC');
+    assert.ok(mig.includes("from anon"), 'anon revoked');
+    assert.ok(mig.includes("to authenticated"), 'authenticated granted');
+  });
+
+  it('client code holds NO direct items delete (multiline-aware census); the RPC is the path', () => {
+    const directDeletes = client.match(/from\('items'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
+    assert.equal(directDeletes.length, 0, `direct items deletes remain: ${directDeletes.length}`);
+    assert.ok(client.includes("rpc('hard_delete_items'"), 'client routes through the RPC');
+    for (const fn of ['deleteNote', 'deleteSpaceTab', 'deleteTabForever', 'trashNote', 'trashSecretNote', 'trashItem', 'trashShoppingList', 'deleteSecretNote']) {
+      assert.ok(client.includes(`async ${fn}`) || client.includes(fn), `${fn} flow preserved`);
+    }
+  });
+
+  it('trash semantics preserved: snapshots still precede deletion in the trash flows', () => {
+    for (const fn of ['trashNote', 'trashItem', 'trashShoppingList']) {
+      const start = client.indexOf(`async ${fn}`);
+      const slice = client.slice(start, start + 2600);
+      const snap = slice.indexOf("from('trash_bin').insert");
+      // the snapshot path's delete is the first hardDeleteItems AFTER the insert
+      // (trashItem's retention<=0 permanent branch precedes the insert in source).
+      const del = slice.indexOf('hardDeleteItems', snap);
+      assert.ok(snap > -1 && del > snap, `${fn}: trash_bin snapshot is written before the RPC delete`);
+    }
+  });
+
+  it('the shopping_lists cascade is closed the same way (FOR ALL split + list RPC)', () => {
+    assert.ok(mig.includes('drop policy if exists "shopping_lists_member"'), 'lists FOR ALL dropped');
+    assert.ok(mig.includes('"shopping_lists_member_read"') && mig.includes('for select'), 'lists SELECT policy re-created (0014 FOR ALL carried it — review F1)');
+    assert.ok(mig.includes('function public.hard_delete_shopping_list(p_id uuid)'), 'list RPC defined');
+    const listDeletes = client.match(/from\('shopping_lists'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
+    assert.equal(listDeletes.length, 0, 'no direct shopping_lists deletes remain in client code');
+    assert.ok(client.includes("rpc('hard_delete_shopping_list'"), 'client routes list deletion through the RPC');
+  });
+
+  it('server-side deletes are untouched (service role: engine purge + account erasure)', () => {
+    const mem = readFileSync(new URL('../../supabase/functions/_shared/memory.ts', import.meta.url), 'utf8');
+    assert.ok(mem.includes('purgeExpiredTrashedFacts'), 'engine purge intact');
+  });
+});
+
 describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
   const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
 
