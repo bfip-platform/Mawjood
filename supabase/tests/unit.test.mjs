@@ -1813,6 +1813,53 @@ describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
   });
 });
 
+describe('Launch readiness PR-C — accessibility completion (measured gaps only)', () => {
+  it('GUARD: every icon-only control found in the completion audit carries role + label', () => {
+    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    // handler -> the accessibilityLabel key it must carry (audit of
+    // 2026-10-12: 156 pressables scanned; these were the bare ones)
+    const pairs = [
+      ['deleteMessage(item.id)', "a11yDeleteMessage"],
+      ["voteAnswer(item.id, 'up'", 'a11yGoodAnswer'],
+      ["voteAnswer(item.id, 'down'", 'a11yBadAnswer'],
+      ['startEditSecret(item)', 'a11yEdit'],
+      ['askDeleteSecret(item.id)', 'a11yDeleteSecret'],
+      ['setShowDemo((v) => !v)', 'a11yDemoPanel'],
+      ['deleteSession(sess.id)', 'a11yDeleteChat'],
+      ['dismissBroadcast(b.id)', 'a11yDismiss'],
+      ['setChatPhotoUri(null)', 'a11yRemovePhoto'],
+      ['setSecretPhotoUri(null)', 'a11yRemovePhoto'],
+      ['openRename', 'a11yEdit'],
+      ['onAssign(item)', 'a11yAssign'],
+      ['setSecretSearchOpen((v) => !v)', 'a11ySearchSecrets'],
+      ['setActiveListId(null)', 'close'],
+      ['restoreTrashRow(r)', 'a11yRestoreItem'],
+      ['dismissProposal(item.id', 'a11yDismiss'],
+    ];
+    for (const [handler, key] of pairs) {
+      // A handler may also appear as a swipe gesture or a definition;
+      // pass when ANY occurrence sits in a tag carrying the label.
+      let found = false;
+      for (let at = app.indexOf(handler); at !== -1; at = app.indexOf(handler, at + 1)) {
+        const tag = app.slice(Math.max(0, at - 200), at + 400);
+        if (tag.includes(`accessibilityLabel={t('${key}')}`)) { found = true; break; }
+      }
+      assert.ok(found, `${handler} is labeled ${key}`);
+    }
+    // photo thumbnails open the viewer with a label; the chat bubble
+    // exposes the long-press reaction via role + hint.
+    assert.ok((app.match(/accessibilityLabel=\{t\('a11yViewPhoto'\)\}/g) ?? []).length >= 4, 'all four photo viewers labeled');
+    assert.ok(app.includes("accessibilityHint={t('a11yReactHint')}"), 'bubble long-press is discoverable');
+  });
+
+  it('the new a11y keys exist in both dictionaries', () => {
+    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
+    for (const k of ['a11yViewPhoto', 'a11yReactHint', 'a11yDeleteMessage', 'a11yGoodAnswer', 'a11yBadAnswer', 'a11yEdit', 'a11yDeleteSecret', 'a11yDismiss', 'a11yRemovePhoto', 'a11yDeleteChat', 'a11yAssign', 'a11ySearchSecrets', 'a11yRestoreItem', 'a11yDemoPanel']) {
+      assert.ok((i18n.match(new RegExp(`^  ${k}:`, 'gm')) ?? []).length === 2, `${k} present in AR and EN`);
+    }
+  });
+});
+
 describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
   const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
 
