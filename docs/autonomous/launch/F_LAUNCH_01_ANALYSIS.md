@@ -122,3 +122,18 @@ the RPC — the implementation census found two multi-line sites, 352 and
 concurrency/rollback on real PostgreSQL). The spaces-cascade question
 (§2/§4) stays as documented: `deleteSpace` remains an owner-only direct
 path, unchanged.
+
+**Review addenda (PR #43 security review, 2026-10-13):** (i) the cascade
+inventory also includes `items.vault_id` → `secret_vault` CASCADE — the
+vault policy is strictly owner-only, so it reaches only the owner's own
+vault items on their own vault deletion; not a member bypass. (ii) The
+RPC's outsider behavior distinguishes existing foreign ids (42501) from
+nonexistent ids (returns 0) — a theoretical UUID-existence oracle,
+accepted as negligible (ids are unguessable). (iii) Validation and delete
+run as two statements in one transaction; a concurrent space-move between
+them is not re-checked — exploiting it needs access to both spaces, so no
+privilege gain in practice. (iv) The review caught that 0014's FOR ALL
+policy was also the lists SELECT grant; 0046 now re-creates an explicit
+`shopping_lists_member_read` policy (the split initially broke list
+reads — fixed pre-merge, with a member-read case added to the behavioral
+proof).

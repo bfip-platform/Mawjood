@@ -222,6 +222,9 @@ export const ASSERTIONS = [
     sql: `select (not exists (select 1 from pg_policies
                               where schemaname = 'public' and tablename = 'shopping_lists'
                                 and cmd in ('ALL', 'DELETE'))
+                  and exists (select 1 from pg_policies
+                              where schemaname = 'public' and tablename = 'shopping_lists'
+                                and cmd = 'SELECT')
                   and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                               where n.nspname = 'public' and p.proname = 'hard_delete_shopping_list' and p.prosecdef)
                   and has_function_privilege('authenticated', 'public.hard_delete_shopping_list(uuid)', 'execute')

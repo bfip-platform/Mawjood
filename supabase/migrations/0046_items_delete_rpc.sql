@@ -71,6 +71,12 @@ grant execute on function public.hard_delete_items(uuid[]) to service_role;
 -- then happens inside an authorized call, exactly as the client's
 -- deleteShoppingList behaves today).
 drop policy if exists "shopping_lists_member" on public.shopping_lists;
+-- NOTE: unlike items (which always had a separate read policy), the 0014
+-- FOR ALL policy was also the SELECT grant — a read policy must be
+-- re-created explicitly or lists become unreadable (review F1).
+drop policy if exists "shopping_lists_member_read" on public.shopping_lists;
+create policy "shopping_lists_member_read" on public.shopping_lists
+  for select using (public.can_access_space(space_id));
 drop policy if exists "shopping_lists_member_insert" on public.shopping_lists;
 create policy "shopping_lists_member_insert" on public.shopping_lists
   for insert with check (public.can_access_space(space_id));

@@ -144,6 +144,8 @@ try {
   await seed(item(10), S);
   await admin.query('update public.items set list_id = $1 where id = $2', [L1, item(10)]);
   c = await asUser(B);
+  r = await c.query('select id from public.shopping_lists where id = $1', [L1]);
+  check('member can still READ shopping lists (SELECT policy preserved in the split)', r.rowCount === 1);
   r = await c.query('delete from public.shopping_lists where id = $1', [L1]);
   const listAlive = (await admin.query('select 1 from public.shopping_lists where id = $1', [L1])).rowCount > 0;
   check('member direct list-row DELETE affects 0 rows and its items survive', r.rowCount === 0 && listAlive && (await exists(item(10))));
@@ -162,11 +164,24 @@ try {
 
   // ── 7. rollback restores, re-apply closes ───────────────────────────────
   await admin.query(`drop function if exists public.hard_delete_items(uuid[]);
+    drop function if exists public.hard_delete_shopping_list(uuid);
     drop policy if exists "items_member_insert" on public.items;
     drop policy if exists "items_member_update" on public.items;
     drop policy if exists "items_member_write" on public.items;
     create policy "items_member_write" on public.items for all
+      using (public.can_access_space(space_id)) with check (public.can_access_space(space_id));
+    drop policy if exists "shopping_lists_member_read" on public.shopping_lists;
+    drop policy if exists "shopping_lists_member_insert" on public.shopping_lists;
+    drop policy if exists "shopping_lists_member_update" on public.shopping_lists;
+    drop policy if exists "shopping_lists_member" on public.shopping_lists;
+    create policy "shopping_lists_member" on public.shopping_lists for all
       using (public.can_access_space(space_id)) with check (public.can_access_space(space_id));`);
+  const L3 = 'ffffffff-0000-4000-8000-000000000003';
+  await admin.query('insert into public.shopping_lists (id, space_id, title) values ($1, $2, $3)', [L3, S, 'rollback list']);
+  c = await asUser(B);
+  r = await c.query('delete from public.shopping_lists where id = $1', [L3]);
+  check('after rollback, member direct list DELETE works again too', r.rowCount === 1);
+  await c.end();
   c = await asUser(A);
   r = await c.query('delete from public.items where id = $1', [item(8)]);
   check('after rollback, owner direct DELETE works again (pre-0046 posture)', r.rowCount === 1);
@@ -177,6 +192,11 @@ try {
   c = await asUser(A);
   r = await c.query('delete from public.items where id = $1', [item(8)]);
   check('after re-applying 0046, direct DELETE is closed again', r.rowCount === 0 && (await exists(item(8))));
+  const L4 = 'ffffffff-0000-4000-8000-000000000004';
+  await admin.query('insert into public.shopping_lists (id, space_id, title) values ($1, $2, $3)', [L4, S, 'reapplied list']);
+  r = await c.query('delete from public.shopping_lists where id = $1', [L4]);
+  const l4read = await c.query('select id from public.shopping_lists where id = $1', [L4]);
+  check('after re-applying 0046, list DELETE is closed and list READ still works', r.rowCount === 0 && l4read.rowCount === 1);
   await c.end();
 } finally {
   await admin.query('delete from public.spaces where id in ($1, $2)', [S, SC]).catch(() => {});

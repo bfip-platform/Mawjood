@@ -2023,6 +2023,7 @@ describe('F-LAUNCH-01 Option B — no direct client items delete; RPC is the onl
 
   it('the shopping_lists cascade is closed the same way (FOR ALL split + list RPC)', () => {
     assert.ok(mig.includes('drop policy if exists "shopping_lists_member"'), 'lists FOR ALL dropped');
+    assert.ok(mig.includes('"shopping_lists_member_read"') && mig.includes('for select'), 'lists SELECT policy re-created (0014 FOR ALL carried it — review F1)');
     assert.ok(mig.includes('function public.hard_delete_shopping_list(p_id uuid)'), 'list RPC defined');
     const listDeletes = client.match(/from\('shopping_lists'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
     assert.equal(listDeletes.length, 0, 'no direct shopping_lists deletes remain in client code');
