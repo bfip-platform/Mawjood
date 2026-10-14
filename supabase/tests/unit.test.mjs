@@ -2279,3 +2279,41 @@ describe('D6 PR-3 — maintenance surfacing (T-D6-1)', async () => {
     }
   });
 });
+
+describe('iOS remediation G2/G4 — lazy first-frame audio (P0-3) + boot state machine (P1-2/P2-5)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('GUARD: no eager expo-audio hooks — native audio objects are created lazily, never at first render', () => {
+    const hooks = read('../../apps/mobile/src/hooks/useVoiceRecorder.ts');
+    assert.ok(!hooks.includes('useAudioRecorder('),
+      'useVoiceRecorder must not call the eager useAudioRecorder hook (native recorder at first render)');
+    assert.ok(hooks.includes('AudioModule.AudioRecorder') && hooks.includes('new AudioRecorderClass('),
+      'the recorder must be constructed imperatively (AudioModule.AudioRecorder alias), inside the first start() call');
+    const app = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(!app.includes('useAudioPlayer('),
+      'index.tsx must not call the eager useAudioPlayer hook (native player at first render)');
+    assert.ok(!app.includes('useAudioPlayerStatus('),
+      'playback status must come from the lazy player hook, not useAudioPlayerStatus');
+    assert.ok(app.includes('useLazyAudioPlayer()'),
+      'index.tsx must consume the lazy player hook');
+  });
+
+  it('GUARD: boot transitions to signed-in BEFORE the spaces load, and spaces load cannot throw', () => {
+    const app = read('../../apps/mobile/src/app/index.tsx');
+    const signedInAt = app.indexOf("setAuthState('signed-in');");
+    const loadAt = app.indexOf('await loadSpaces(user.id);');
+    assert.ok(signedInAt > -1 && loadAt > signedInAt,
+      'P1-2: setAuthState(signed-in) must precede the spaces load so a spaces failure cannot strand authState at loading');
+    assert.ok(app.includes('const loadSpaces = useCallback'),
+      'the spaces load must live in the shared loadSpaces helper (boot + banner retry)');
+    assert.ok(app.includes('setBootError(true)') && app.includes("t('bootSpacesFail')"),
+      'a spaces failure must surface the retryable boot-error banner');
+  });
+
+  it('GUARD: boot i18n keys exist in both languages', () => {
+    const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+    for (const k of ['bootSpacesFail', 'bootRetry']) {
+      assert.ok((i18n.split(`${k}:`).length - 1) >= 2, `${k} in AR + EN`);
+    }
+  });
+});
