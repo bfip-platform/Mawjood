@@ -34,7 +34,7 @@ import {
 } from '@mawjood/voice-engine';
 import type { FamilyMember, Item, Note, Space, SpaceTab, SpaceType, TrashKind, TrashRow } from '@mawjood/voice-engine';
 import { supabase } from '../lib/supabase';
-import { linkEmailToAnonymous, signOut } from '../lib/auth';
+import { completeAuthFromUrl, linkEmailToAnonymous, signOut } from '../lib/auth';
 import { registerForPushNotifications } from '../lib/push';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import AuthScreen from '../components/AuthScreen';
@@ -672,6 +672,21 @@ export default function HomeScreen() {
     };
     Linking.getInitialURL().then(handle).catch(() => {});
     const sub = Linking.addEventListener('url', (e) => handle(e.url));
+    return () => sub.remove();
+  }, []);
+  // P1-1: native auth completion — a magic link tapped in the mail app
+  // returns as mawjood://auth-callback?… (see lib/auth.completeAuthFromUrl).
+  // Establishing the session is enough: the onAuthStateChange subscription
+  // below re-runs boot() on SIGNED_IN. Web is excluded — the web client
+  // already picks the session up via detectSessionInUrl.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const handleAuth = (raw: string | null) => {
+      if (!raw || !raw.includes('auth-callback')) return;
+      completeAuthFromUrl(raw).catch(() => {});
+    };
+    Linking.getInitialURL().then(handleAuth).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handleAuth(e.url));
     return () => sub.remove();
   }, []);
   // ── multi-family: slots (paid hook), switcher, paywall ──
