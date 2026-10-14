@@ -22,12 +22,30 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  * G1 fail-soft configuration screen remains the guard. The static
  * app.json values arrive as `config` and are spread through unchanged.
  */
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+// Safe build diagnostics (values are NEVER printed): shows, in whichever
+// environment evaluates this config (EAS CLI locally, or the EAS builder
+// when it resolves the config it embeds), whether each variable was
+// populated and whether the resolved URL is the scratch/staging host.
+// Build 23's second IPA proved the packaged extras were EMPTY strings —
+// this line exists so the next build log names the empty layer directly.
+// (stderr, so `expo config --json` stdout stays machine-parseable.)
+process.stderr.write(
+  `[app.config] EXPO_PUBLIC_SUPABASE_URL: ${
+    supabaseUrl
+      ? `SET (scratch host: ${supabaseUrl.includes('caimavjwasxiegjhxdsr') ? 'yes' : 'no'})`
+      : 'MISSING'
+  }; EXPO_PUBLIC_SUPABASE_ANON_KEY: ${supabaseAnonKey ? 'SET' : 'MISSING'}\n`,
+);
+
 export default ({ config }: ConfigContext): ExpoConfig =>
   ({
     ...config,
     extra: {
       ...(config.extra ?? {}),
-      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
-      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
+      supabaseUrl,
+      supabaseAnonKey,
     },
   }) as ExpoConfig;
