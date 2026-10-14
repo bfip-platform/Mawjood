@@ -2405,3 +2405,25 @@ describe('iOS remediation G2/G4 — lazy first-frame audio (P0-3) + boot state m
     }
   });
 });
+
+describe('EAS env embedding — Supabase config reaches remote builds (build 23 gate failure)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('GUARD: app.config.ts carries the CI env into expoConfig.extra', () => {
+    const cfg = read('../../apps/mobile/app.config.ts');
+    assert.ok(cfg.includes('process.env.EXPO_PUBLIC_SUPABASE_URL'), 'config reads the URL env');
+    assert.ok(cfg.includes('process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY'), 'config reads the anon-key env');
+    assert.ok(cfg.includes('supabaseUrl'), 'config writes extra.supabaseUrl');
+    assert.ok(cfg.includes('supabaseAnonKey'), 'config writes extra.supabaseAnonKey');
+    assert.ok(cfg.includes('...config'), 'config spreads the static app.json values through');
+  });
+
+  it('GUARD: supabase.ts falls back to expoConfig.extra when process.env is absent (EAS remote bundling)', () => {
+    const src = read('../../apps/mobile/src/lib/supabase.ts');
+    assert.ok(src.includes('expo-constants'), 'supabase.ts imports Constants');
+    assert.ok(src.includes('Constants.expoConfig'), 'supabase.ts reads the embedded config');
+    assert.ok(src.includes('extra.supabaseUrl'), 'URL falls back to extra');
+    assert.ok(src.includes('extra.supabaseAnonKey'), 'anon key falls back to extra');
+    assert.ok(src.includes('resolveSupabaseConfig'), 'validator still gates the resolved values');
+  });
+});
