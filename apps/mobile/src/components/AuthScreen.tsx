@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { sendMagicLink } from '../lib/auth';
+import { sendMagicLink, verifyEmailCode } from '../lib/auth';
 import { useTheme, type Palette } from '../lib/theme';
 import { t, tx } from '../lib/i18n';
 
@@ -22,6 +22,30 @@ export default function AuthScreen() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // P1-1: OTP code entry — the native-completable fallback when the
+  // magic link itself doesn't reach the app. On success the parent's
+  // onAuthStateChange listener takes over; nothing to navigate here.
+  const [code, setCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+
+  const verify = async () => {
+    const clean = code.trim();
+    if (!/^\d{6}$/.test(clean)) {
+      setCodeError(t('invalidEmailCode'));
+      return;
+    }
+    setVerifying(true);
+    setCodeError(null);
+    try {
+      const { error: verifyError } = await verifyEmailCode(email, clean);
+      if (verifyError) setCodeError(t('emailCodeFail'));
+    } catch {
+      setCodeError(t('emailCodeFail'));
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const submit = async () => {
     const clean = email.trim();
@@ -55,6 +79,29 @@ export default function AuthScreen() {
             <Text style={styles.body}>
               {tx('magicSent', { email: email.trim() })}
             </Text>
+            <Text style={styles.body}>{t('enterEmailCode')}</Text>
+            <TextInput
+              value={code}
+              onChangeText={setCode}
+              placeholder={t('emailCodePh')}
+              placeholderTextColor="P.faint"
+              keyboardType="number-pad"
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={6}
+              style={styles.input}
+              onSubmitEditing={verify}
+              returnKeyType="go"
+              textAlign="center"
+            />
+            {codeError ? <Text style={styles.err}>{codeError}</Text> : null}
+            <Pressable onPress={verify} disabled={verifying} style={styles.btn}>
+              {verifying ? (
+                <ActivityIndicator color={P.paper} />
+              ) : (
+                <Text style={styles.btnText}>{t('verifyEmailBtn')}</Text>
+              )}
+            </Pressable>
             <Pressable onPress={() => setSent(false)} style={styles.ghostBtn}>
               <Text style={styles.ghostText}>{t('useOtherEmail')}</Text>
             </Pressable>

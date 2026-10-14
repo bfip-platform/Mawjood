@@ -38,6 +38,14 @@
       ],
       "expo-notifications",
       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FAF7F2"
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Allow Mawjood to access your photos to attach them to notes.",

@@ -44,6 +44,9 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 // BEFORE the dynamic import below.
 register('./resolve-hook.mjs', import.meta.url);
 const edgeAuth = await import('../functions/_shared/edge-auth.ts');
+// G1 (P0-1): the pure Supabase config validator lives in the mobile app
+// tree; it has no RN imports, so the suite imports it directly.
+const { resolveSupabaseConfig } = await import('../../apps/mobile/src/lib/supabase-config.ts');
 
 describe('routing engine — scenario suite', () => {
   it('passes all 23 scenarios (no regressions)', () => {
@@ -2277,6 +2280,91 @@ describe('D6 PR-3 — maintenance surfacing (T-D6-1)', async () => {
     for (const k of ['maintBanner', 'maintAsk', 'maintDismiss']) {
       assert.ok((i18n.split(`${k}:`).length - 1) >= 2, `${k} in AR + EN`);
     }
+  });
+});
+
+describe('G1 — resolveSupabaseConfig (P0-1 fail-soft init validator)', () => {
+  it('accepts a valid https URL + key', () => {
+    const r = resolveSupabaseConfig({ url: 'https://caimavjwasxiegjhxdsr.supabase.co', anonKey: 'anon-key-123' });
+    assert.equal(r.ok, true);
+    assert.equal(r.url, 'https://caimavjwasxiegjhxdsr.supabase.co');
+    assert.equal(r.anonKey, 'anon-key-123');
+  });
+
+  it('trims surrounding whitespace from url and key', () => {
+    const r = resolveSupabaseConfig({ url: '  https://x.supabase.co  ', anonKey: '  k  ' });
+    assert.equal(r.ok, true);
+    assert.equal(r.url, 'https://x.supabase.co');
+    assert.equal(r.anonKey, 'k');
+  });
+
+  it('accepts http (local dev) URLs', () => {
+    const r = resolveSupabaseConfig({ url: 'http://localhost:54321', anonKey: 'k' });
+    assert.equal(r.ok, true);
+  });
+
+  it('rejects an empty url', () => {
+    const r = resolveSupabaseConfig({ url: '', anonKey: 'k' });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /url/i);
+  });
+
+  it('rejects an undefined url', () => {
+    const r = resolveSupabaseConfig({ url: undefined, anonKey: 'k' });
+    assert.equal(r.ok, false);
+  });
+
+  it('rejects a null url', () => {
+    const r = resolveSupabaseConfig({ url: null, anonKey: 'k' });
+    assert.equal(r.ok, false);
+  });
+
+  it('rejects a scheme-less host (the createClient "Invalid supabaseUrl" class)', () => {
+    const r = resolveSupabaseConfig({ url: 'caimavjwasxiegjhxdsr.supabase.co', anonKey: 'k' });
+    assert.equal(r.ok, false);
+  });
+
+  it('rejects a non-http(s) scheme', () => {
+    const r = resolveSupabaseConfig({ url: 'ftp://x.supabase.co', anonKey: 'k' });
+    assert.equal(r.ok, false);
+  });
+
+  it('rejects a blank anon key', () => {
+    const r = resolveSupabaseConfig({ url: 'https://x.supabase.co', anonKey: '   ' });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /key/i);
+  });
+
+  it('rejects a missing anon key', () => {
+    const r = resolveSupabaseConfig({ url: 'https://x.supabase.co', anonKey: undefined });
+    assert.equal(r.ok, false);
+  });
+});
+
+describe('G1/G6 — startup hardening census guards (P0-1 / P1-4)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('supabase.ts resolves config through the validator (no ?? \'\' into createClient)', () => {
+    const src = read('../../apps/mobile/src/lib/supabase.ts');
+    assert.ok(src.includes('resolveSupabaseConfig'), 'supabase.ts must use resolveSupabaseConfig');
+    assert.ok(!src.includes("?? ''"), 'the empty-string fallback that made createClient throw must be gone');
+    assert.ok(src.includes('supabaseConfigError'), 'supabase.ts must export supabaseConfigError');
+  });
+
+  it('_layout.tsx installs the crash guard as its FIRST import', () => {
+    const src = read('../../apps/mobile/src/app/_layout.tsx');
+    const firstImport = src.split('\n').find((l) => l.startsWith('import'));
+    assert.equal(firstImport, "import '../lib/crash-guard';");
+    assert.ok(src.includes('supabaseConfigError'), '_layout must branch on supabaseConfigError');
+  });
+
+  it('crash-guard.ts never statically imports supabase (it guards module-scope death)', () => {
+    const src = read('../../apps/mobile/src/lib/crash-guard.ts');
+    assert.ok(!/^\s*import\s[^;]*from\s+['"]\.\/supabase['"]/m.test(src), 'no static supabase import');
+    assert.ok(!/^\s*import\s+['"]\.\/supabase['"]/m.test(src), 'no side-effect supabase import');
+    assert.ok(src.includes("import('./supabase')"), 'reporting must lazy-load supabase');
+    assert.ok(src.includes('report-error'), 'reports go through the report-error channel');
+    assert.ok(src.includes('startup-global-handler'), 'reports carry the startup context tag');
   });
 });
 
