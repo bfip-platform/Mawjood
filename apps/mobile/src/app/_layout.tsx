@@ -1,8 +1,10 @@
+import '../lib/crash-guard';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect } from 'react';
 import { Platform, StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme, initTheme } from '../lib/theme';
+import { supabaseConfigError } from '../lib/supabase';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 /**
@@ -102,10 +104,43 @@ function InnerLayout() {
   );
 }
 
+/**
+ * G1 / P0-1: shown INSTEAD of the app when the Supabase configuration
+ * is invalid (missing/blank/malformed EXPO_PUBLIC_* env). supabase.ts
+ * fails soft onto a placeholder client so we reach this screen instead
+ * of dying at module scope. The reason string is structural only —
+ * it never contains secret values.
+ */
+function ConfigErrorScreen({ reason }: { reason: string }) {
+  const { palette: P } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: P.paper, padding: 24, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 48, textAlign: 'center', marginBottom: 12 }}>⚙️</Text>
+      <Text style={{ fontSize: 18, fontWeight: '800', color: P.ink, textAlign: 'center', marginBottom: 8 }}>
+        خطأ في إعدادات التطبيق
+      </Text>
+      <Text style={{ fontSize: 18, fontWeight: '800', color: P.ink, textAlign: 'center', marginBottom: 12 }}>
+        App configuration error
+      </Text>
+      <Text style={{ fontSize: 14, color: P.muted, textAlign: 'center', marginBottom: 6 }}>
+        التطبيق غير مُعدّ بشكل صحيح — صوّر الشاشة وابعثها للدعم.
+      </Text>
+      <Text style={{ fontSize: 14, color: P.muted, textAlign: 'center', marginBottom: 16 }}>
+        This build is misconfigured. Screenshot this screen and send it to support.
+      </Text>
+      <View style={{ backgroundColor: P.input, borderRadius: 12, padding: 12 }}>
+        <Text selectable style={{ fontSize: 12, color: P.ink, fontFamily: 'monospace' }}>
+          {reason}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   return (
     <ErrorBoundary>
-      <InnerLayout />
+      {supabaseConfigError ? <ConfigErrorScreen reason={supabaseConfigError} /> : <InnerLayout />}
     </ErrorBoundary>
   );
 }
