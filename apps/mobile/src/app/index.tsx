@@ -18,7 +18,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,7 +35,7 @@ import type { FamilyMember, Item, Note, Space, SpaceTab, SpaceType, TrashKind, T
 import { supabase } from '../lib/supabase';
 import { completeAuthFromUrl, linkEmailToAnonymous, signOut } from '../lib/auth';
 import { registerForPushNotifications } from '../lib/push';
-import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
+import { useVoiceRecorder, useLazyAudioPlayer } from '../hooks/useVoiceRecorder';
 import AuthScreen from '../components/AuthScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
@@ -156,6 +155,9 @@ export default function HomeScreen() {
     userIdRef.current = userId;
   }, [userId]);
   const [spaces, setSpaces] = useState<Space[]>([]);
+  // P1-2: set when the boot-time spaces load fails — renders a retryable
+  // banner in the signed-in UI instead of stranding the boot state machine.
+  const [bootError, setBootError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const pollers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -508,18 +510,18 @@ export default function HomeScreen() {
   const itemsSub = useRef<(() => void) | null>(null);
 
   // ── voice note playback (expo-audio, one shared player) ──
-  const player = useAudioPlayer();
-  const playerStatus = useAudioPlayerStatus(player);
+  // P0-3: lazy — the native player is created on the first play tap, not
+  // on the first frame (see hooks/useVoiceRecorder.ts). `playerPlaying`
+  // mirrors the old playerStatus.playing (same status event stream).
+  const { player, playing: playerPlaying } = useLazyAudioPlayer();
   const [playingId, setPlayingId] = useState<string | null>(null);
-
-  useEffect(() => () => player.remove(), [player]);
 
   const togglePlay = useCallback(
     (note: Note) => {
       if (!note.audio_url) return;
       if (playingId === note.id) {
         // pause / resume (resume also replays after the track finished)
-        if (playerStatus.playing) player.pause();
+        if (playerPlaying) player.pause();
         else player.play();
         return;
       }
@@ -531,7 +533,7 @@ export default function HomeScreen() {
         console.warn('play failed', e);
       }
     },
-    [player, playerStatus.playing, playingId],
+    [player, playerPlaying, playingId],
   );
 
   // ── place photo proof (وين أغراضي؟ بدليل بصري) ──
@@ -1823,6 +1825,22 @@ export default function HomeScreen() {
     [chatHistory],
   );
 
+  // Load (or create) the user's default spaces. P1-2: a failure here must
+  // never strand sign-in — callers fall back to an empty list plus the
+  // retryable boot-error banner instead of a half-booted screen.
+  const loadSpaces = useCallback(async (uid: string): Promise<boolean> => {
+    try {
+      setSpaces(await engine.ensureDefaultSpaces(uid));
+      setBootError(false);
+      return true;
+    } catch (e) {
+      console.warn('spaces load failed', e);
+      setSpaces([]);
+      setBootError(true);
+      return false;
+    }
+  }, []);
+
   // ── boot / auth gate ──
   // No session → AuthScreen (email magic link). Anonymous sessions from the
   // trial keep working and can be upgraded to permanent (same user id).
@@ -1864,8 +1882,13 @@ export default function HomeScreen() {
           // deadlock sign-in (the declaration save retries the write).
           setAgeStatus('needed');
         });
-      setSpaces(await engine.ensureDefaultSpaces(user.id));
+      // P1-2: transition to signed-in BEFORE the spaces load so a spaces
+      // failure can never strand authState at 'loading' (the old ordering
+      // left a half-booted UI: loading cleared by the finally below while
+      // authState never advanced). loadSpaces never throws — it reports
+      // failure via the retryable boot-error banner.
       setAuthState('signed-in');
+      await loadSpaces(user.id);
       // 📥 replay queued offline creates from a previous session
       void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
       // custom-tab free-tier cap (future paid plans raise it)
@@ -1951,7 +1974,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [persistSession, clearDraft, loadHistory, decoyMasterHashRef, masterHashRef, setDecoyMasterSet, setMasterState, setRecoveryInfo, setSecretVault]);
+  }, [persistSession, clearDraft, loadHistory, loadSpaces, decoyMasterHashRef, masterHashRef, setDecoyMasterSet, setMasterState, setRecoveryInfo, setSecretVault]);
 
   const handleAuthEvent = useCallback(
     (event: string, session: { user: { id: string; is_anonymous?: boolean } } | null) => {
@@ -1962,6 +1985,7 @@ export default function HomeScreen() {
         setDisplayName(null);
         setNameDraft('');
         setSpaces([]);
+        setBootError(false);
         setViewSpace(null);
         setView('chat');
         setIsAnonymous(false);
@@ -3570,7 +3594,7 @@ export default function HomeScreen() {
               {item.audio_url ? (
                 <Pressable onPress={() => togglePlay(item)} style={styles.playBtn}>
                   <Text style={styles.playBtnText}>
-                    {playingId === item.id && playerStatus.playing ? t('pause') : t('play')}
+                    {playingId === item.id && playerPlaying ? t('pause') : t('play')}
                   </Text>
                 </Pressable>
               ) : null}
@@ -3819,7 +3843,13 @@ export default function HomeScreen() {
           <Text style={{ fontSize: 24, fontWeight: '700', color: P.ink }}>{t('ageGateBlockedTitle')}</Text>
           <Text style={{ fontSize: 15, lineHeight: 22, color: P.ink }}>{t('ageGateBlockedBody')}</Text>
           <Pressable
-            onPress={async () => { await signOut(); setAgeStatus('checking'); setAuthState('signed-out'); }}
+            onPress={async () => {
+              // P2-5: a throwing signOut() must not strand the user on the
+              // blocked screen — the local transition is unconditional.
+              try { await signOut(); } catch { /* local sign-out proceeds regardless */ }
+              setAgeStatus('checking');
+              setAuthState('signed-out');
+            }}
             accessibilityRole="button"
             accessibilityLabel={t('ageGateSignOut')}
             style={{ borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 15, alignItems: 'center' }}
@@ -4188,6 +4218,24 @@ export default function HomeScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* P1-2: boot spaces load failed — retryable banner (same pattern as
+          the upgrade/maintenance banners); the app stays usable. */}
+      {bootError && (
+        <View style={styles.upgradeBanner}>
+          <Text style={styles.upgradeText}>{t('bootSpacesFail')}</Text>
+          <View style={styles.upgradeRow}>
+            <Pressable
+              onPress={() => { const uid = userIdRef.current; if (uid) void loadSpaces(uid); }}
+              style={styles.upgradeBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('bootRetry')}
+            >
+              <Text style={styles.upgradeBtnText}>{t('bootRetry')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       {__DEV__ && showDemo && (
         <View style={styles.demoPanel}>
