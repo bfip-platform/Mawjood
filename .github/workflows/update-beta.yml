@@ -73,7 +73,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           CONFIRM_OPAQUE_KEY: ${{ inputs.confirm_opaque_key }}
-        run: eas env:exec --environment production 'node scripts/ota-env-guard.mjs'
+        run: eas env:exec production 'node scripts/ota-env-guard.mjs'
 
       - name: Publish update to beta
         env:
