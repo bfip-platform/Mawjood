@@ -2499,3 +2499,47 @@ describe('UI-01 — keyboard safety, modal bounds, RTL inputs, swipe action boun
     assert.ok(as.includes('placeholderTextColor={P.faint}'), 'palette placeholder color used');
   });
 });
+
+describe('OTA infrastructure — expo-updates, fingerprint runtime, beta channel lock', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const PROJECT_ID = '8e464152-4348-424b-8632-9ebb5028837e';
+
+  it('GUARD: expo-updates is installed at an SDK-pinned version', () => {
+    const pkg = JSON.parse(read('../../apps/mobile/package.json'));
+    assert.ok(pkg.dependencies['expo-updates'], 'expo-updates dependency present');
+    assert.ok(pkg.dependencies['expo-updates'].startsWith('~57.'), 'expo-updates matches SDK 57');
+  });
+
+  it('GUARD: app.json carries the EAS Update URL and the fingerprint policy', () => {
+    const app = JSON.parse(read('../../apps/mobile/app.json'));
+    assert.equal(app.expo.updates?.url, `https://u.expo.dev/${PROJECT_ID}`);
+    assert.equal(app.expo.runtimeVersion?.policy, 'fingerprint');
+    assert.ok((app.expo.plugins ?? []).includes('expo-updates'), 'expo-updates plugin registered');
+    assert.equal(app.expo.extra?.eas?.projectId, PROJECT_ID, 'project id unchanged');
+  });
+
+  it('GUARD: eas.json stamps the beta channel and NO profile targets a production channel', () => {
+    const eas = JSON.parse(read('../../apps/mobile/eas.json'));
+    assert.equal(eas.build.production.channel, 'beta');
+    for (const [name, profile] of Object.entries(eas.build)) {
+      assert.notEqual(profile.channel, 'production', `profile ${name} must not use a production channel`);
+    }
+    assert.equal(eas.build.production.env.EXPO_PUBLIC_SUPABASE_URL, 'https://caimavjwasxiegjhxdsr.supabase.co', 'build env still targets scratch');
+  });
+
+  it('GUARD: app.config.ts never overrides updates/runtimeVersion (frozen for fingerprint stability)', () => {
+    const cfg = read('../../apps/mobile/app.config.ts');
+    assert.ok(!cfg.includes('runtimeVersion'), 'no runtimeVersion override in dynamic config');
+    assert.ok(!/updates\s*:/.test(cfg), 'no updates override in dynamic config');
+    assert.ok(cfg.includes('...config'), 'dynamic config still spreads the static app.json');
+  });
+
+  it('GUARD: the publish workflow (owner-applied) is manual-only, beta-locked and fail-closed', () => {
+    const doc = read('../../docs/autonomous/launch/UPDATE_BETA_WORKFLOW_OWNER_STEP.md');
+    assert.ok(doc.includes('workflow_dispatch'), 'manual dispatch only');
+    assert.ok(doc.includes('--channel beta'), 'publishes to beta');
+    assert.ok(!doc.includes('--channel production'), 'no path to a production channel');
+    assert.ok(doc.includes('scratch host: yes'), 'fail-closed scratch guard present');
+    assert.ok(doc.includes("refs/heads/main"), 'main-only guard present');
+  });
+});

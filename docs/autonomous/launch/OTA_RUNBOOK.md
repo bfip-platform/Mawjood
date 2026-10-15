@@ -1,0 +1,116 @@
+# OTA Runbook — Mawjood private beta (channel: beta)
+
+Companion to `OTA_UPDATE_PLAN.md`. Everything here is owner-dispatched;
+the agent never dispatches builds, submits, or publishes.
+
+## Concepts in one paragraph
+
+Build 24 is the first binary containing `expo-updates`. It is stamped with
+channel **beta** (eas.json) and a **fingerprint** runtimeVersion (a hash of
+the native layer). An update published to branch **beta** is served only
+to devices whose platform + fingerprint match exactly. The JS embedded in
+the binary is the permanent fallback ("embedded update"). There is no
+`production` channel and none may be created under this program.
+
+## Build 24 preparation checklist (bootstrap)
+
+1. Implementation PR (OTA infrastructure) merged → main contains:
+   expo-updates dependency, `updates.url`, fingerprint policy, eas.json
+   channel `beta`, guards green (CI 9/9).
+2. Owner applies `.github/workflows/update-beta.yml` from
+   `UPDATE_BETA_WORKFLOW_OWNER_STEP.md` (web UI paste).
+3. Set `apps/mobile/app.json` `"buildNumber": "24"` (owner/ChatGPT step,
+   as with build 23) — NOT in the implementation PR, so the PR stays a
+   pure infrastructure change.
+4. Dispatch **Build iOS Production** (existing workflow, from main).
+5. IPA gates, in order:
+   - **Bundle gate:** scratch host present, production host absent
+     (the PR #54/#55 gate).
+   - **OTA gate:** the embedded `EXConstants.bundle/app.config` shows
+     `updates.url = https://u.expo.dev/8e464152-4348-424b-8632-9ebb5028837e`,
+     a fingerprint runtimeVersion value, and the build's channel is
+     `beta` (also visible on the EAS build page).
+6. Dispatch **Submit iOS**, install Build 24 on the iPhone from
+   TestFlight (replaces Build 23). Build 23 remains OTA-ineligible
+   forever; nothing about it changes.
+7. On expo.dev, confirm exactly one channel exists: **beta**, mapped to
+   branch **beta**.
+
+## Safe first-update baseline (B0)
+
+Before any functional update, publish the **baseline update B0**: dispatch
+the update workflow against the SAME main commit Build 24 was built
+from, with message `baseline B0 (embedded-equivalent)`. B0's JS is
+functionally the embedded bundle, so from then on a known-good update
+GROUP always exists to republish — rollback never depends on the
+embedded fallback alone. Record B0's group ID here after publishing:
+`B0 group: ____________` (owner fills from expo.dev → Updates).
+
+## Publishing a normal update
+
+1. Merge the JS change to main through the normal Draft-PR flow (CI 9/9).
+2. Actions → **Publish OTA Update (beta)** → Run workflow (branch: main)
+   with a descriptive message.
+3. The workflow's guards must pass (channel lock + scratch-target env
+   guard). A guard failure publishes nothing — fix the cause, never
+   bypass.
+4. Note the new update group ID from the run log / expo.dev.
+
+## Device verification protocol (first two updates, then spot-checks)
+
+1. Fully close the app on the iPhone (swipe away), reopen → the update
+   downloads in the background.
+2. Close and reopen again → the new bundle is now running.
+3. For the very first functional update use a harmless visible marker
+   (e.g., an `(OTA-1)` suffix on the About version line) and confirm it
+   appears; confirm the matching group/runtime on expo.dev.
+4. Sanity: sign-in state, spaces, and chat load normally (the update is
+   JS-only; data and auth are untouched by delivery).
+
+## Rollback
+
+**Case A — a previous good update group exists (normal case):**
+`eas update:republish --group <good-group-id>` (owner, via EAS CLI or the
+expo.dev dashboard: Updates → select group → republish to branch beta).
+Devices converge on next launches. B0 (§baseline) guarantees this case
+always applies after the first publish.
+
+**Case B — no previous update group exists (roll back the FIRST update):**
+republish is impossible (nothing to republish). Use **rollback to
+embedded**: `eas update:rollback` and choose the rollback-to-embedded
+option for branch beta (dashboard equivalent under Updates). Clients are
+directed back to Build 24's embedded bundle. A later normal publish
+re-enables OTA delivery — a rollback is not a pin.
+
+**Case C — the update crashes on launch:** expo-updates automatically
+discards an update whose first launch fails and falls back to the last
+known-good update (or embedded). If the app still misbehaves, apply
+Case A/B; if the BINARY is at fault, OTA cannot help — ship a new build.
+
+**Case D — wrong-content scare (e.g., suspected wrong Supabase target):**
+the publish guards make this structurally improbable; if suspected,
+rollback per Case A/B, then verify on the device that the app talks to
+scratch (staging fixtures only). Never "fix forward" under suspicion.
+
+## Compatibility — what may ship OTA vs what needs a build
+
+OTA: JS/TS code, screens, styles, copy, JS-bundled assets.
+Build required: any native module add/remove/upgrade, Expo SDK upgrade,
+config-plugin changes, app.json native fields (bundle ID, permissions,
+icons/splash native assets, entitlements, URL scheme), and anything that
+changes the fingerprint. Fingerprint mismatch = the update is simply not
+served (safe), but also reaches nobody — when in doubt, check the
+fingerprint of the publish commit (`eas update:list` shows the runtime
+each group targets) before expecting delivery.
+
+Frozen during OTA operation: `app.config.ts` (a fingerprint-relevant
+input class). Changing it is a deliberate, build-accompanied act.
+
+## Reminders
+
+- OTA does not extend TestFlight's 90-day build expiry; schedule native
+  builds accordingly.
+- OTA ships fixes/polish within the app's reviewed purpose only
+  (App Store Guideline 3.3.2); new feature categories go through a build.
+- Never create a `production` channel under this program; the future
+  store release gets its own owner decision.

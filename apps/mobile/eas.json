@@ -1,6 +1,7 @@
 {
   "build": {
     "production": {
+      "channel": "beta",
       "environment": "production",
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://caimavjwasxiegjhxdsr.supabase.co"

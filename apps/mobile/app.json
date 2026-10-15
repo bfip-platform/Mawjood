@@ -27,8 +27,15 @@
     },
     "name": "Mawjood",
     "orientation": "portrait",
+    "updates": {
+      "url": "https://u.expo.dev/8e464152-4348-424b-8632-9ebb5028837e"
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
     "plugins": [
       "expo-router",
+      "expo-updates",
       [
         "expo-audio",
         {
