@@ -27,6 +27,7 @@ jobs:
         working-directory: apps/mobile
     steps:
       - name: Guard — main branch only
+        working-directory: .
         env:
           DISPATCH_REF: ${{ github.ref }}
         run: |
