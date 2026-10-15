@@ -2449,3 +2449,53 @@ describe('EAS build env — eas.json feeds the builder-side config resolution (b
     assert.ok(cfg.includes('scratch host'), 'diagnostic reports scratch-host match as a boolean');
   });
 });
+
+describe('UI-01 — keyboard safety, modal bounds, RTL inputs, swipe action bounds', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const near = (src, anchor, span = 320) => {
+    const i = src.indexOf(anchor);
+    assert.ok(i >= 0, `anchor missing: ${anchor}`);
+    return src.slice(i, i + span);
+  };
+
+  it('GUARD: chat, vault page, mgmt page and every input-bearing fade modal are keyboard-avoiding', () => {
+    const kavCount = idx.split('KeyboardAvoidingView').length - 1;
+    assert.ok(kavCount >= 9, `expected >=9 KeyboardAvoidingView references (import + 8 usages), got ${kavCount}`);
+    assert.ok(idx.includes("behavior={Platform.OS === 'ios' ? 'padding' : undefined}"), 'iOS padding behavior used');
+  });
+
+  it('GUARD: composer and free-text modal inputs follow the language direction (ta())', () => {
+    assert.ok(idx.includes('height: composerH, textAlign: ta()'), 'main composer input is direction-aligned');
+    assert.ok(near(idx, "placeholder={t('tabNamePh')}").includes('fieldInput'), 'tab-name input uses the filled field style, not the code style');
+    assert.ok(near(idx, "placeholder={t('newListTitlePh')}").includes('fieldInput'), 'new-list title uses the filled field style');
+    assert.ok(near(idx, "placeholder={t('newListItemsPh')}").includes('fieldInput'), 'new-list items use the filled field style');
+    assert.ok(near(idx, "placeholder={t('familyNamePh')}").includes('textAlign: ta()'), 'rename input is direction-aligned');
+    assert.ok(near(idx, "placeholder={t('secretAddPlaceholder')}").includes('textAlign: ta()'), 'vault composer input is direction-aligned');
+    assert.ok(near(idx, "placeholder={t('assigneePh')}").includes('textAlign: ta()'), 'assignee input is direction-aligned');
+  });
+
+  it('GUARD: swipe actions are bounded tiles clipped to the card radius (no full-row color bars)', () => {
+    const sr = read('../../apps/mobile/src/lib/SwipeRow.tsx');
+    assert.ok(sr.includes('width: ACTION_WIDTH'), 'action tile has a fixed width');
+    assert.ok(!/action:\s*\{\s*flex:\s*1/.test(sr), 'action tile is not flex:1 (the oversized-background defect)');
+    assert.ok(sr.includes("overflow: 'hidden'"), 'swipe container clips the action layer');
+    assert.ok(sr.includes('containerStyle'), 'swipe container style is set');
+    assert.ok(idx.includes('radius={14}'), 'shopping cards pass their 14px radius');
+  });
+
+  it('GUARD: modal cards are height-bounded and shopping spacing comes from the list gap only', () => {
+    const st = read('../../apps/mobile/src/screens/home/styles.ts');
+    const card = st.slice(st.indexOf('modalCard: {'), st.indexOf('modalCard: {') + 220);
+    assert.ok(card.includes("maxHeight: '88%'"), 'modalCard is height-bounded');
+    const shop = st.slice(st.indexOf('shopListCard: {'), st.indexOf('shopListCard: {') + 260);
+    assert.ok(!shop.includes('marginBottom'), 'shopListCard carries no margin (list gap owns the spacing)');
+    assert.ok(st.includes('kav: { flex: 1 }'), 'shared keyboard-avoiding container style exists');
+  });
+
+  it('GUARD: AuthScreen placeholder color is a palette value, not a string literal', () => {
+    const as = read('../../apps/mobile/src/components/AuthScreen.tsx');
+    assert.ok(!as.includes('"P.faint"'), 'no literal "P.faint" placeholder color remains');
+    assert.ok(as.includes('placeholderTextColor={P.faint}'), 'palette placeholder color used');
+  });
+});

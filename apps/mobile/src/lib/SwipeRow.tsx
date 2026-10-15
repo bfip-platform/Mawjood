@@ -13,26 +13,35 @@ interface Props {
   onSwipeLeft?: () => void;
   rightIcon?: string;
   leftIcon?: string;
+  /** corner radius of the row card — the action layer is clipped to it */
+  radius?: number;
   children: React.ReactNode;
 }
+
+/**
+ * Fixed width on purpose (UI-01): the action layer used to be `flex: 1`,
+ * so the revealed color spanned the ENTIRE row width behind the card —
+ * an oversized red/green bar bleeding past the card's rounded corners
+ * and into the spacing below it. A bounded tile + a clipped container
+ * keeps the color exactly behind the revealed strip of the card.
+ */
+const ACTION_WIDTH = 84;
 
 function SideAction({
   icon,
   bg,
-  align,
   onTap,
   label,
 }: {
   icon: string;
   bg: string;
-  align: 'flex-start' | 'flex-end';
   onTap: () => void;
   /** Accessible name; defaults to the icon itself (screen readers
    *  voice emoji names) when a caller does not supply one. */
   label?: string;
 }) {
   return (
-    <View style={[styles.action, { backgroundColor: bg, alignItems: align }]}>
+    <View style={[styles.action, { backgroundColor: bg }]}>
       <Pressable onPress={onTap} hitSlop={10} accessibilityRole="button" accessibilityLabel={label ?? icon}>
         <Text style={styles.icon}>{icon}</Text>
       </Pressable>
@@ -51,6 +60,7 @@ export function SwipeRow({
   onSwipeLeft,
   rightIcon = '✅',
   leftIcon = '🗑️',
+  radius = 12,
   children,
 }: Props) {
   const { palette: P } = useTheme();
@@ -87,7 +97,6 @@ export function SwipeRow({
               <SideAction
                 icon={rightIcon}
                 bg={P.success}
-                align="flex-start"
                 onTap={() => fire('left')}
               />
             )
@@ -96,12 +105,13 @@ export function SwipeRow({
       renderRightActions={
         onSwipeLeft
           ? () => (
-              <SideAction icon={leftIcon} bg={P.danger} align="flex-end" onTap={() => fire('right')} />
+              <SideAction icon={leftIcon} bg={P.danger} onTap={() => fire('right')} />
             )
           : undefined
       }
       overshootLeft={false}
       overshootRight={false}
+      containerStyle={{ borderRadius: radius, overflow: 'hidden' }}
     >
       {children}
     </Swipeable>
@@ -110,9 +120,9 @@ export function SwipeRow({
 
 const styles = StyleSheet.create({
   action: {
-    flex: 1,
+    width: ACTION_WIDTH,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    alignItems: 'center',
   },
   icon: {
     fontSize: 24,
