@@ -22,6 +22,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Public Scratch URL used by both the provenance guard and OTA bundling.
+      EXPO_PUBLIC_SUPABASE_URL: https://caimavjwasxiegjhxdsr.supabase.co
     defaults:
       run:
         working-directory: apps/mobile
@@ -74,6 +77,12 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           CONFIRM_OPAQUE_KEY: ${{ inputs.confirm_opaque_key }}
         run: eas env:exec production 'node scripts/ota-env-guard.mjs'
+
+      - name: Guard — resolved Expo config before publishing
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CONFIRM_OPAQUE_KEY: ${{ inputs.confirm_opaque_key }}
+        run: eas env:exec production 'node scripts/ota-preflight.mjs'
 
       - name: Publish update to beta
         env:
