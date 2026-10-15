@@ -4207,7 +4207,7 @@ export default function HomeScreen() {
           </Pressable>
           <View>
             <Text style={styles.title}>{t('appTitle')}</Text>
-            <Text style={styles.subtitle}>Lost it? Mawjood. · OTA TEST 01</Text>
+            <Text style={styles.subtitle}>Lost it? Mawjood.</Text>
           </View>
         </View>
         {/* F-COM-09 (D4 T-D4-6): the demo-seed panel is a DEV tool — it
