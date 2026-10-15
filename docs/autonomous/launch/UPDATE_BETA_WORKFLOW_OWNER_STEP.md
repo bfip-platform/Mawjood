@@ -1,22 +1,29 @@
 # update-beta.yml — owner-applied workflow (the agent's token cannot push workflow files)
 
 Create `.github/workflows/update-beta.yml` in the GitHub web UI with EXACTLY
-the content below (one paste). It is manual-dispatch only, publishes ONLY to
-the `beta` channel, ONLY from `main`, and fails closed unless the resolved
-app config provably targets the Scratch Supabase project (booleans only —
-no values are ever printed).
+the content below (one paste). Hardened in the PR #57 review pass:
 
-Design notes:
-- Channel is hardcoded (`--channel beta`); there is no channel/branch input,
-  so the workflow cannot be aimed at another channel by accident.
-- `--environment production` makes the publish resolve the dynamic app
-  config with the EAS **production** environment variables — the same layer
-  the builds use (eas.json env + EAS env vars). "production" here is the
-  EAS environment NAME, not the Supabase production project.
-- The env guard greps the `[app.config]` diagnostic line (PR #55): it must
-  read `scratch host: yes` AND `EXPO_PUBLIC_SUPABASE_ANON_KEY: SET`,
-  otherwise the job stops BEFORE anything is published.
-- eas.json itself is checked: `build.production.channel` must be `beta`.
+- **One environment source.** The job NEVER reads the GitHub Supabase
+  secrets. Both the pre-publish guard and the publish itself resolve the
+  EAS **production** environment — the guard via
+  `eas env:exec --environment production`, the publish via
+  `eas update --environment production` — so the environment that is
+  *validated* is by construction the environment that *ships*. ("production"
+  is the EAS environment NAME; its values are the Scratch project's —
+  the same layer the builds use.)
+- **Exact + provenance guards.** `scripts/ota-env-guard.mjs` (committed)
+  requires the resolved URL to EQUAL the Scratch URL (no substring
+  matching) and the anon key to prove it belongs to Scratch: for JWT keys,
+  its decoded claims must say ref=Scratch, role=anon, unexpired. For
+  opaque (`sb_publishable_…`) keys it fails closed unless the dispatcher
+  supplies the attestation input described in the YAML.
+- **Inputs are data, never code.** Workflow inputs reach shell steps only
+  through `env:` mappings (no `${{ }}` interpolation inside `run:`), so a
+  crafted update message cannot inject shell commands.
+- **Least privilege.** `permissions: contents: read`; EXPO_TOKEN is
+  present only on the steps that call EAS; actions are pinned by commit
+  SHA; publishing is possible only from `main` and only to channel `beta`
+  (hardcoded; the eas.json channel lock is re-checked in the job).
 
 ```yaml
 name: Publish OTA Update (beta)
@@ -28,6 +35,10 @@ on:
         description: "Update message (shown in expo.dev update history)"
         required: true
         default: "OTA update"
+      confirm_opaque_key:
+        description: "ONLY if the project's anon key is an opaque sb_publishable_ key (not a JWT): type KEY-VERIFIED-IN-DASHBOARD to attest you copied it from the SCRATCH project's API settings in the Supabase dashboard. Leave empty otherwise."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -44,16 +55,19 @@ jobs:
         working-directory: apps/mobile
     steps:
       - name: Guard — main branch only
-        if: github.ref != 'refs/heads/main'
+        env:
+          DISPATCH_REF: ${{ github.ref }}
         run: |
-          echo "OTA updates may only be published from main (got: $GITHUB_REF)"
-          exit 1
+          if [ "$DISPATCH_REF" != "refs/heads/main" ]; then
+            echo "OTA updates may only be published from main (got: $DISPATCH_REF)"
+            exit 1
+          fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -73,27 +87,26 @@ jobs:
           fi
           echo "channel lock OK: beta"
 
-      - name: Guard — resolved config targets Scratch (values never printed)
+      - name: Guard — update message is sane
         env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          UPDATE_MESSAGE: ${{ inputs.message }}
         run: |
-          npx expo config --type public --json > /dev/null 2> diag.txt || true
-          grep "\[app.config\]" diag.txt || true
-          if ! grep -q "scratch host: yes" diag.txt; then
-            echo "Resolved Supabase URL is NOT the scratch host — refusing to publish"
+          if [ "${#UPDATE_MESSAGE}" -gt 200 ] || [ -z "$UPDATE_MESSAGE" ]; then
+            echo "Update message must be 1-200 characters"
             exit 1
           fi
-          if ! grep -q "EXPO_PUBLIC_SUPABASE_ANON_KEY: SET" diag.txt; then
-            echo "Anon key is not populated in the publish environment — refusing to publish"
-            exit 1
-          fi
-          echo "env guard OK: scratch target confirmed, key populated"
+
+      - name: Guard — environment provenance (exact URL + key belongs to Scratch)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CONFIRM_OPAQUE_KEY: ${{ inputs.confirm_opaque_key }}
+        run: eas env:exec --environment production -- node scripts/ota-env-guard.mjs
 
       - name: Publish update to beta
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas update --channel beta --environment production --message "${{ inputs.message }}"
+          UPDATE_MESSAGE: ${{ inputs.message }}
+        run: eas update --channel beta --environment production --message "$UPDATE_MESSAGE"
 
       - name: Show latest beta updates
         env:
@@ -101,8 +114,15 @@ jobs:
         run: eas update:list --branch beta --limit 3
 ```
 
-After creating it: it appears under Actions as **Publish OTA Update (beta)**.
-Do NOT run it until Build 24 (the first OTA-capable binary) is installed on
-the target iPhone — updates published before any compatible binary exists
-are harmless but pointless, and the verification protocol in OTA_RUNBOOK.md
-starts from the bootstrap build.
+Notes for the owner:
+
+- The guard step and the publish step draw from the SAME EAS environment.
+  If you ever rotate the Scratch anon key, update it in the EAS production
+  environment (expo.dev → project → Environment variables) — there is no
+  second copy in this workflow to drift out of sync.
+- Rollback is NOT part of this workflow on purpose: `eas update:republish`
+  / rollback-to-embedded are run by the owner from any authenticated
+  EAS CLI (or the expo.dev dashboard) per OTA_RUNBOOK.md — interactive
+  rollback verbs do not belong in an unattended pipeline.
+- Do NOT run this workflow until Build 24 is installed on the target
+  iPhone (see OTA_RUNBOOK.md, Build 24 checklist + baseline B0).

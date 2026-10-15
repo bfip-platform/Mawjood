@@ -2539,7 +2539,88 @@ describe('OTA infrastructure — expo-updates, fingerprint runtime, beta channel
     assert.ok(doc.includes('workflow_dispatch'), 'manual dispatch only');
     assert.ok(doc.includes('--channel beta'), 'publishes to beta');
     assert.ok(!doc.includes('--channel production'), 'no path to a production channel');
-    assert.ok(doc.includes('scratch host: yes'), 'fail-closed scratch guard present');
-    assert.ok(doc.includes("refs/heads/main"), 'main-only guard present');
+    assert.ok(doc.includes('refs/heads/main'), 'main-only guard present');
+    // hardened model: ONE env source — guard and publish both resolve the
+    // EAS production environment; the GitHub Supabase secrets are never read
+    assert.ok(doc.includes('eas env:exec --environment production'), 'guard runs inside the EAS production environment');
+    assert.ok(doc.includes('node scripts/ota-env-guard.mjs'), 'committed provenance guard is what runs');
+    assert.ok(!doc.includes('secrets.EXPO_PUBLIC_SUPABASE'), 'publish job never reads the GitHub Supabase secrets');
+    assert.ok(doc.includes('UPDATE_MESSAGE: ${{ inputs.message }}'), 'inputs reach shell via env only (no run: interpolation)');
+    assert.ok(doc.includes('KEY-VERIFIED-IN-DASHBOARD'), 'opaque-key attestation gate present');
+    assert.ok(doc.includes('actions/checkout@11d5960a326750d5838078e36cf38b85af677262'), 'checkout pinned by SHA');
+    assert.ok(doc.includes('actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'), 'setup-node pinned by SHA');
+  });
+});
+
+describe('OTA env guard — behavior against fabricated keys (the real CLI, spawned)', () => {
+  const scriptPath = new URL('../../apps/mobile/scripts/ota-env-guard.mjs', import.meta.url).pathname;
+  const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const jwt = (p) => `${b64u({ alg: 'HS256', typ: 'JWT' })}.${b64u(p)}.fakesig`;
+  const future = Math.floor(Date.now() / 1000) + 10 * 365 * 24 * 3600;
+  const past = Math.floor(Date.now() / 1000) - 3600;
+  const GOOD_URL = 'https://caimavjwasxiegjhxdsr.supabase.co';
+  const goodJwt = jwt({ ref: 'caimavjwasxiegjhxdsr', role: 'anon', exp: future, iss: GOOD_URL });
+
+  async function runGuard(env) {
+    const { execFile } = await import('node:child_process');
+    return new Promise((resolve) => {
+      execFile('node', [scriptPath], { env: { PATH: process.env.PATH, ...env } }, (err, stdout) => {
+        resolve({ code: err ? (err.code ?? 1) : 0, stdout });
+      });
+    });
+  }
+
+  it('valid scratch JWT + exact URL passes and prints no key material', async () => {
+    const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY: goodJwt });
+    assert.equal(r.code, 0, r.stdout);
+    assert.ok(r.stdout.includes('PASS'), 'guard reports PASS');
+    assert.ok(!r.stdout.includes(goodJwt), 'the key itself is never printed');
+    assert.ok(!r.stdout.includes('fakesig'), 'no key fragment is printed');
+  });
+
+  it('a key issued for the PRODUCTION project is blocked (ref claim)', async () => {
+    const prodJwt = jwt({ ref: 'mwjzosfrxwxcrzcsiear', role: 'anon', exp: future, iss: 'https://mwjzosfrxwxcrzcsiear.supabase.co' });
+    const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY: prodJwt });
+    assert.notEqual(r.code, 0);
+  });
+
+  it('a service_role key is blocked (must never ship in an app bundle)', async () => {
+    const svcJwt = jwt({ ref: 'caimavjwasxiegjhxdsr', role: 'service_role', exp: future });
+    const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY: svcJwt });
+    assert.notEqual(r.code, 0);
+  });
+
+  it('an expired key is blocked', async () => {
+    const expJwt = jwt({ ref: 'caimavjwasxiegjhxdsr', role: 'anon', exp: past });
+    const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY: expJwt });
+    assert.notEqual(r.code, 0);
+  });
+
+  it('substring and look-alike URLs are blocked (exact equality only)', async () => {
+    for (const bad of [
+      'https://caimavjwasxiegjhxdsr.supabase.co.evil.example',
+      'https://caimavjwasxiegjhxdsr.supabase.co/',
+      'https://mwjzosfrxwxcrzcsiear.supabase.co',
+      '',
+    ]) {
+      const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: bad, EXPO_PUBLIC_SUPABASE_ANON_KEY: goodJwt });
+      assert.notEqual(r.code, 0, `URL must be rejected: ${bad || '(empty)'}`);
+    }
+  });
+
+  it('opaque keys fail closed without attestation and pass with it', async () => {
+    const bare = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY: 'sb_publishable_fabricated' });
+    assert.notEqual(bare.code, 0);
+    const attested = await runGuard({
+      EXPO_PUBLIC_SUPABASE_URL: GOOD_URL,
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: 'sb_publishable_fabricated',
+      CONFIRM_OPAQUE_KEY: 'KEY-VERIFIED-IN-DASHBOARD',
+    });
+    assert.equal(attested.code, 0, attested.stdout);
+  });
+
+  it('missing key is blocked', async () => {
+    const r = await runGuard({ EXPO_PUBLIC_SUPABASE_URL: GOOD_URL });
+    assert.notEqual(r.code, 0);
   });
 });

@@ -91,7 +91,11 @@ time.
   static app.json stays the single source; the dynamic config stays
   frozen for fingerprint stability).
 - The workflow owner-step document contains `workflow_dispatch`,
-  `--channel beta`, the scratch-host guard, and no `--channel production`.
+  `--channel beta`, no `--channel production`, drives the guard through
+  `eas env:exec --environment production` + `ota-env-guard.mjs`, and
+  never references the GitHub Supabase secrets.
+- The guard script itself is behavior-tested against fabricated keys
+  (see the hardening addendum below).
 
 ## Remaining owner actions (in order)
 
@@ -100,6 +104,39 @@ time.
 3. When ready for the bootstrap: set buildNumber 24, dispatch Build iOS
    Production, run bundle + OTA gates (runbook), submit, install.
 4. Publish baseline B0, then follow the runbook for all updates.
+
+## Hardening addendum (PR #57 review pass)
+
+The initial version's publish guard checked the GitHub-secrets environment
+with substring host matching and no key-provenance check. Review required
+better; this PR now also contains:
+
+- **`apps/mobile/scripts/ota-env-guard.mjs`** — a committed, unit-tested
+  guard (spawn-tested against fabricated keys: valid JWT passes;
+  wrong-project, service_role, expired, substring-host, trailing-slash,
+  un-attested opaque, and missing key all BLOCK):
+  - URL must EQUAL `https://caimavjwasxiegjhxdsr.supabase.co` exactly.
+  - JWT anon keys: decoded claims must show ref=Scratch, role=`anon`,
+    unexpired exp (URL-form iss cross-checked). Method note: the claims
+    are the issuer's own provenance record and deterministically catch
+    misconfiguration (wrong project's key, wrong key type, expiry) —
+    the realistic threat. Signature verification is intentionally not
+    attempted (it would require the project JWT secret in CI).
+  - Opaque `sb_publishable_…` keys carry no claims: the guard FAILS
+    CLOSED unless the dispatcher attests dashboard provenance via the
+    workflow's `confirm_opaque_key` input. Documented limitation, gated
+    rather than weakened.
+- **Single-source environments:** the publish workflow no longer reads
+  the GitHub Supabase secrets at all. The guard runs inside
+  `eas env:exec --environment production` and the publish uses
+  `eas update --environment production` — the validated environment IS
+  the shipped environment, eliminating guard/publisher drift.
+- **Actions review:** inputs pass to shell only via `env:` (no `${{ }}`
+  inside `run:` — injection-proof), message length capped, permissions
+  `contents: read`, EXPO_TOKEN scoped to EAS-calling steps, checkout and
+  setup-node pinned by commit SHA (v4), main-only + beta-channel locks
+  retained, concurrency serialized. Rollback stays a manual owner action
+  outside the workflow (interactive verbs; see runbook).
 
 ## Explicit non-goals of this PR
 

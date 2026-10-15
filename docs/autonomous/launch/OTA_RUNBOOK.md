@@ -51,10 +51,29 @@ embedded fallback alone. Record B0's group ID here after publishing:
 1. Merge the JS change to main through the normal Draft-PR flow (CI 9/9).
 2. Actions → **Publish OTA Update (beta)** → Run workflow (branch: main)
    with a descriptive message.
-3. The workflow's guards must pass (channel lock + scratch-target env
-   guard). A guard failure publishes nothing — fix the cause, never
-   bypass.
+3. The workflow's guards must pass. A guard failure publishes nothing —
+   fix the cause, never bypass. The guards, in order:
+   - **main-only** dispatch ref; **channel lock** (`eas.json` production
+     channel must be `beta`);
+   - **environment provenance** (`apps/mobile/scripts/ota-env-guard.mjs`,
+     executed inside `eas env:exec --environment production`, i.e. inside
+     the SAME EAS production environment the publish step uses — the
+     validated environment and the shipped environment are one source,
+     and the job never reads the GitHub Supabase secrets):
+     the resolved URL must EQUAL the Scratch URL exactly (substring
+     matches are forgeable and rejected), and the anon key must belong
+     to Scratch — for JWT keys its decoded claims must show
+     ref=Scratch, role=`anon`, unexpired (a `service_role` key fails:
+     it must never ship in an app bundle). For opaque
+     `sb_publishable_…` keys (no claims exist to check) the guard fails
+     closed unless the dispatcher typed the attestation input
+     `KEY-VERIFIED-IN-DASHBOARD`, asserting the key was copied from the
+     Scratch project's own API settings page. Key values are never
+     printed — the guard reports booleans only.
 4. Note the new update group ID from the run log / expo.dev.
+5. Key rotation: rotate the Scratch anon key ONLY in the EAS production
+   environment (expo.dev → Environment variables) — the publish path has
+   no second copy.
 
 ## Device verification protocol (first two updates, then spot-checks)
 
@@ -68,6 +87,12 @@ embedded fallback alone. Record B0's group ID here after publishing:
    JS-only; data and auth are untouched by delivery).
 
 ## Rollback
+
+Rollback runs from any owner-authenticated EAS CLI (`eas login`, or
+`EXPO_TOKEN` in the environment) or the expo.dev dashboard — it is
+deliberately NOT a step in the publish workflow: the rollback verbs are
+interactive, and an unattended pipeline must never carry a rollback
+trigger.
 
 **Case A — a previous good update group exists (normal case):**
 `eas update:republish --group <good-group-id>` (owner, via EAS CLI or the
