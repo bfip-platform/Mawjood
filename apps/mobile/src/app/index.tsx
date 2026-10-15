@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Image,
   I18nManager,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -4566,7 +4567,7 @@ export default function HomeScreen() {
 
       {/* ── profile modal ── */}
       <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => setProfileOpen(false)}>
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={[styles.modalCard, styles.profileCard]}>
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               {/* ── identity header (avatar 64 · name 20/700 · email 13 gray) ── */}
@@ -4824,7 +4825,7 @@ export default function HomeScreen() {
               </Pressable>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── about modal ── */}
@@ -4844,7 +4845,10 @@ export default function HomeScreen() {
       </Modal>
 
       {view === 'chat' ? (
-        <>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.kav}
+        >
           <FlatList
             ref={chatListRef}
             style={styles.fill}
@@ -4917,7 +4921,7 @@ export default function HomeScreen() {
                   onChangeText={setTextNote}
                   placeholder={t('chatPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { height: composerH }]}
+                  style={[styles.composerInput, { height: composerH, textAlign: ta() }]}
                   onContentSizeChange={(e) =>
                     setComposerH(
                       Math.max(36, Math.min(120, e.nativeEvent.contentSize.height)),
@@ -4958,7 +4962,7 @@ export default function HomeScreen() {
               <Text style={styles.micHint}>{t('micHint')}</Text>
             )}
           </View>
-        </>
+        </KeyboardAvoidingView>
       ) : viewSpace?.type === 'family' ? (
         <>
           <View style={styles.famHeader}>
@@ -5117,7 +5121,7 @@ export default function HomeScreen() {
                 const resolved = l.items.filter((i) => i.status !== 'open').length;
                 const total = l.items.length;
                 return (
-                  <SwipeRow key={l.id} onSwipeLeft={() => deleteShopList(l.id)}>
+                  <SwipeRow key={l.id} radius={14} onSwipeLeft={() => deleteShopList(l.id)}>
                   <View style={styles.shopListCard}>
                     <View style={styles.shopListHead}>
                        {shopSearch.inSearch ? (
@@ -5160,7 +5164,7 @@ export default function HomeScreen() {
                     const missing = l.items.filter((i) => i.status === 'not_found').length;
                     const expanded = archOpenId === l.id;
                     return (
-                      <SwipeRow key={l.id} onSwipeLeft={() => deleteShopList(l.id)}>
+                      <SwipeRow key={l.id} radius={14} onSwipeLeft={() => deleteShopList(l.id)}>
                       <View style={[styles.shopListCard, styles.shopListArchived]}>
                         <Pressable onPress={() => setArchOpenId(expanded ? null : l.id)}>
                           <View style={styles.shopListHead}>
@@ -5336,7 +5340,7 @@ export default function HomeScreen() {
                         onChangeText={setAssignName}
                         placeholder={t('assigneePh')}
                         placeholderTextColor={P.faint}
-                        style={styles.chatInput}
+                        style={[styles.chatInput, { textAlign: ta() }]}
                         onSubmitEditing={() => onAssign(item)}
                         returnKeyType="done"
                       />
@@ -5434,7 +5438,7 @@ export default function HomeScreen() {
 
       {/* ── custom tab modal (create / rename) ── */}
       <Modal visible={tabModalOpen} transparent animationType="fade" onRequestClose={() => setTabModalOpen(false)}>
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{editingTab ? t('renameTab') : t('newTab')}</Text>
             <View style={styles.iconRow}>
@@ -5456,8 +5460,7 @@ export default function HomeScreen() {
               onChangeText={setTabName}
               placeholder={t('tabNamePh')}
               placeholderTextColor={P.faint}
-              style={styles.inviteInput}
-              textAlign="center"
+              style={[styles.fieldInput, { textAlign: ta() }]}
               maxLength={40}
               autoFocus
             />
@@ -5476,7 +5479,7 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── free-tier tab limit ── */}
@@ -5575,6 +5578,7 @@ export default function HomeScreen() {
       {/* ── secret vault: full hidden page ── */}
       <Modal visible={secretVaultId !== null} animationType="slide" onRequestClose={() => setSecretVaultId(null)}>
         <SafeAreaView style={styles.vaultPage} edges={['top', 'bottom']}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.kav}>
           <View style={styles.vaultHeader}>
             <Pressable onPress={() => setSecretVaultId(null)} style={styles.trashBtn} accessibilityLabel={t('close')}>
               <Text style={styles.trashBtnText}>🔒</Text>
@@ -5633,7 +5637,7 @@ export default function HomeScreen() {
                   onChangeText={setSecretDraft}
                   placeholder={t('secretAddPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={styles.composerInput}
+                  style={[styles.composerInput, { textAlign: ta() }]}
                   multiline
                   maxLength={2000}
                 />
@@ -5662,11 +5666,13 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
       {/* ── 👻 ghost key: vault MANAGEMENT (master word verified in chat) ── */}
       <Modal visible={mgmtOpen} animationType="slide" onRequestClose={closeMgmt}>
         <SafeAreaView style={styles.vaultPage} edges={['top', 'bottom']}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.kav}>
           <View style={styles.vaultHeader}>
             <Pressable onPress={closeMgmt} style={styles.trashBtn}>
               <Text style={styles.trashBtnText}>‹ {t('close')}</Text>
@@ -5799,6 +5805,7 @@ export default function HomeScreen() {
               <Text style={styles.primaryBtnText}>{t('saveSecretCode')}</Text>
             </Pressable>
           </ScrollView>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
 
@@ -5877,7 +5884,7 @@ export default function HomeScreen() {
 
       {/* ── join modal ── */}
       <Modal visible={joinOpen} transparent animationType="fade" onRequestClose={() => setJoinOpen(false)}>
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('joinFamilyTitle')}</Text>
             <Text style={styles.modalBody}>{t('enterCode')}</Text>
@@ -5906,7 +5913,7 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── family-slots paywall: first family free, extras need a slot ── */}
@@ -5986,7 +5993,7 @@ export default function HomeScreen() {
 
       {/* ── rename family (owner only) ── */}
       <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('renameFamily')}</Text>
             <Text style={styles.modalBody}>{t('renameHint')}</Text>
@@ -5996,7 +6003,7 @@ export default function HomeScreen() {
               placeholder={t('familyNamePh')}
               placeholderTextColor={P.faint2}
               autoCorrect={false}
-              style={styles.fieldInput}
+              style={[styles.fieldInput, { textAlign: ta() }]}
               maxLength={40}
               autoFocus
               onSubmitEditing={doRename}
@@ -6016,7 +6023,7 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── shopping mode ("ابدا التسوق") ── */}
@@ -6174,7 +6181,7 @@ export default function HomeScreen() {
         animationType="slide"
         onRequestClose={() => setNewListOpen(false)}
       >
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('newList')}</Text>
             <TextInput
@@ -6182,7 +6189,7 @@ export default function HomeScreen() {
               onChangeText={setNewListTitle}
               placeholder={t('newListTitlePh')}
               placeholderTextColor={P.faint}
-              style={styles.inviteInput}
+              style={[styles.fieldInput, { textAlign: ta() }]}
             />
             <Text style={styles.modalLabel}>{t('newListFor')}</Text>
             <View style={styles.chipRow}>
@@ -6214,7 +6221,7 @@ export default function HomeScreen() {
               onChangeText={setNewListItems}
               placeholder={t('newListItemsPh')}
               placeholderTextColor={P.faint}
-              style={[styles.inviteInput, styles.modalInputMulti]}
+              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta() }]}
               multiline
             />
             <View style={styles.modalBtns}>
@@ -6236,7 +6243,7 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
 

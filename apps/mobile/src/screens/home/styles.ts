@@ -592,7 +592,6 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     backgroundColor: P.surface,
     borderRadius: 14,
     padding: 14,
-    marginBottom: 10,
     borderWidth: 1,
     borderColor: P.border,
     shadowColor: '#000',
@@ -926,11 +925,13 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 360,
+    maxHeight: '88%',
     backgroundColor: P.paper,
     borderRadius: 18,
     padding: 22,
     alignItems: 'center',
   },
+  kav: { flex: 1 },
   modalTitle: { fontSize: 19, fontWeight: '800', color: P.ink, marginBottom: 10 },
   modalBody: { fontSize: 14, color: P.text3, textAlign: 'center', lineHeight: 21, marginBottom: 14 },
   // trash rows

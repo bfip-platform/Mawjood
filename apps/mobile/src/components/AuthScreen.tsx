@@ -84,7 +84,7 @@ export default function AuthScreen() {
               value={code}
               onChangeText={setCode}
               placeholder={t('emailCodePh')}
-              placeholderTextColor="P.faint"
+              placeholderTextColor={P.faint}
               keyboardType="number-pad"
               autoCapitalize="none"
               autoCorrect={false}
@@ -114,7 +114,7 @@ export default function AuthScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="you@example.com"
-              placeholderTextColor="P.faint"
+              placeholderTextColor={P.faint}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
