@@ -2427,3 +2427,25 @@ describe('EAS env embedding — Supabase config reaches remote builds (build 23 
     assert.ok(src.includes('resolveSupabaseConfig'), 'validator still gates the resolved values');
   });
 });
+
+describe('EAS build env — eas.json feeds the builder-side config resolution (build 23 gate failure #2)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('GUARD: eas.json production profile declares the production environment and the scratch URL env', () => {
+    const eas = JSON.parse(read('../../apps/mobile/eas.json'));
+    assert.equal(eas.build.production.environment, 'production');
+    assert.equal(
+      eas.build.production.env.EXPO_PUBLIC_SUPABASE_URL,
+      'https://caimavjwasxiegjhxdsr.supabase.co',
+      'the beta build must resolve the SCRATCH project URL from eas.json env',
+    );
+    assert.equal(eas.build.production.ios.autoIncrement, false, 'autoIncrement stays disabled');
+  });
+
+  it('GUARD: app.config.ts logs safe SET/MISSING diagnostics (never values)', () => {
+    const cfg = read('../../apps/mobile/app.config.ts');
+    assert.ok(cfg.includes('[app.config]'), 'diagnostic marker present');
+    assert.ok(cfg.includes('MISSING'), 'diagnostic reports missing vars');
+    assert.ok(cfg.includes('scratch host'), 'diagnostic reports scratch-host match as a boolean');
+  });
+});

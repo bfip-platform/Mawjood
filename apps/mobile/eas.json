@@ -1,6 +1,10 @@
 {
   "build": {
     "production": {
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://caimavjwasxiegjhxdsr.supabase.co"
+      },
       "ios": {
         "autoIncrement": false
       }
