@@ -1,0 +1,36 @@
+name: OTA Preflight (no publish)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_opaque_key:
+        description: "Only after verifying the publishable key in the SCRATCH Supabase dashboard, enter KEY-VERIFIED-IN-DASHBOARD"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://caimavjwasxiegjhxdsr.supabase.co
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Install pinned EAS CLI
+        run: npm install -g eas-cli@16.28.0
+      - name: Install dependencies
+        working-directory: .
+        run: npm install
+      - name: Validate resolved environment without publishing
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CONFIRM_OPAQUE_KEY: ${{ inputs.confirm_opaque_key }}
+        run: eas env:exec production 'node scripts/ota-preflight.mjs'
