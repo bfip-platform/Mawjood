@@ -1679,7 +1679,66 @@ export default function HomeScreen() {
     } finally {
       setRenameBusy(false);
     }
-  }, [viewSpace, renameValue, renameBusy]);  const onFamAction = useCallback(async (s: Space) => {
+  }, [viewSpace, renameValue, renameBusy]);
+
+  // ── CFP-01 item 7: custom spaces — managed via the manage-space edge fn ──
+  const [customSpacesLimit, setCustomSpacesLimit] = useState(2);
+  const [spaceNameOpen, setSpaceNameOpen] = useState(false);
+  const [spaceNameValue, setSpaceNameValue] = useState('');
+  const [spaceNameTarget, setSpaceNameTarget] = useState<Space | null>(null); // null = create mode
+  const [spaceNameBusy, setSpaceNameBusy] = useState(false);
+  const [spaceNameMsg, setSpaceNameMsg] = useState<string | null>(null);
+  const [spaceDelArm, setSpaceDelArm] = useState<string | null>(null);
+  const [spaceErr, setSpaceErr] = useState<string | null>(null);
+  const customSpaces = useMemo(
+    () => spaces.filter((sp) => (sp.type as string) === 'custom' && sp.owner_id === userId),
+    [spaces, userId],
+  );
+  const spaceErrText = useCallback((e: unknown): string => {
+    const code = (e as { code?: string })?.code ?? '';
+    if (code === 'limit_reached') return t('spaceLimitMsg');
+    if (code === 'duplicate_name') return t('spaceDupName');
+    if (code === 'not_empty') return t('spacesNotEmpty');
+    return t('spaceGenericErr');
+  }, []);
+  const openSpaceCreate = useCallback(() => {
+    setSpaceNameTarget(null);
+    setSpaceNameValue('');
+    setSpaceNameMsg(null);
+    setSpaceNameOpen(true);
+  }, []);
+  const openSpaceRename = useCallback((sp: Space) => {
+    setSpaceNameTarget(sp);
+    setSpaceNameValue(sp.name);
+    setSpaceNameMsg(null);
+    setSpaceNameOpen(true);
+  }, []);
+  const saveSpaceName = useCallback(async () => {
+    if (spaceNameBusy) return;
+    if (!spaceNameValue.trim()) { setSpaceNameMsg(t('renameEmpty')); return; }
+    setSpaceNameBusy(true);
+    try {
+      if (spaceNameTarget) await engine.renameCustomSpace(spaceNameTarget.id, spaceNameValue);
+      else await engine.createCustomSpace(spaceNameValue);
+      setSpaces(await engine.listSpaces());
+      setSpaceNameOpen(false);
+    } catch (e) {
+      setSpaceNameMsg(spaceErrText(e));
+    } finally {
+      setSpaceNameBusy(false);
+    }
+  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText]);
+  const onDeleteCustomSpace = useCallback(async (sp: Space) => {
+    if (spaceDelArm !== sp.id) { setSpaceDelArm(sp.id); setSpaceErr(null); return; }
+    try {
+      await engine.deleteCustomSpace(sp.id);
+      setSpaces(await engine.listSpaces());
+      setSpaceDelArm(null);
+    } catch (e) {
+      setSpaceErr(spaceErrText(e));
+      setSpaceDelArm(null);
+    }
+  }, [spaceDelArm, spaceErrText]);  const onFamAction = useCallback(async (s: Space) => {
     if (!!userId && s.owner_id === userId) return; // own family: locked
     if (famConfirm !== s.id) {
       setFamConfirm(s.id);
@@ -1897,6 +1956,11 @@ export default function HomeScreen() {
       engine
         .getCustomTabLimit(user.id)
         .then(setTabLimit)
+        .catch(() => {});
+      // CFP-01 item 7: custom-spaces base limit (server also honors plans/grants)
+      engine
+        .getCustomSpacesLimit(user.id)
+        .then(setCustomSpacesLimit)
         .catch(() => {});
       // trash retention tier: 0 = free (permanent delete), 30 = Plus (30-day trash)
       engine
@@ -4821,6 +4885,36 @@ export default function HomeScreen() {
                 <Text style={styles.primaryBtnText}>{supportBusy ? t('supportSending') : t('supportSend')}</Text>
               </Pressable>
 
+              {/* ── CFP-01 item 7: my extra spaces ── */}
+              <Text style={styles.sectionHeader}>{t('mySpaces')}</Text>
+              <Text style={styles.fieldHint}>{t('mySpacesHint')}</Text>
+              <Text style={styles.fieldHint}>
+                {tx('spacesCount', { used: customSpaces.length, limit: Math.max(customSpacesLimit, customSpaces.length) })}
+              </Text>
+              {customSpaces.map((sp) => (
+                <View key={sp.id} style={styles.famSwitchRow}>
+                  <View style={styles.famSwitchRowMain}>
+                    <Text style={styles.famSwitchRowName} numberOfLines={1}>🗂️ {sp.name}</Text>
+                  </View>
+                  <Pressable onPress={() => openSpaceRename(sp)} style={styles.famActionBtn} accessibilityRole="button">
+                    <Text style={styles.famActionText}>{t('spaceRenameBtn')}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void onDeleteCustomSpace(sp)}
+                    style={[styles.famActionBtn, spaceDelArm === sp.id && styles.famActionBtnArmed]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.famActionText, spaceDelArm === sp.id && styles.famActionTextArmed]}>
+                      {spaceDelArm === sp.id ? t('spaceDeleteArm') : t('spaceDeleteBtn')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+              {spaceErr ? <Text style={styles.fieldError}>⚠️ {spaceErr}</Text> : null}
+              <Pressable onPress={openSpaceCreate} style={styles.ghostBtn} accessibilityRole="button">
+                <Text style={styles.ghostBtnText}>{t('newSpaceBtn')}</Text>
+              </Pressable>
+
               <Pressable onPress={() => setProfileOpen(false)} style={styles.ghostBtn}>
                 <Text style={styles.ghostBtnText}>{t('close')}</Text>
               </Pressable>
@@ -5990,6 +6084,43 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
         </View>
+      </Modal>
+
+      {/* ── CFP-01 item 7: create / rename custom space ── */}
+      <Modal visible={spaceNameOpen} transparent animationType="fade" onRequestClose={() => setSpaceNameOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{spaceNameTarget ? t('spaceRenameBtn') : t('newSpaceBtn')}</Text>
+            <TextInput
+              value={spaceNameValue}
+              onChangeText={setSpaceNameValue}
+              placeholder={t('spaceNamePh')}
+              placeholderTextColor={P.faint2}
+              autoCorrect={false}
+              style={[styles.fieldInput, { textAlign: ta() }]}
+              maxLength={40}
+              autoFocus
+              onSubmitEditing={() => void saveSpaceName()}
+              returnKeyType="done"
+            />
+            <Text style={{ fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 }}>
+              {spaceNameValue.length}/40
+            </Text>
+            {spaceNameMsg ? <Text style={styles.fieldError}>⚠️ {spaceNameMsg}</Text> : null}
+            <View style={styles.modalRow}>
+              <Pressable onPress={() => void saveSpaceName()} disabled={spaceNameBusy} style={styles.modalBtn}>
+                {spaceNameBusy ? (
+                  <ActivityIndicator color={P.paper} />
+                ) : (
+                  <Text style={styles.modalBtnText}>{t('save')}</Text>
+                )}
+              </Pressable>
+              <Pressable onPress={() => setSpaceNameOpen(false)} style={[styles.modalBtn, styles.modalBtnGhost]}>
+                <Text style={[styles.modalBtnText, styles.modalBtnGhostText]}>{t('cancel')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── rename family (owner only) ── */}

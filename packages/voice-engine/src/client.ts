@@ -1565,6 +1565,57 @@ export class VoiceEngine {
     if (error) throw error;
   }
 
+  /**
+   * CFP-01 item 7 — custom-space management goes through the manage-space
+   * edge function (the entitlement limit is enforced server-side; direct
+   * PostgREST space inserts carry no cap). Errors carry a machine `code`
+   * (limit_reached | duplicate_name | not_empty | not_custom | …) that the
+   * UI maps to localized copy.
+   */
+  private async manageSpace(body: Record<string, unknown>): Promise<Space> {
+    const { data, error } = await this.supabase.functions.invoke('manage-space', { body });
+    if (error) {
+      let code = 'server_error';
+      try {
+        const j = await (error as { context?: { json?: () => Promise<{ code?: string }> } }).context?.json?.();
+        if (j?.code) code = j.code;
+      } catch { /* keep server_error */ }
+      throw Object.assign(new Error(code), { code });
+    }
+    const d = data as { ok?: boolean; code?: string; space?: Space } | null;
+    if (!d?.ok || !d.space) {
+      throw Object.assign(new Error(d?.code ?? 'server_error'), { code: d?.code ?? 'server_error' });
+    }
+    return d.space;
+  }
+
+  async createCustomSpace(name: string): Promise<Space> {
+    return this.manageSpace({ action: 'create', name });
+  }
+
+  async renameCustomSpace(spaceId: string, name: string): Promise<Space> {
+    return this.manageSpace({ action: 'rename', space_id: spaceId, name });
+  }
+
+  async deleteCustomSpace(spaceId: string): Promise<void> {
+    await this.manageSpace({ action: 'delete', space_id: spaceId });
+  }
+
+  /** The caller's base custom-spaces limit (profile default; the server also honors plan features + grants). */
+  async getCustomSpacesLimit(userId: string): Promise<number> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select('custom_spaces_limit')
+        .eq('id', userId)
+        .single();
+      if (error || !data) return 2;
+      return (data as { custom_spaces_limit: number }).custom_spaces_limit ?? 2;
+    } catch {
+      return 2;
+    }
+  }
+
   /** Rename a space the caller owns (RLS: owner-only update on spaces). */
   async renameSpace(spaceId: string, name: string): Promise<void> {
     const clean = name.trim().slice(0, 40);

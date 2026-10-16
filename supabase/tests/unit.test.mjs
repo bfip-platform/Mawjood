@@ -2624,3 +2624,38 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 D — custom spaces + configurable entitlements (item 7)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const fn = read('../../supabase/functions/manage-space/index.ts');
+  const mig = read('../../supabase/migrations/0048_custom_spaces_limit.sql');
+  const adminLimits = read('../../supabase/functions/admin-set-limits/index.ts');
+
+  it('GUARD: the limit is configuration (profile default 2, plan feature 7, grants), not code branches', () => {
+    assert.ok(mig.includes('custom_spaces_limit integer not null default 2'), 'free default is a profile column');
+    assert.ok(mig.includes('custom_spaces_limit:7'), 'paid plans carry 7 via the features catalog');
+    assert.ok(adminLimits.includes('custom_spaces_limit: [0, 100]'), 'admin can adjust the limit per user');
+    assert.ok(fn.includes('Math.max(limit,'), 'effective limit = max of sources (downgrade-safe)');
+    assert.ok(fn.includes("kind', 'custom_spaces_limit'") || fn.includes(".eq('kind', 'custom_spaces_limit')"), 'grants are honored');
+  });
+
+  it('GUARD: manage-space enforces owner-only, custom-only, non-empty-refusal, and the creation cap', () => {
+    assert.ok(fn.includes("space.type !== 'custom'"), 'built-in spaces are protected (not_custom)');
+    assert.ok(fn.includes("space.owner_id !== user.id"), 'owner check precedes mutations');
+    assert.ok(fn.includes("fail('not_empty', 409)"), 'non-empty spaces refuse deletion (data preserved)');
+    assert.ok(fn.includes("fail('limit_reached', 403)"), 'creation is capped server-side');
+    assert.ok(fn.includes("action === 'create'") && fn.includes("action === 'rename'") && fn.includes("action === 'delete'"), 'all three actions exist');
+    assert.ok(fn.includes('is_anonymous'), 'anonymous trial accounts cannot create spaces');
+  });
+
+  it('GUARD: engine + UI wiring is present', () => {
+    assert.ok(client.includes("functions.invoke('manage-space'"), 'engine routes through the fn');
+    assert.ok(client.includes('async createCustomSpace') && client.includes('async renameCustomSpace') && client.includes('async deleteCustomSpace'), 'engine CRUD methods exist');
+    assert.ok(client.includes('async getCustomSpacesLimit'), 'engine reads the base limit');
+    assert.ok(idx.includes("t('mySpaces')"), 'profile hosts the My Spaces manager');
+    assert.ok(idx.includes('visible={spaceNameOpen}'), 'create/rename modal exists');
+    assert.ok(idx.includes('onDeleteCustomSpace'), 'two-step delete is wired');
+  });
+});
