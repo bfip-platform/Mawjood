@@ -2624,3 +2624,26 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 E — composer & microphone redesign (item 8)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+
+  it('GUARD: the shared composer styles carry the redesign (both composers inherit it)', () => {
+    assert.ok(styles.includes('composerBoxRecording'), 'recording state tints the composer box border');
+    const input = styles.slice(styles.indexOf('composerInput: {'), styles.indexOf('composerInput: {') + 200);
+    assert.ok(input.includes('fontSize: 16'), 'composer text is 16px (readability + no iOS focus zoom)');
+    const cam = styles.slice(styles.indexOf('cameraBtn: {'), styles.indexOf('cameraBtn: {') + 220);
+    assert.ok(cam.includes('backgroundColor: P.input'), 'in-box camera action sits on a soft disc');
+  });
+
+  it('GUARD: both composers show the recording tint; the vault composer auto-grows like the main one', () => {
+    assert.equal((idx.match(/composerBoxRecording/g) ?? []).length, 2, 'main + vault composers both wired');
+    assert.ok(idx.includes('const [secretComposerH, setSecretComposerH] = useState(44)'), 'vault auto-grow state exists');
+    assert.ok(idx.includes('setSecretComposerH('), 'vault input grows on content size');
+    // behavior preservation: the combined mic/send control logic is untouched
+    assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main mic/send swap unchanged');
+    assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault mic/send swap unchanged');
+  });
+});

@@ -231,8 +231,10 @@ export default function HomeScreen() {
     AsyncStorage.setItem(WELCOME_KEY, '1').catch(() => {});
   }, []);
   const [textNote, setTextNote] = useState('');
-  /** chat composer auto-grow height: follows content size, clamped 36–120 */
+  /** chat composer auto-grow height: follows content size, clamped 44–120 */
   const [composerH, setComposerH] = useState(44);
+  /** vault composer auto-grow (CFP-01 item 8 parity with the main composer) */
+  const [secretComposerH, setSecretComposerH] = useState(44);
   const [listItemsH, setListItemsH] = useState(90);
 
   /** empty-state example chip → fill the chat input and jump to Home */
@@ -4913,7 +4915,7 @@ export default function HomeScreen() {
             ) : null}
             <View style={styles.inputRow}>
               {/* WhatsApp-style composer: camera inside the box, mic/send beside it */}
-              <View style={styles.composerBox}>
+              <View style={[styles.composerBox, isRecording && styles.composerBoxRecording]}>
                 <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
@@ -5629,7 +5631,7 @@ export default function HomeScreen() {
             ) : null}
             {isRecording ? <Text style={styles.timer}>🔴 {fmtTime(duration)}</Text> : null}
             <View style={styles.inputRow}>
-              <View style={styles.composerBox}>
+              <View style={[styles.composerBox, isRecording && styles.composerBoxRecording]}>
                 <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
@@ -5638,7 +5640,12 @@ export default function HomeScreen() {
                   onChangeText={setSecretDraft}
                   placeholder={t('secretAddPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { textAlign: ta() }]}
+                  style={[styles.composerInput, { height: secretComposerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
+                  onContentSizeChange={(e) =>
+                    setSecretComposerH(
+                      Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
+                    )
+                  }
                   multiline
                   maxLength={2000}
                 />
