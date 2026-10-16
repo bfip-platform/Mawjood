@@ -4838,7 +4838,7 @@ export default function HomeScreen() {
               {t('aboutBody')}
               {'\n\n'}Lost it? Mawjood.
             </Text>
-            <Pressable onPress={() => setAboutOpen(false)} style={[styles.modalBtn, { marginTop: 8 }]}>
+            <Pressable onPress={() => setAboutOpen(false)} style={[styles.modalBtn, { marginTop: 8, flex: 0, alignSelf: 'stretch', minHeight: 48, justifyContent: 'center' }]}>
               <Text style={styles.modalBtnText}>{t('close')}</Text>
             </Pressable>
           </View>
