@@ -4922,7 +4922,7 @@ export default function HomeScreen() {
                   onChangeText={setTextNote}
                   placeholder={t('chatPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { height: composerH, minHeight: 44, textAlign: ta(), textAlignVertical: 'top' }]}
+                  style={[styles.composerInput, { height: composerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
                   onContentSizeChange={(e) =>
                     setComposerH(
                       Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
