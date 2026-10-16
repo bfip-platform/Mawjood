@@ -898,6 +898,12 @@ export default function HomeScreen() {
   // ── Phase 3: family lists ──
   // loose shopping items + directed lists only — tasks/upcoming/things/notes
   // are paginated via their own loaders (openSpace / join flow / tab effect).
+  // CFP-01 item 6: shopping LISTS now page server-side too — 10 at a time
+  // (previously one unbounded fetch of every list with all of its items).
+  const SHOP_LISTS_PAGE = 10;
+  const [shopListsHasMore, setShopListsHasMore] = useState(false);
+  const shopListsLoadedRef = useRef(0);
+  const shopListsMoreBusyRef = useRef(false);
   const refreshFamily = useCallback(async (spaceId: string) => {
     try {
       const s = await engine.listShopping(spaceId, { limit: 100 });
@@ -907,11 +913,40 @@ export default function HomeScreen() {
     }
     // directed shopping lists (graceful until migration 0014 is run)
     try {
-      setShopLists(await engine.listShoppingLists(spaceId));
+      const lists = await engine.listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE });
+      shopListsLoadedRef.current = lists.length;
+      setShopListsHasMore(lists.length === SHOP_LISTS_PAGE);
+      setShopLists(lists);
     } catch {
+      shopListsLoadedRef.current = 0;
+      setShopListsHasMore(false);
       setShopLists([]);
     }
   }, [setShopping, setShopLists]);
+
+  /** CFP-01 item 6: append the next page of shopping lists (dedupe by id). */
+  const loadMoreShopLists = useCallback(async () => {
+    if (!viewSpace || shopListsMoreBusyRef.current || !shopListsHasMore) return;
+    shopListsMoreBusyRef.current = true;
+    try {
+      const next = await engine.listShoppingLists(viewSpace.id, {
+        offset: shopListsLoadedRef.current,
+        limit: SHOP_LISTS_PAGE,
+      });
+      shopListsLoadedRef.current += next.length;
+      setShopListsHasMore(next.length === SHOP_LISTS_PAGE);
+      if (next.length > 0) {
+        setShopLists((prev) => {
+          const seen = new Set(prev.map((l) => l.id));
+          return [...prev, ...next.filter((l) => !seen.has(l.id))];
+        });
+      }
+    } catch (e) {
+      console.warn('loadMoreShopLists failed', e);
+    } finally {
+      shopListsMoreBusyRef.current = false;
+    }
+  }, [viewSpace, shopListsHasMore, setShopLists]);
 
   const onRefreshShopping = useCallback(async () => {
     if (!viewSpace) return;
@@ -5226,6 +5261,11 @@ export default function HomeScreen() {
                   })}
                 </>
               )}
+              {shopListsHasMore && !shopSearch.inSearch ? (
+                <Pressable style={styles.showMoreBtn} onPress={() => void loadMoreShopLists()}>
+                  <Text style={styles.showMoreText}>{t('showMore')}</Text>
+                </Pressable>
+              ) : null}
             </ScrollView>
           )}
 

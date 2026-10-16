@@ -948,13 +948,27 @@ export class VoiceEngine {
     return { ...(list as Omit<ShoppingList, 'items'>), items: (items ?? []) as Item[] };
   }
 
-  /** All lists of a space, each with its items (open first). */
-  async listShoppingLists(spaceId: string): Promise<ShoppingList[]> {
-    const { data, error } = await this.supabase
+  /**
+   * Lists of a space, each with its items (open first). Without opts this
+   * returns ALL lists (digest/smart-shopping callers). With PageOpts it
+   * pages server-side (CFP-01 item 6): the shopping tab loads 10 lists at
+   * a time — previously this fetch was unbounded (every list × its items).
+   * Ordering is created_at desc with an id-desc tiebreak so pages are
+   * stable across fetches.
+   */
+  async listShoppingLists(spaceId: string, opts?: PageOpts): Promise<ShoppingList[]> {
+    let q = this.supabase
       .from('shopping_lists')
       .select('*, items(*)')
       .eq('space_id', spaceId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (opts) {
+      const limit = Math.min(Math.max(opts.limit ?? 10, 1), 200);
+      const offset = Math.max(opts.offset ?? 0, 0);
+      q = offset > 0 ? q.range(offset, offset + limit - 1) : q.limit(limit);
+    }
+    const { data, error } = await q;
     if (error) throw error;
     return ((data ?? []) as (Omit<ShoppingList, 'items'> & { items: Item[] | null })[]).map(
       (l) => ({ ...l, items: (l.items ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at)) }),

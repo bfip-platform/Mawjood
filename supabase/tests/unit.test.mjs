@@ -2624,3 +2624,24 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 C — shopping lists server-side pagination (item 6)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+
+  it('GUARD: listShoppingLists pages server-side with a stable order; unpaged callers keep full fetch', () => {
+    const fn = client.slice(client.indexOf('async listShoppingLists'), client.indexOf('async listShoppingLists') + 1400);
+    assert.ok(fn.includes('opts?: PageOpts'), 'paging opts accepted');
+    assert.ok(fn.includes('q.range(offset, offset + limit - 1)'), 'offset pages use range()');
+    assert.ok(fn.includes(".order('id', { ascending: false })"), 'id tiebreak keeps pages stable');
+    assert.ok(fn.includes('if (opts)'), 'paging applies only when opts are passed (digest/smart-shopping unaffected)');
+  });
+
+  it('GUARD: the shopping tab loads 10 lists, appends 10 per Show More, and hides it in search', () => {
+    assert.ok(idx.includes('const SHOP_LISTS_PAGE = 10'), 'page size is 10');
+    assert.ok(idx.includes('listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE })'), 'first page loads in refreshFamily');
+    assert.ok(idx.includes('const loadMoreShopLists = useCallback'), 'load-more handler exists');
+    assert.ok(idx.includes('shopListsHasMore && !shopSearch.inSearch'), 'Show More renders only when more pages exist and not while searching');
+  });
+});
