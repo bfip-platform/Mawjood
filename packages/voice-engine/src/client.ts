@@ -1567,7 +1567,7 @@ export class VoiceEngine {
 
   /** Rename a space the caller owns (RLS: owner-only update on spaces). */
   async renameSpace(spaceId: string, name: string): Promise<void> {
-    const clean = name.trim().slice(0, 40);
+    const clean = name.trim().slice(0, 20); // CFP-01 item 3: family/space name limit is 20 (UI + engine + DB trigger 0047)
     if (!clean) throw new Error('empty name');
     const { error } = await this.supabase.from('spaces').update({ name: clean }).eq('id', spaceId);
     if (error) throw error;

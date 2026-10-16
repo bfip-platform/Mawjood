@@ -200,6 +200,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     color: P.ink,
   },
   fieldHint: { fontSize: 12, color: P.muted, marginBottom: 8, lineHeight: 17, paddingHorizontal: 4 },
+  // CFP-01 item 3: character counter under length-limited inputs.
+  charCount: { fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 },
   fieldError: { fontSize: 12, color: P.danger, marginTop: 6, paddingHorizontal: 4 },
   fieldOk: { fontSize: 12, color: P.success, marginTop: 6, paddingHorizontal: 4 },
   // primary button: full-width, 52, 16/700 — thumb-zone save pattern

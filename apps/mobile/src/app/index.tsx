@@ -251,7 +251,7 @@ export default function HomeScreen() {
   // auto-delete after retention days; current chat survives 2 min idle ──
   const sessionIdRef = useRef(newSessionId());
   const [history, setHistory] = useState<ChatSession[]>([]);
-  const [histVisible, setHistVisible] = useState(10); // drawer shows 10 chats at a time
+  const [histVisible, setHistVisible] = useState(5); // CFP-01 item 4: drawer shows the latest 5 chats, +5 per Show More
   const [historyLoading, setHistoryLoading] = useState(false);
   const backgroundedAtRef = useRef(0);
   const retentionDaysRef = useRef(7); // profiles.chat_retention_days (future paid plans)
@@ -717,7 +717,7 @@ export default function HomeScreen() {
     setSupportMsg(null);
     try {
       const { error } = await supabase.functions.invoke('report-error', {
-        body: { message: msg.slice(0, 300), context: 'support' },
+        body: { message: msg.slice(0, 1000), context: 'support' },
       });
       if (error) throw error;
       setSupportText('');
@@ -1364,7 +1364,7 @@ export default function HomeScreen() {
 
   // ── side menu open/close (slides from the left) ──
   const closeMenu = useCallback(() => {
-    setHistVisible(10); // collapse the history list back to 10 next open
+    setHistVisible(5); // collapse the history list back to 5 next open
     Animated.timing(menuX, { toValue: -320, duration: 200, useNativeDriver: false }).start(
       () => setMenuOpen(false),
     );
@@ -4528,7 +4528,7 @@ export default function HomeScreen() {
               {histVisible < history.length && (
                 <Pressable
                   style={styles.showMoreBtn}
-                  onPress={() => setHistVisible((v) => v + 10)}
+                  onPress={() => setHistVisible((v) => v + 5)}
                 >
                   <Text style={styles.showMoreText}>{t('showMore')}</Text>
                 </Pressable>
@@ -4805,9 +4805,10 @@ export default function HomeScreen() {
                 placeholder={t('supportPlaceholder')}
                 placeholderTextColor={P.faint2}
                 multiline
-                maxLength={300}
+                maxLength={1000}
                 accessibilityLabel={t('supportSection')}
               />
+              <Text style={styles.charCount}>{supportText.length}/1000</Text>
               {supportMsg ? (
                 <Text style={supportMsg.ok ? styles.fieldOk : styles.fieldError}>{supportMsg.text}</Text>
               ) : null}
@@ -6005,11 +6006,12 @@ export default function HomeScreen() {
               placeholderTextColor={P.faint2}
               autoCorrect={false}
               style={[styles.fieldInput, { textAlign: ta() }]}
-              maxLength={40}
+              maxLength={20}
               autoFocus
               onSubmitEditing={doRename}
               returnKeyType="done"
             />
+            <Text style={styles.charCount}>{renameValue.length}/20</Text>
             {renameMsg ? <Text style={styles.fieldError}>⚠️ {renameMsg}</Text> : null}
             <View style={styles.modalRow}>
               <Pressable onPress={doRename} disabled={renameBusy} style={styles.modalBtn}>

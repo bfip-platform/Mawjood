@@ -2624,3 +2624,38 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 B — input limits (item 3) and conversation history 5/+5 (item 4)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const reportError = read('../../supabase/functions/report-error/index.ts');
+
+  it('GUARD (item 4): drawer history windows at 5, growing by 5', () => {
+    assert.ok(idx.includes('useState(5); // CFP-01 item 4'), 'initial window is 5');
+    assert.ok(idx.includes('setHistVisible(5); // collapse the history list back to 5'), 'drawer-open reset is 5');
+    assert.ok(idx.includes('setHistVisible((v) => v + 5)'), 'Show More adds 5');
+    assert.ok(!idx.includes('setHistVisible((v) => v + 10)'), 'the old +10 increment is gone');
+    assert.ok(!idx.includes('setHistVisible(10)'), 'the old reset-to-10 is gone');
+  });
+
+  it('GUARD (item 3): family name is capped at 20 in UI, engine, and the DB boundary', () => {
+    const renameBlock = idx.slice(idx.indexOf('rename family (owner only)'), idx.indexOf('rename family (owner only)') + 1500);
+    assert.ok(renameBlock.includes('maxLength={20}'), 'rename input caps at 20');
+    assert.ok(renameBlock.includes('{renameValue.length}/20'), 'rename counter is shown');
+    const rs = client.slice(client.indexOf('async renameSpace(spaceId'), client.indexOf('async renameSpace(spaceId') + 400);
+    assert.ok(rs.includes('slice(0, 20)'), 'engine renameSpace enforces 20');
+    const mig = read('../../supabase/migrations/0047_family_name_length.sql');
+    assert.ok(mig.includes("new.type = 'family'"), 'DB trigger scopes to family spaces only');
+    assert.ok(mig.includes('char_length(new.name) > 20'), 'DB trigger enforces 20');
+    assert.ok(mig.includes('before insert or update of name'), 'trigger fires on writes only (existing rows untouched)');
+  });
+
+  it('GUARD (item 3): support messages cap at 1000 in UI, client, and server — telemetry keeps 200', () => {
+    assert.ok(idx.includes('maxLength={1000}'), 'support input caps at 1000');
+    assert.ok(idx.includes('{supportText.length}/1000'), 'support counter is shown');
+    assert.ok(idx.includes('message: msg.slice(0, 1000)'), 'client sends up to 1000');
+    assert.ok(reportError.includes('const SUPPORT_MESSAGE_MAX = 1000'), 'server support cap constant is 1000');
+    assert.ok(reportError.includes("context === 'support' ? SUPPORT_MESSAGE_MAX : 200"), 'only the support context gets 1000; telemetry stays 200');
+  });
+});
