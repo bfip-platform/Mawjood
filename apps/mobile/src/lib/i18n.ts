@@ -311,7 +311,7 @@ const ar = {
   // family / invites
   tabHome: '💬 الرئيسية',
   mySpaces: '🗂️ مساحاتي الإضافية',
-  mySpacesHint: 'مساحات إضافية تنشئها وتديرها بنفسك. المساحات الأساسية (خاص، العائلة، العمل) محمية ولا يمكن حذفها.',
+  mySpacesHint: 'مساحات إضافية تنشئها وتديرها بنفسك — اضغط على مساحة لفتحها وتصفح تبويباتها وسجلاتها. المساحات الأساسية (خاص، العائلة، العمل) محمية ولا يمكن حذفها.',
   newSpaceBtn: '➕ مساحة جديدة',
   spaceNamePh: 'اسم المساحة',
   spacesCount: 'استخدمت {used} من {limit} مساحات إضافية',
@@ -834,7 +834,7 @@ const en: Record<keyof typeof ar, string> = {
   demoClear: '🗑️ Clear demo ({count})',
   tabHome: '💬 Home',
   mySpaces: '🗂️ My extra spaces',
-  mySpacesHint: 'Extra spaces you create and manage yourself. The built-in spaces (Private, Family, Work) are protected and cannot be deleted.',
+  mySpacesHint: 'Extra spaces you create and manage yourself — tap a space to open it and browse its tabs and records. The built-in spaces (Private, Family, Work) are protected and cannot be deleted.',
   newSpaceBtn: '➕ New space',
   spaceNamePh: 'Space name',
   spacesCount: 'You have used {used} of {limit} extra spaces',

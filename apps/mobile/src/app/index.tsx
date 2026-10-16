@@ -3367,6 +3367,36 @@ export default function HomeScreen() {
     ],
   );
 
+  /**
+   * CFP-01 item 7 navigation: open a CUSTOM space in the generic
+   * (Private-style) browse UI, parameterized by this space — the browse
+   * branch keys family-vs-generic on viewSpace.type, so a custom space
+   * gets the notes/things/papers tabs + its own custom tabs, its records,
+   * and owner tab management (canManageTabs) with no new navigation
+   * destination. Loaders mirror openSpace's non-family half.
+   */
+  const openCustomSpace = useCallback(
+    (sp: Space) => {
+      itemsSub.current?.();
+      itemsSub.current = null;
+      setViewSpace(sp);
+      setView('custom');
+      notesSearch.setQuery('');
+      thingsSearch.setQuery('');
+      tasksSearch.setQuery('');
+      agendaSearch.setQuery('');
+      shopSearch.setQuery('');
+      memberSearch.setQuery('');
+      setSpaceTab('notes');
+      const sid = sp.id;
+      notesPage.refresh((o, l) => engine.listNotes(sid, { offset: o, limit: l, tabId: null }));
+      thingsPage.refresh((o, l) => engine.listThings(sid, { offset: o, limit: l }));
+      refreshItems(sid);
+      refreshTabs(sid);
+    },
+    [refreshItems, refreshTabs, notesPage, thingsPage, notesSearch, thingsSearch, tasksSearch, agendaSearch, shopSearch, memberSearch],
+  );
+
   // ── family manager: remove a member (two taps to confirm) ──
   const doRemoveMember = useCallback(
     async (space: Space, memberId: string) => {
@@ -3468,11 +3498,12 @@ export default function HomeScreen() {
     try {
       const ids = await engine.seedDemoData(userId, spaces);
       setDemoNoteIds(ids);
-      if (view !== 'chat') openSpace(view);
+      if (view === 'custom') { if (viewSpace) openCustomSpace(viewSpace); }
+      else if (view !== 'chat') openSpace(view);
     } catch (e) {
       console.warn('seedDemoData failed', e);
     }
-  }, [userId, spaces, view, openSpace]);
+  }, [userId, spaces, view, openSpace, openCustomSpace, viewSpace]);
 
   const onClearDemo = useCallback(async () => {
     for (const id of demoNoteIds) {
@@ -3483,8 +3514,9 @@ export default function HomeScreen() {
       }
     }
     setDemoNoteIds([]);
-    if (view !== 'chat') openSpace(view);
-  }, [demoNoteIds, view, openSpace]);
+    if (view === 'custom') { if (viewSpace) openCustomSpace(viewSpace); }
+    else if (view !== 'chat') openSpace(view);
+  }, [demoNoteIds, view, openSpace, openCustomSpace, viewSpace]);
 
   const fmtTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -4893,9 +4925,14 @@ export default function HomeScreen() {
               </Text>
               {customSpaces.map((sp) => (
                 <View key={sp.id} style={styles.famSwitchRow}>
-                  <View style={styles.famSwitchRowMain}>
+                  <Pressable
+                    style={styles.famSwitchRowMain}
+                    onPress={() => { setProfileOpen(false); setSpaceDelArm(null); openCustomSpace(sp); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={sp.name}
+                  >
                     <Text style={styles.famSwitchRowName} numberOfLines={1}>🗂️ {sp.name}</Text>
-                  </View>
+                  </Pressable>
                   <Pressable onPress={() => openSpaceRename(sp)} style={styles.famActionBtn} accessibilityRole="button">
                     <Text style={styles.famActionText}>{t('spaceRenameBtn')}</Text>
                   </Pressable>

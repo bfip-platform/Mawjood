@@ -37,7 +37,7 @@ export const SPACE_SHORT: Record<SpaceType, string> = {
   work: '💼',
 };
 
-export type AppView = 'chat' | SpaceType;
+export type AppView = 'chat' | SpaceType | 'custom';
 
 export const ACTIVE_CHAT_KEY = 'mawjood.active-chat'; // in-progress chat draft
 export const ACTIVE_FAMILY_KEY = 'mawjood.active-family.v1'; // last-viewed family space id

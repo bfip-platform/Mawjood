@@ -209,6 +209,97 @@ try {
       : bad('memories lost on billing change', `note=${n} item=${i}`);
   }
 
+  step('7. CFP-01 item 7 hardening — the custom-spaces cap holds at the DB boundary (migration 0049)');
+  {
+    // Every creation path (owner JWT/PostgREST, service role, raw SQL)
+    // crosses the same BEFORE INSERT trigger; these tests use the
+    // superuser pool (role-independent) + the simulated-JWT path.
+    const D = await mk(), E = await mk(), F = await mk(), G = await mk(), H = await mk();
+    const tryCustom = async (owner, name) => {
+      try {
+        await db.query(`insert into public.spaces (owner_id, type, name) values ($1, 'custom', $2)`, [owner, name]);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // (a) default Free limit = 2 on the simulated PostgREST path
+    // (authenticated role + JWT claims, exactly what the bypass used).
+    const dRes = await asUser(db, { userId: D }, async (c) => {
+      let okCount = 0;
+      let thirdErr = '';
+      for (let i = 0; i < 2; i++) {
+        await c.query(`insert into public.spaces (owner_id, type, name) values ('${D}', 'custom', 'D space ${i}')`);
+        okCount++;
+      }
+      await c.query('savepoint sp_third');
+      try {
+        await c.query(`insert into public.spaces (owner_id, type, name) values ('${D}', 'custom', 'D space 3')`);
+      } catch (e) {
+        thirdErr = e.message;
+        await c.query('rollback to savepoint sp_third');
+      }
+      return { okCount, thirdErr };
+    });
+    dRes.okCount === 2 && /custom_spaces_limit_reached/.test(dRes.thirdErr)
+      ? ok('direct PostgREST path: 2 custom spaces allowed, the 3rd is rejected by the DB trigger')
+      : bad('PostgREST bypass not closed', JSON.stringify(dRes));
+
+    // (b) built-in types are never capped.
+    const dBuiltins = await asUser(db, { userId: D }, async (c) => {
+      let n = 0;
+      for (const tp of ['private', 'work', 'family']) {
+        await c.query(`insert into public.spaces (owner_id, type, name) values ('${D}', '${tp}', 'D ${tp}')`);
+        n++;
+      }
+      return n;
+    });
+    dBuiltins === 3 ? ok('built-in space types insert freely (trigger scopes to custom only)') : bad('built-ins blocked', `n=${dBuiltins}`);
+
+    // (c) a grant raises the limit; removing it (downgrade) preserves the
+    // existing spaces but blocks new creation.
+    await db.query(`insert into public.subscription_grants (user_id, kind, value) values ('${E}', 'custom_spaces_limit', 5)`);
+    let eMade = 0;
+    for (let i = 0; i < 5; i++) if (await tryCustom(E, `E space ${i}`)) eMade++;
+    eMade === 5 ? ok('grant of 5: five custom spaces created') : bad('grant limit not honored', `made=${eMade}`);
+    (await tryCustom(E, 'E space 6')) === false ? ok('grant of 5: the 6th is rejected') : bad('grant cap exceeded');
+    await db.query(`delete from public.subscription_grants where user_id = '${E}'`);
+    const eKept = Number((await db.query(`select count(*) from public.spaces where owner_id = '${E}' and type = 'custom'`)).rows[0].count);
+    eKept === 5 ? ok('downgrade: all 5 existing spaces preserved after the grant is removed') : bad('downgrade deleted spaces', `kept=${eKept}`);
+    (await tryCustom(E, 'E space after downgrade')) === false
+      ? ok('downgrade: new creation is blocked again at the default limit')
+      : bad('downgrade: creation still allowed');
+
+    // (d) an active premium subscription raises the limit to 7 via the
+    // plan feature catalog (migration 0048 seeded custom_spaces_limit:7).
+    await db.query(`insert into public.user_subscriptions (user_id, plan_id) values ('${F}', 'premium_monthly')`);
+    let fMade = 0;
+    for (let i = 0; i < 7; i++) if (await tryCustom(F, `F space ${i}`)) fMade++;
+    fMade === 7 ? ok('premium plan: seven custom spaces created') : bad('plan limit not honored', `made=${fMade}`);
+    (await tryCustom(F, 'F space 8')) === false ? ok('premium plan: the 8th is rejected') : bad('plan cap exceeded');
+
+    // (e) the per-profile column raises the limit (admin-set-limits path).
+    await db.query(`insert into public.profiles (id, custom_spaces_limit) values ('${H}', 3) on conflict (id) do update set custom_spaces_limit = 3`);
+    let hMade = 0;
+    for (let i = 0; i < 3; i++) if (await tryCustom(H, `H space ${i}`)) hMade++;
+    hMade === 3 && (await tryCustom(H, 'H space 4')) === false
+      ? ok('profile column limit of 3 enforced (4th rejected)')
+      : bad('profile limit wrong', `made=${hMade}`);
+
+    // (f) concurrency: 6 parallel inserts for a fresh owner (limit 2) —
+    // exactly 2 may commit. The per-owner advisory lock in the trigger is
+    // what makes this hold; without it the count check races.
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => tryCustom(G, `G race ${i}`)),
+    );
+    const gWon = results.filter(Boolean).length;
+    const gRows = Number((await db.query(`select count(*) from public.spaces where owner_id = '${G}' and type = 'custom'`)).rows[0].count);
+    gWon === 2 && gRows === 2
+      ? ok('concurrency: exactly 2 of 6 parallel creations committed')
+      : bad('concurrency cap breached', `won=${gWon} rows=${gRows}`);
+  }
+
   step('positive controls — owners/members can use their own data');
   {
     const a1 = await asUser(db, { userId: A }, (c) => count(c, `select count(*) from public.notes where id = $1`, [NA]));

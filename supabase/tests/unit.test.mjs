@@ -2659,3 +2659,55 @@ describe('CFP-01 D — custom spaces + configurable entitlements (item 7)', () =
     assert.ok(idx.includes('onDeleteCustomSpace'), 'two-step delete is wired');
   });
 });
+
+describe('CFP-01 D hardening — DB-boundary entitlement enforcement (migration 0049)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const mig = read('../../supabase/migrations/0049_custom_spaces_db_limit.sql');
+  const chat = read('../../supabase/functions/chat/index.ts');
+  const behavioral = read('../../supabase/tests/authz-behavioral.mjs');
+
+  it('GUARD: the cap lives in a trigger every insert path crosses, serialized per owner', () => {
+    assert.ok(mig.includes('before insert on public.spaces'), 'trigger is on spaces insert');
+    assert.ok(mig.includes("when (new.type = 'custom')"), 'trigger scopes to custom spaces only (built-ins exempt)');
+    assert.ok(mig.includes('pg_advisory_xact_lock'), 'per-owner advisory lock serializes concurrent creators');
+    assert.ok(mig.includes('custom_spaces_limit_reached'), 'rejections carry the stable marker');
+    assert.ok(mig.includes("set search_path = ''"), 'definer functions pin search_path');
+  });
+
+  it('GUARD: the SQL limit resolution mirrors the edge-fn semantics (MAX of profile / plan / grant)', () => {
+    assert.ok(mig.includes('custom_spaces_effective_limit'), 'shared SQL resolver exists');
+    assert.ok(mig.includes('custom_spaces_limit'), 'all three sources are read');
+    assert.ok(mig.includes('user_subscriptions') && mig.includes('subscription_grants') && mig.includes('profiles'), 'profile + plan + grant sources present');
+    assert.ok(mig.includes('greatest('), 'MAX semantics (downgrade-safe)');
+  });
+
+  it('GUARD: the AI creation path pre-checks the same limit; behavioral proofs are wired into CI', () => {
+    assert.ok(chat.includes("rpc('custom_spaces_effective_limit'"), 'chat executor resolves the shared limit');
+    assert.ok(chat.includes("error: 'limit_reached'"), 'chat executor returns the limit code');
+    assert.ok(behavioral.includes('custom_spaces_limit_reached'), 'behavioral suite asserts DB rejections');
+    assert.ok(behavioral.includes('concurrency: exactly 2 of 6'), 'concurrency proof exists in the behavioral suite');
+    assert.ok(behavioral.includes('downgrade: all 5 existing spaces preserved'), 'downgrade-preservation proof exists');
+  });
+});
+
+describe('CFP-01 D navigation — custom spaces open in the generic browse UI', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const constants = read('../../apps/mobile/src/screens/home/constants.ts');
+
+  it('GUARD: AppView admits custom; openCustomSpace mirrors the generic loader set', () => {
+    assert.ok(constants.includes("'chat' | SpaceType | 'custom'"), 'AppView includes the custom view');
+    assert.ok(idx.includes('const openCustomSpace = useCallback'), 'openCustomSpace exists');
+    assert.ok(idx.includes("setView('custom')"), 'opening a custom space sets the custom view');
+    assert.ok(idx.includes('notesPage.refresh((o, l) => engine.listNotes(sid'), 'notes loader is parameterized by the custom space id');
+    assert.ok(idx.includes('thingsPage.refresh((o, l) => engine.listThings(sid'), 'things loader is parameterized by the custom space id');
+    assert.ok(idx.includes('refreshTabs(sid);'), 'custom tabs load for the opened space');
+  });
+
+  it('GUARD: entry point + demo re-open routing handle the custom view', () => {
+    assert.ok(idx.includes('openCustomSpace(sp); }}'), 'profile My Spaces rows open the space');
+    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 2, 'both demo re-open sites route custom views');
+    // the generic browse branch is type-keyed, so custom spaces reuse it:
+    assert.ok(idx.includes("viewSpace?.type === 'family' ? ("), 'family-vs-generic branch stays type-keyed (custom falls into generic)');
+  });
+});

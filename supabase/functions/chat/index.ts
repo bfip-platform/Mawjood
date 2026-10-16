@@ -774,6 +774,23 @@ async function executeCreateSpace(admin: any, userId: string, payload: Record<st
       };
     }
   }
+  // CFP-01 hardening (0049): the entitlement cap applies to the AI path
+  // too — pre-check for a clean message; the DB trigger is the backstop
+  // that makes the cap hold on every path, races included.
+  const { data: lim } = await admin.rpc('custom_spaces_effective_limit', { p_user_id: userId });
+  const { count: customCount } = await admin
+    .from('spaces')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_id', userId)
+    .eq('type', 'custom');
+  if (typeof lim === 'number' && (customCount ?? 0) >= lim) {
+    return {
+      error: 'limit_reached',
+      message: uiAr
+        ? 'وصلت إلى حد المساحات الإضافية في خطتك — احذف مساحة أولاً أو رقِّ خطتك.'
+        : 'You have reached your extra-space limit — delete a space first or upgrade your plan.',
+    };
+  }
   const { data: dup } = await admin.from('spaces').select('id').eq('owner_id', userId).ilike('name', name).limit(1);
   if (dup && dup.length > 0) return { error: 'space already exists' };
   const { data, error } = await admin.from('spaces')
