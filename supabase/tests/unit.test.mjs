@@ -2624,3 +2624,208 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 A — modal stability, tap-outside policy, space labels', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+  const constants = read('../../apps/mobile/src/screens/home/constants.ts');
+  const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+
+  it('GUARD (item 5): space names are localized and rendered beside the tab icons', () => {
+    for (const k of ['spaceNamePrivate', 'spaceNameFamily', 'spaceNameWork']) {
+      assert.ok((i18n.match(new RegExp(`${k}:`, 'g')) ?? []).length >= 2, `${k} exists in both dicts`);
+    }
+    assert.ok(constants.includes('export function spaceLabel'), 'localized spaceLabel helper exists');
+    assert.ok(idx.includes('{spaceLabel(st)}'), 'space tab bar renders icon + visible name');
+    assert.ok(!idx.includes('SPACE_LABELS'), 'hardcoded-English label map no longer used by the screen');
+  });
+
+  it('GUARD (item 1): the new-list modal is anchored, scrollable, and free of JS height state', () => {
+    assert.ok(!idx.includes('listItemsH'), 'the state-driven input height (shake mechanism) is gone');
+    assert.ok(idx.includes('styles.modalBgAnchored'), 'new-list backdrop is top-anchored');
+    assert.ok(idx.includes('style={styles.modalScroll}'), 'form region scrolls inside the card');
+    assert.ok(styles.includes('modalBgAnchored'), 'anchored style defined');
+    assert.ok(styles.includes('modalScroll'), 'modal scroll style defined');
+  });
+
+  it('GUARD (item 2): backdrop-close covers exactly the eligible modals, guarded where input is at risk', () => {
+    const hits = idx.match(/modalBackdropHit/g) ?? [];
+    assert.equal(hits.length, 11, 'exactly the 11 eligible modals carry a backdrop hit-area');
+    assert.ok(idx.includes('function requestBackdropClose'), 'dirty-confirm policy helper defined');
+    assert.ok(idx.includes("t('closeConfirmTitle')"), 'confirmation copy is localized');
+    // security-sensitive flows stay excluded: no backdrop inside the join or delete-tab modals
+    const blockOf = (anchor) => {
+      const start = idx.indexOf(anchor);
+      return idx.slice(start, idx.indexOf('</Modal>', start));
+    };
+    assert.ok(!blockOf('visible={joinOpen}').includes('modalBackdropHit'), 'join-by-code modal has no backdrop dismiss');
+    assert.ok(!blockOf('visible={delTab !== null}').includes('modalBackdropHit'), 'delete-tab confirmation has no backdrop dismiss');
+  });
+});
+
+describe('CFP-01 B — input limits (item 3) and conversation history 5/+5 (item 4)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const reportError = read('../../supabase/functions/report-error/index.ts');
+
+  it('GUARD (item 4): drawer history windows at 5, growing by 5', () => {
+    assert.ok(idx.includes('useState(5); // CFP-01 item 4'), 'initial window is 5');
+    assert.ok(idx.includes('setHistVisible(5); // collapse the history list back to 5'), 'drawer-open reset is 5');
+    assert.ok(idx.includes('setHistVisible((v) => v + 5)'), 'Show More adds 5');
+    assert.ok(!idx.includes('setHistVisible((v) => v + 10)'), 'the old +10 increment is gone');
+    assert.ok(!idx.includes('setHistVisible(10)'), 'the old reset-to-10 is gone');
+  });
+
+  it('GUARD (item 3): family name is capped at 20 in UI, engine, and the DB boundary', () => {
+    const renameBlock = idx.slice(idx.indexOf('rename family (owner only)'), idx.indexOf('rename family (owner only)') + 1500);
+    assert.ok(renameBlock.includes('maxLength={20}'), 'rename input caps at 20');
+    assert.ok(renameBlock.includes('{renameValue.length}/20'), 'rename counter is shown');
+    const rs = client.slice(client.indexOf('async renameSpace(spaceId'), client.indexOf('async renameSpace(spaceId') + 400);
+    assert.ok(rs.includes('slice(0, 20)'), 'engine renameSpace enforces 20');
+    const mig = read('../../supabase/migrations/0047_family_name_length.sql');
+    assert.ok(mig.includes("new.type = 'family'"), 'DB trigger scopes to family spaces only');
+    assert.ok(mig.includes('char_length(new.name) > 20'), 'DB trigger enforces 20');
+    assert.ok(mig.includes('before insert or update of name'), 'trigger fires on writes only (existing rows untouched)');
+  });
+
+  it('GUARD (item 3): support messages cap at 1000 in UI, client, and server — telemetry keeps 200', () => {
+    assert.ok(idx.includes('maxLength={1000}'), 'support input caps at 1000');
+    assert.ok(idx.includes('{supportText.length}/1000'), 'support counter is shown');
+    assert.ok(idx.includes('message: msg.slice(0, 1000)'), 'client sends up to 1000');
+    assert.ok(reportError.includes('const SUPPORT_MESSAGE_MAX = 1000'), 'server support cap constant is 1000');
+    assert.ok(reportError.includes("context === 'support' ? SUPPORT_MESSAGE_MAX : 200"), 'only the support context gets 1000; telemetry stays 200');
+  });
+});
+
+describe('CFP-01 C — shopping lists server-side pagination (item 6)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+
+  it('GUARD: listShoppingLists pages server-side with a stable order; unpaged callers keep full fetch', () => {
+    const fn = client.slice(client.indexOf('async listShoppingLists'), client.indexOf('async listShoppingLists') + 1400);
+    assert.ok(fn.includes('opts?: PageOpts'), 'paging opts accepted');
+    assert.ok(fn.includes('q.range(offset, offset + limit - 1)'), 'offset pages use range()');
+    assert.ok(fn.includes(".order('id', { ascending: false })"), 'id tiebreak keeps pages stable');
+    assert.ok(fn.includes('if (opts)'), 'paging applies only when opts are passed (digest/smart-shopping unaffected)');
+  });
+
+  it('GUARD: the shopping tab loads 10 lists, appends 10 per Show More, and hides it in search', () => {
+    assert.ok(idx.includes('const SHOP_LISTS_PAGE = 10'), 'page size is 10');
+    assert.ok(idx.includes('listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE })'), 'first page loads in refreshFamily');
+    assert.ok(idx.includes('const loadMoreShopLists = useCallback'), 'load-more handler exists');
+    assert.ok(idx.includes('shopListsHasMore && !shopSearch.inSearch'), 'Show More renders only when more pages exist and not while searching');
+  });
+});
+
+describe('CFP-01 E — composer & microphone redesign (item 8)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+
+  it('GUARD: the shared composer styles carry the redesign (both composers inherit it)', () => {
+    assert.ok(styles.includes('composerBoxRecording'), 'recording state tints the composer box border');
+    const input = styles.slice(styles.indexOf('composerInput: {'), styles.indexOf('composerInput: {') + 200);
+    assert.ok(input.includes('fontSize: 16'), 'composer text is 16px (readability + no iOS focus zoom)');
+    const cam = styles.slice(styles.indexOf('cameraBtn: {'), styles.indexOf('cameraBtn: {') + 220);
+    assert.ok(cam.includes('backgroundColor: P.input'), 'in-box camera action sits on a soft disc');
+  });
+
+  it('GUARD: both composers show the recording tint; the vault composer auto-grows like the main one', () => {
+    assert.equal((idx.match(/composerBoxRecording/g) ?? []).length, 2, 'main + vault composers both wired');
+    assert.ok(idx.includes('const [secretComposerH, setSecretComposerH] = useState(44)'), 'vault auto-grow state exists');
+    assert.ok(idx.includes('setSecretComposerH('), 'vault input grows on content size');
+    // behavior preservation: the combined mic/send control logic is untouched
+    assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main mic/send swap unchanged');
+    assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault mic/send swap unchanged');
+  });
+});
+
+describe('CFP-01 D — custom spaces + configurable entitlements (item 7)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const client = read('../../packages/voice-engine/src/client.ts');
+  const fn = read('../../supabase/functions/manage-space/index.ts');
+  const mig = read('../../supabase/migrations/0048_custom_spaces_limit.sql');
+  const adminLimits = read('../../supabase/functions/admin-set-limits/index.ts');
+
+  it('GUARD: the limit is configuration (profile default 2, plan feature 7, grants), not code branches', () => {
+    assert.ok(mig.includes('custom_spaces_limit integer not null default 2'), 'free default is a profile column');
+    assert.ok(mig.includes('custom_spaces_limit:7'), 'paid plans carry 7 via the features catalog');
+    assert.ok(adminLimits.includes('custom_spaces_limit: [0, 100]'), 'admin can adjust the limit per user');
+    assert.ok(fn.includes('Math.max(limit,'), 'effective limit = max of sources (downgrade-safe)');
+    assert.ok(fn.includes("kind', 'custom_spaces_limit'") || fn.includes(".eq('kind', 'custom_spaces_limit')"), 'grants are honored');
+  });
+
+  it('GUARD: manage-space enforces owner-only, custom-only, non-empty-refusal, and the creation cap', () => {
+    assert.ok(fn.includes("space.type !== 'custom'"), 'built-in spaces are protected (not_custom)');
+    assert.ok(fn.includes("space.owner_id !== user.id"), 'owner check precedes mutations');
+    assert.ok(fn.includes("fail('not_empty', 409)"), 'non-empty spaces refuse deletion (data preserved)');
+    assert.ok(fn.includes("fail('limit_reached', 403)"), 'creation is capped server-side');
+    assert.ok(fn.includes("action === 'create'") && fn.includes("action === 'rename'") && fn.includes("action === 'delete'"), 'all three actions exist');
+    assert.ok(fn.includes('is_anonymous'), 'anonymous trial accounts cannot create spaces');
+  });
+
+  it('GUARD: engine + UI wiring is present', () => {
+    assert.ok(client.includes("functions.invoke('manage-space'"), 'engine routes through the fn');
+    assert.ok(client.includes('async createCustomSpace') && client.includes('async renameCustomSpace') && client.includes('async deleteCustomSpace'), 'engine CRUD methods exist');
+    assert.ok(client.includes('async getCustomSpacesLimit'), 'engine reads the base limit');
+    assert.ok(idx.includes("t('mySpaces')"), 'profile hosts the My Spaces manager');
+    assert.ok(idx.includes('visible={spaceNameOpen}'), 'create/rename modal exists');
+    assert.ok(idx.includes('onDeleteCustomSpace'), 'two-step delete is wired');
+  });
+});
+
+describe('CFP-01 D hardening — DB-boundary entitlement enforcement (migration 0049)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const mig = read('../../supabase/migrations/0049_custom_spaces_db_limit.sql');
+  const chat = read('../../supabase/functions/chat/index.ts');
+  const behavioral = read('../../supabase/tests/authz-behavioral.mjs');
+
+  it('GUARD: the cap lives in a trigger every insert path crosses, serialized per owner', () => {
+    assert.ok(mig.includes('before insert on public.spaces'), 'trigger is on spaces insert');
+    assert.ok(mig.includes("when (new.type = 'custom')"), 'trigger scopes to custom spaces only (built-ins exempt)');
+    assert.ok(mig.includes('pg_advisory_xact_lock'), 'per-owner advisory lock serializes concurrent creators');
+    assert.ok(mig.includes('custom_spaces_limit_reached'), 'rejections carry the stable marker');
+    assert.ok(mig.includes("set search_path = ''"), 'definer functions pin search_path');
+  });
+
+  it('GUARD: the SQL limit resolution mirrors the edge-fn semantics (MAX of profile / plan / grant)', () => {
+    assert.ok(mig.includes('custom_spaces_effective_limit'), 'shared SQL resolver exists');
+    assert.ok(mig.includes('custom_spaces_limit'), 'all three sources are read');
+    assert.ok(mig.includes('user_subscriptions') && mig.includes('subscription_grants') && mig.includes('profiles'), 'profile + plan + grant sources present');
+    assert.ok(mig.includes('greatest('), 'MAX semantics (downgrade-safe)');
+  });
+
+  it('GUARD: the AI creation path pre-checks the same limit; behavioral proofs are wired into CI', () => {
+    assert.ok(chat.includes("rpc('custom_spaces_effective_limit'"), 'chat executor resolves the shared limit');
+    assert.ok(chat.includes("error: 'limit_reached'"), 'chat executor returns the limit code');
+    assert.ok(behavioral.includes('custom_spaces_limit_reached'), 'behavioral suite asserts DB rejections');
+    assert.ok(behavioral.includes('concurrency: exactly 2 of 6'), 'concurrency proof exists in the behavioral suite');
+    assert.ok(behavioral.includes('downgrade: all 5 existing spaces preserved'), 'downgrade-preservation proof exists');
+  });
+});
+
+describe('CFP-01 D navigation — custom spaces open in the generic browse UI', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const constants = read('../../apps/mobile/src/screens/home/constants.ts');
+
+  it('GUARD: AppView admits custom; openCustomSpace mirrors the generic loader set', () => {
+    assert.ok(constants.includes("'chat' | SpaceType | 'custom'"), 'AppView includes the custom view');
+    assert.ok(idx.includes('const openCustomSpace = useCallback'), 'openCustomSpace exists');
+    assert.ok(idx.includes("setView('custom')"), 'opening a custom space sets the custom view');
+    assert.ok(idx.includes('notesPage.refresh((o, l) => engine.listNotes(sid'), 'notes loader is parameterized by the custom space id');
+    assert.ok(idx.includes('thingsPage.refresh((o, l) => engine.listThings(sid'), 'things loader is parameterized by the custom space id');
+    assert.ok(idx.includes('refreshTabs(sid);'), 'custom tabs load for the opened space');
+  });
+
+  it('GUARD: entry point + demo re-open routing handle the custom view', () => {
+    assert.ok(idx.includes('openCustomSpace(sp); }}'), 'profile My Spaces rows open the space');
+    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 2, 'both demo re-open sites route custom views');
+    // the generic browse branch is type-keyed, so custom spaces reuse it:
+    assert.ok(idx.includes("viewSpace?.type === 'family' ? ("), 'family-vs-generic branch stays type-keyed (custom falls into generic)');
+  });
+});

@@ -948,13 +948,27 @@ export class VoiceEngine {
     return { ...(list as Omit<ShoppingList, 'items'>), items: (items ?? []) as Item[] };
   }
 
-  /** All lists of a space, each with its items (open first). */
-  async listShoppingLists(spaceId: string): Promise<ShoppingList[]> {
-    const { data, error } = await this.supabase
+  /**
+   * Lists of a space, each with its items (open first). Without opts this
+   * returns ALL lists (digest/smart-shopping callers). With PageOpts it
+   * pages server-side (CFP-01 item 6): the shopping tab loads 10 lists at
+   * a time — previously this fetch was unbounded (every list × its items).
+   * Ordering is created_at desc with an id-desc tiebreak so pages are
+   * stable across fetches.
+   */
+  async listShoppingLists(spaceId: string, opts?: PageOpts): Promise<ShoppingList[]> {
+    let q = this.supabase
       .from('shopping_lists')
       .select('*, items(*)')
       .eq('space_id', spaceId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (opts) {
+      const limit = Math.min(Math.max(opts.limit ?? 10, 1), 200);
+      const offset = Math.max(opts.offset ?? 0, 0);
+      q = offset > 0 ? q.range(offset, offset + limit - 1) : q.limit(limit);
+    }
+    const { data, error } = await q;
     if (error) throw error;
     return ((data ?? []) as (Omit<ShoppingList, 'items'> & { items: Item[] | null })[]).map(
       (l) => ({ ...l, items: (l.items ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at)) }),
@@ -1565,9 +1579,60 @@ export class VoiceEngine {
     if (error) throw error;
   }
 
+  /**
+   * CFP-01 item 7 — custom-space management goes through the manage-space
+   * edge function (the entitlement limit is enforced server-side; direct
+   * PostgREST space inserts carry no cap). Errors carry a machine `code`
+   * (limit_reached | duplicate_name | not_empty | not_custom | …) that the
+   * UI maps to localized copy.
+   */
+  private async manageSpace(body: Record<string, unknown>): Promise<Space> {
+    const { data, error } = await this.supabase.functions.invoke('manage-space', { body });
+    if (error) {
+      let code = 'server_error';
+      try {
+        const j = await (error as { context?: { json?: () => Promise<{ code?: string }> } }).context?.json?.();
+        if (j?.code) code = j.code;
+      } catch { /* keep server_error */ }
+      throw Object.assign(new Error(code), { code });
+    }
+    const d = data as { ok?: boolean; code?: string; space?: Space } | null;
+    if (!d?.ok || !d.space) {
+      throw Object.assign(new Error(d?.code ?? 'server_error'), { code: d?.code ?? 'server_error' });
+    }
+    return d.space;
+  }
+
+  async createCustomSpace(name: string): Promise<Space> {
+    return this.manageSpace({ action: 'create', name });
+  }
+
+  async renameCustomSpace(spaceId: string, name: string): Promise<Space> {
+    return this.manageSpace({ action: 'rename', space_id: spaceId, name });
+  }
+
+  async deleteCustomSpace(spaceId: string): Promise<void> {
+    await this.manageSpace({ action: 'delete', space_id: spaceId });
+  }
+
+  /** The caller's base custom-spaces limit (profile default; the server also honors plan features + grants). */
+  async getCustomSpacesLimit(userId: string): Promise<number> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select('custom_spaces_limit')
+        .eq('id', userId)
+        .single();
+      if (error || !data) return 2;
+      return (data as { custom_spaces_limit: number }).custom_spaces_limit ?? 2;
+    } catch {
+      return 2;
+    }
+  }
+
   /** Rename a space the caller owns (RLS: owner-only update on spaces). */
   async renameSpace(spaceId: string, name: string): Promise<void> {
-    const clean = name.trim().slice(0, 40);
+    const clean = name.trim().slice(0, 20); // CFP-01 item 3: family/space name limit is 20 (UI + engine + DB trigger 0047)
     if (!clean) throw new Error('empty name');
     const { error } = await this.supabase.from('spaces').update({ name: clean }).eq('id', spaceId);
     if (error) throw error;

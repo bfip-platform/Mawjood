@@ -127,9 +127,9 @@ import { SignedImage } from '../components/SignedImage';
 import {
   VOICE_REPLY_KEY,
   KIND_ICON,
-  SPACE_LABELS,
+  SPACE_NAME_KEYS,
+  spaceLabel,
   FAMILY_BUILTIN_KEYS,
-  SPACE_SHORT,
   ACTIVE_CHAT_KEY,
   ACTIVE_FAMILY_KEY,
   HISTORY_IDLE_MS,
@@ -144,6 +144,23 @@ import { useBorrows } from '../screens/home/hooks/useBorrows';
 import { useAgenda } from '../screens/home/hooks/useAgenda';
 import { useShopping } from '../screens/home/hooks/useShopping';
 import { makeStyles } from '../screens/home/styles';
+
+/**
+ * CFP-01 item 2 — backdrop-tap close policy for input modals: when the form
+ * holds unsaved input, tapping outside (or Android back) asks first —
+ * [Stay] keeps the modal and its input untouched; [Confirm closing]
+ * discards and closes. Clean forms close immediately.
+ */
+function requestBackdropClose(dirty: boolean, close: () => void): void {
+  if (!dirty) {
+    close();
+    return;
+  }
+  Alert.alert(t('closeConfirmTitle'), t('closeConfirmBody'), [
+    { text: t('closeConfirmStay'), style: 'cancel' },
+    { text: t('closeConfirmYes'), style: 'destructive', onPress: close },
+  ]);
+}
 
 export default function HomeScreen() {
   const lang = useLang(); // re-renders the whole screen when the language changes
@@ -231,9 +248,10 @@ export default function HomeScreen() {
     AsyncStorage.setItem(WELCOME_KEY, '1').catch(() => {});
   }, []);
   const [textNote, setTextNote] = useState('');
-  /** chat composer auto-grow height: follows content size, clamped 36–120 */
+  /** chat composer auto-grow height: follows content size, clamped 44–120 */
   const [composerH, setComposerH] = useState(44);
-  const [listItemsH, setListItemsH] = useState(90);
+  /** vault composer auto-grow (CFP-01 item 8 parity with the main composer) */
+  const [secretComposerH, setSecretComposerH] = useState(44);
 
   /** empty-state example chip → fill the chat input and jump to Home */
   const tryExample = useCallback((example: string) => {
@@ -251,7 +269,7 @@ export default function HomeScreen() {
   // auto-delete after retention days; current chat survives 2 min idle ──
   const sessionIdRef = useRef(newSessionId());
   const [history, setHistory] = useState<ChatSession[]>([]);
-  const [histVisible, setHistVisible] = useState(10); // drawer shows 10 chats at a time
+  const [histVisible, setHistVisible] = useState(5); // CFP-01 item 4: drawer shows the latest 5 chats, +5 per Show More
   const [historyLoading, setHistoryLoading] = useState(false);
   const backgroundedAtRef = useRef(0);
   const retentionDaysRef = useRef(7); // profiles.chat_retention_days (future paid plans)
@@ -717,7 +735,7 @@ export default function HomeScreen() {
     setSupportMsg(null);
     try {
       const { error } = await supabase.functions.invoke('report-error', {
-        body: { message: msg.slice(0, 300), context: 'support' },
+        body: { message: msg.slice(0, 1000), context: 'support' },
       });
       if (error) throw error;
       setSupportText('');
@@ -898,6 +916,12 @@ export default function HomeScreen() {
   // ── Phase 3: family lists ──
   // loose shopping items + directed lists only — tasks/upcoming/things/notes
   // are paginated via their own loaders (openSpace / join flow / tab effect).
+  // CFP-01 item 6: shopping LISTS now page server-side too — 10 at a time
+  // (previously one unbounded fetch of every list with all of its items).
+  const SHOP_LISTS_PAGE = 10;
+  const [shopListsHasMore, setShopListsHasMore] = useState(false);
+  const shopListsLoadedRef = useRef(0);
+  const shopListsMoreBusyRef = useRef(false);
   const refreshFamily = useCallback(async (spaceId: string) => {
     try {
       const s = await engine.listShopping(spaceId, { limit: 100 });
@@ -907,11 +931,40 @@ export default function HomeScreen() {
     }
     // directed shopping lists (graceful until migration 0014 is run)
     try {
-      setShopLists(await engine.listShoppingLists(spaceId));
+      const lists = await engine.listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE });
+      shopListsLoadedRef.current = lists.length;
+      setShopListsHasMore(lists.length === SHOP_LISTS_PAGE);
+      setShopLists(lists);
     } catch {
+      shopListsLoadedRef.current = 0;
+      setShopListsHasMore(false);
       setShopLists([]);
     }
   }, [setShopping, setShopLists]);
+
+  /** CFP-01 item 6: append the next page of shopping lists (dedupe by id). */
+  const loadMoreShopLists = useCallback(async () => {
+    if (!viewSpace || shopListsMoreBusyRef.current || !shopListsHasMore) return;
+    shopListsMoreBusyRef.current = true;
+    try {
+      const next = await engine.listShoppingLists(viewSpace.id, {
+        offset: shopListsLoadedRef.current,
+        limit: SHOP_LISTS_PAGE,
+      });
+      shopListsLoadedRef.current += next.length;
+      setShopListsHasMore(next.length === SHOP_LISTS_PAGE);
+      if (next.length > 0) {
+        setShopLists((prev) => {
+          const seen = new Set(prev.map((l) => l.id));
+          return [...prev, ...next.filter((l) => !seen.has(l.id))];
+        });
+      }
+    } catch (e) {
+      console.warn('loadMoreShopLists failed', e);
+    } finally {
+      shopListsMoreBusyRef.current = false;
+    }
+  }, [viewSpace, shopListsHasMore, setShopLists]);
 
   const onRefreshShopping = useCallback(async () => {
     if (!viewSpace) return;
@@ -1113,7 +1166,7 @@ export default function HomeScreen() {
   const trashOrigin = (row: TrashRow): string => {
     if (row.kind === 'chat') return '';
     const sp = spaces.find((s) => s.id === row.space_id);
-    return sp ? (SPACE_LABELS[sp.type] ?? sp.name) : '';
+    return sp ? spaceLabel(sp.type, sp.name) : '';
   };
 
   const openTrash = useCallback(async (secret: boolean) => {
@@ -1364,7 +1417,7 @@ export default function HomeScreen() {
 
   // ── side menu open/close (slides from the left) ──
   const closeMenu = useCallback(() => {
-    setHistVisible(10); // collapse the history list back to 10 next open
+    setHistVisible(5); // collapse the history list back to 5 next open
     Animated.timing(menuX, { toValue: -320, duration: 200, useNativeDriver: false }).start(
       () => setMenuOpen(false),
     );
@@ -1679,7 +1732,66 @@ export default function HomeScreen() {
     } finally {
       setRenameBusy(false);
     }
-  }, [viewSpace, renameValue, renameBusy]);  const onFamAction = useCallback(async (s: Space) => {
+  }, [viewSpace, renameValue, renameBusy]);
+
+  // ── CFP-01 item 7: custom spaces — managed via the manage-space edge fn ──
+  const [customSpacesLimit, setCustomSpacesLimit] = useState(2);
+  const [spaceNameOpen, setSpaceNameOpen] = useState(false);
+  const [spaceNameValue, setSpaceNameValue] = useState('');
+  const [spaceNameTarget, setSpaceNameTarget] = useState<Space | null>(null); // null = create mode
+  const [spaceNameBusy, setSpaceNameBusy] = useState(false);
+  const [spaceNameMsg, setSpaceNameMsg] = useState<string | null>(null);
+  const [spaceDelArm, setSpaceDelArm] = useState<string | null>(null);
+  const [spaceErr, setSpaceErr] = useState<string | null>(null);
+  const customSpaces = useMemo(
+    () => spaces.filter((sp) => (sp.type as string) === 'custom' && sp.owner_id === userId),
+    [spaces, userId],
+  );
+  const spaceErrText = useCallback((e: unknown): string => {
+    const code = (e as { code?: string })?.code ?? '';
+    if (code === 'limit_reached') return t('spaceLimitMsg');
+    if (code === 'duplicate_name') return t('spaceDupName');
+    if (code === 'not_empty') return t('spacesNotEmpty');
+    return t('spaceGenericErr');
+  }, []);
+  const openSpaceCreate = useCallback(() => {
+    setSpaceNameTarget(null);
+    setSpaceNameValue('');
+    setSpaceNameMsg(null);
+    setSpaceNameOpen(true);
+  }, []);
+  const openSpaceRename = useCallback((sp: Space) => {
+    setSpaceNameTarget(sp);
+    setSpaceNameValue(sp.name);
+    setSpaceNameMsg(null);
+    setSpaceNameOpen(true);
+  }, []);
+  const saveSpaceName = useCallback(async () => {
+    if (spaceNameBusy) return;
+    if (!spaceNameValue.trim()) { setSpaceNameMsg(t('renameEmpty')); return; }
+    setSpaceNameBusy(true);
+    try {
+      if (spaceNameTarget) await engine.renameCustomSpace(spaceNameTarget.id, spaceNameValue);
+      else await engine.createCustomSpace(spaceNameValue);
+      setSpaces(await engine.listSpaces());
+      setSpaceNameOpen(false);
+    } catch (e) {
+      setSpaceNameMsg(spaceErrText(e));
+    } finally {
+      setSpaceNameBusy(false);
+    }
+  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText]);
+  const onDeleteCustomSpace = useCallback(async (sp: Space) => {
+    if (spaceDelArm !== sp.id) { setSpaceDelArm(sp.id); setSpaceErr(null); return; }
+    try {
+      await engine.deleteCustomSpace(sp.id);
+      setSpaces(await engine.listSpaces());
+      setSpaceDelArm(null);
+    } catch (e) {
+      setSpaceErr(spaceErrText(e));
+      setSpaceDelArm(null);
+    }
+  }, [spaceDelArm, spaceErrText]);  const onFamAction = useCallback(async (s: Space) => {
     if (!!userId && s.owner_id === userId) return; // own family: locked
     if (famConfirm !== s.id) {
       setFamConfirm(s.id);
@@ -1897,6 +2009,11 @@ export default function HomeScreen() {
       engine
         .getCustomTabLimit(user.id)
         .then(setTabLimit)
+        .catch(() => {});
+      // CFP-01 item 7: custom-spaces base limit (server also honors plans/grants)
+      engine
+        .getCustomSpacesLimit(user.id)
+        .then(setCustomSpacesLimit)
         .catch(() => {});
       // trash retention tier: 0 = free (permanent delete), 30 = Plus (30-day trash)
       engine
@@ -2927,7 +3044,7 @@ export default function HomeScreen() {
         } catch (e) {
           console.warn('auto space move failed', e);
         }
-        const msg = tx('savedInSpace', { space: SPACE_LABELS[finalType] });
+        const msg = tx('savedInSpace', { space: spaceLabel(finalType) });
         pushMsg('app', msg);
         speak(msg);
         if (userId) await maybeAssignTask(finalType, transcript, targetId, userId);
@@ -3078,7 +3195,7 @@ export default function HomeScreen() {
           } catch (e) {
             console.warn('auto space move failed', e);
           }
-          pushMsg('app', tx('savedInSpace', { space: SPACE_LABELS[finalType] }));
+          pushMsg('app', tx('savedInSpace', { space: spaceLabel(finalType) }));
           await maybeAssignTask(finalType, clean, targetId, userId);
         } else {
           pushMsg('app', t('saved'));
@@ -3303,6 +3420,36 @@ export default function HomeScreen() {
     ],
   );
 
+  /**
+   * CFP-01 item 7 navigation: open a CUSTOM space in the generic
+   * (Private-style) browse UI, parameterized by this space — the browse
+   * branch keys family-vs-generic on viewSpace.type, so a custom space
+   * gets the notes/things/papers tabs + its own custom tabs, its records,
+   * and owner tab management (canManageTabs) with no new navigation
+   * destination. Loaders mirror openSpace's non-family half.
+   */
+  const openCustomSpace = useCallback(
+    (sp: Space) => {
+      itemsSub.current?.();
+      itemsSub.current = null;
+      setViewSpace(sp);
+      setView('custom');
+      notesSearch.setQuery('');
+      thingsSearch.setQuery('');
+      tasksSearch.setQuery('');
+      agendaSearch.setQuery('');
+      shopSearch.setQuery('');
+      memberSearch.setQuery('');
+      setSpaceTab('notes');
+      const sid = sp.id;
+      notesPage.refresh((o, l) => engine.listNotes(sid, { offset: o, limit: l, tabId: null }));
+      thingsPage.refresh((o, l) => engine.listThings(sid, { offset: o, limit: l }));
+      refreshItems(sid);
+      refreshTabs(sid);
+    },
+    [refreshItems, refreshTabs, notesPage, thingsPage, notesSearch, thingsSearch, tasksSearch, agendaSearch, shopSearch, memberSearch],
+  );
+
   // ── family manager: remove a member (two taps to confirm) ──
   const doRemoveMember = useCallback(
     async (space: Space, memberId: string) => {
@@ -3404,11 +3551,12 @@ export default function HomeScreen() {
     try {
       const ids = await engine.seedDemoData(userId, spaces);
       setDemoNoteIds(ids);
-      if (view !== 'chat') openSpace(view);
+      if (view === 'custom') { if (viewSpace) openCustomSpace(viewSpace); }
+      else if (view !== 'chat') openSpace(view);
     } catch (e) {
       console.warn('seedDemoData failed', e);
     }
-  }, [userId, spaces, view, openSpace]);
+  }, [userId, spaces, view, openSpace, openCustomSpace, viewSpace]);
 
   const onClearDemo = useCallback(async () => {
     for (const id of demoNoteIds) {
@@ -3419,8 +3567,9 @@ export default function HomeScreen() {
       }
     }
     setDemoNoteIds([]);
-    if (view !== 'chat') openSpace(view);
-  }, [demoNoteIds, view, openSpace]);
+    if (view === 'custom') { if (viewSpace) openCustomSpace(viewSpace); }
+    else if (view !== 'chat') openSpace(view);
+  }, [demoNoteIds, view, openSpace, openCustomSpace, viewSpace]);
 
   const fmtTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -3638,7 +3787,7 @@ export default function HomeScreen() {
                     style={styles.moveTarget}
                   >
                     <Text style={styles.moveTargetText}>
-                      {SPACE_LABELS[s.type] ?? s.name}
+                      {spaceLabel(s.type, s.name)}
                     </Text>
                   </Pressable>
                 ))}
@@ -3987,7 +4136,7 @@ export default function HomeScreen() {
                       style={styles.moveTarget}
                     >
                       <Text style={styles.moveTargetText}>
-                        {SPACE_LABELS[s.type] ?? s.name}
+                        {spaceLabel(s.type, s.name)}
                       </Text>
                     </Pressable>
                   ))}
@@ -4161,7 +4310,7 @@ export default function HomeScreen() {
                       style={styles.tabMenuBtn}
                     >
                       <Text style={styles.tabMenuText}>
-                        {SPACE_LABELS[s.type] ?? s.name}
+                        {spaceLabel(s.type, s.name)}
                       </Text>
                     </Pressable>
                   ))}
@@ -4268,17 +4417,17 @@ export default function HomeScreen() {
             {t('tabHome')}
           </Text>
         </Pressable>
-        {(Object.keys(SPACE_LABELS) as SpaceType[]).map((t) => (
+        {(Object.keys(SPACE_NAME_KEYS) as SpaceType[]).map((st) => (
           <Pressable
-            key={t}
-            onPress={() => openSpace(t)}
-            style={[styles.tab, view === t && styles.tabActive]}
-            testID={`tab-space-${t}`}
+            key={st}
+            onPress={() => openSpace(st)}
+            style={[styles.tab, view === st && styles.tabActive]}
+            testID={`tab-space-${st}`}
             accessibilityRole="tab"
-            accessibilityState={{ selected: view === t }}
+            accessibilityState={{ selected: view === st }}
           >
-            <Text style={[styles.tabText, view === t && styles.tabTextActive]}>
-              {SPACE_SHORT[t]}
+            <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
+              {spaceLabel(st)}
             </Text>
           </Pressable>
         ))}
@@ -4528,7 +4677,7 @@ export default function HomeScreen() {
               {histVisible < history.length && (
                 <Pressable
                   style={styles.showMoreBtn}
-                  onPress={() => setHistVisible((v) => v + 10)}
+                  onPress={() => setHistVisible((v) => v + 5)}
                 >
                   <Text style={styles.showMoreText}>{t('showMore')}</Text>
                 </Pressable>
@@ -4567,8 +4716,9 @@ export default function HomeScreen() {
       )}
 
       {/* ── profile modal ── */}
-      <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => setProfileOpen(false)}>
+      <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(supportText.trim() !== '' || nameDraft !== (displayName ?? ''), () => setProfileOpen(false))}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(supportText.trim() !== '' || nameDraft !== (displayName ?? ''), () => setProfileOpen(false))} />
           <View style={[styles.modalCard, styles.profileCard]}>
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               {/* ── identity header (avatar 64 · name 20/700 · email 13 gray) ── */}
@@ -4805,9 +4955,10 @@ export default function HomeScreen() {
                 placeholder={t('supportPlaceholder')}
                 placeholderTextColor={P.faint2}
                 multiline
-                maxLength={300}
+                maxLength={1000}
                 accessibilityLabel={t('supportSection')}
               />
+              <Text style={styles.charCount}>{supportText.length}/1000</Text>
               {supportMsg ? (
                 <Text style={supportMsg.ok ? styles.fieldOk : styles.fieldError}>{supportMsg.text}</Text>
               ) : null}
@@ -4821,6 +4972,41 @@ export default function HomeScreen() {
                 <Text style={styles.primaryBtnText}>{supportBusy ? t('supportSending') : t('supportSend')}</Text>
               </Pressable>
 
+              {/* ── CFP-01 item 7: my extra spaces ── */}
+              <Text style={styles.sectionHeader}>{t('mySpaces')}</Text>
+              <Text style={styles.fieldHint}>{t('mySpacesHint')}</Text>
+              <Text style={styles.fieldHint}>
+                {tx('spacesCount', { used: customSpaces.length, limit: Math.max(customSpacesLimit, customSpaces.length) })}
+              </Text>
+              {customSpaces.map((sp) => (
+                <View key={sp.id} style={styles.famSwitchRow}>
+                  <Pressable
+                    style={styles.famSwitchRowMain}
+                    onPress={() => { setProfileOpen(false); setSpaceDelArm(null); openCustomSpace(sp); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={sp.name}
+                  >
+                    <Text style={styles.famSwitchRowName} numberOfLines={1}>🗂️ {sp.name}</Text>
+                  </Pressable>
+                  <Pressable onPress={() => openSpaceRename(sp)} style={styles.famActionBtn} accessibilityRole="button">
+                    <Text style={styles.famActionText}>{t('spaceRenameBtn')}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void onDeleteCustomSpace(sp)}
+                    style={[styles.famActionBtn, spaceDelArm === sp.id && styles.famActionBtnArmed]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.famActionText, spaceDelArm === sp.id && styles.famActionTextArmed]}>
+                      {spaceDelArm === sp.id ? t('spaceDeleteArm') : t('spaceDeleteBtn')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+              {spaceErr ? <Text style={styles.fieldError}>⚠️ {spaceErr}</Text> : null}
+              <Pressable onPress={openSpaceCreate} style={styles.ghostBtn} accessibilityRole="button">
+                <Text style={styles.ghostBtnText}>{t('newSpaceBtn')}</Text>
+              </Pressable>
+
               <Pressable onPress={() => setProfileOpen(false)} style={styles.ghostBtn}>
                 <Text style={styles.ghostBtnText}>{t('close')}</Text>
               </Pressable>
@@ -4832,6 +5018,7 @@ export default function HomeScreen() {
       {/* ── about modal ── */}
       <Modal visible={aboutOpen} transparent animationType="fade" onRequestClose={() => setAboutOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setAboutOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('aboutTitle')}</Text>
             <Text style={styles.modalBody}>
@@ -4913,7 +5100,7 @@ export default function HomeScreen() {
             ) : null}
             <View style={styles.inputRow}>
               {/* WhatsApp-style composer: camera inside the box, mic/send beside it */}
-              <View style={styles.composerBox}>
+              <View style={[styles.composerBox, isRecording && styles.composerBoxRecording]}>
                 <Pressable onPress={askChatPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
@@ -5226,6 +5413,11 @@ export default function HomeScreen() {
                   })}
                 </>
               )}
+              {shopListsHasMore && !shopSearch.inSearch ? (
+                <Pressable style={styles.showMoreBtn} onPress={() => void loadMoreShopLists()}>
+                  <Text style={styles.showMoreText}>{t('showMore')}</Text>
+                </Pressable>
+              ) : null}
             </ScrollView>
           )}
 
@@ -5328,7 +5520,7 @@ export default function HomeScreen() {
                             style={styles.moveTarget}
                           >
                             <Text style={styles.moveTargetText}>
-                              {SPACE_LABELS[s.type] ?? s.name}
+                              {spaceLabel(s.type, s.name)}
                             </Text>
                           </Pressable>
                         ))}
@@ -5438,8 +5630,9 @@ export default function HomeScreen() {
       )}
 
       {/* ── custom tab modal (create / rename) ── */}
-      <Modal visible={tabModalOpen} transparent animationType="fade" onRequestClose={() => setTabModalOpen(false)}>
+      <Modal visible={tabModalOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(editingTab ? (tabName !== editingTab.title || tabIcon !== editingTab.icon) : tabName.trim() !== '', () => setTabModalOpen(false))}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(editingTab ? (tabName !== editingTab.title || tabIcon !== editingTab.icon) : tabName.trim() !== '', () => setTabModalOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{editingTab ? t('renameTab') : t('newTab')}</Text>
             <View style={styles.iconRow}>
@@ -5486,6 +5679,7 @@ export default function HomeScreen() {
       {/* ── free-tier tab limit ── */}
       <Modal visible={limitModalOpen} transparent animationType="fade" onRequestClose={() => setLimitModalOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setLimitModalOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>🔒 {t('tabLimitTitle')}</Text>
             <Text style={styles.modalBody}>{tx('tabLimitBody', { count: String(tabLimit) })}</Text>
@@ -5629,7 +5823,7 @@ export default function HomeScreen() {
             ) : null}
             {isRecording ? <Text style={styles.timer}>🔴 {fmtTime(duration)}</Text> : null}
             <View style={styles.inputRow}>
-              <View style={styles.composerBox}>
+              <View style={[styles.composerBox, isRecording && styles.composerBoxRecording]}>
                 <Pressable onPress={askSecretPhotoSource} style={styles.cameraBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('a11yAttachPhoto')}>
                   <Text style={styles.cameraBtnText}>📷</Text>
                 </Pressable>
@@ -5638,7 +5832,12 @@ export default function HomeScreen() {
                   onChangeText={setSecretDraft}
                   placeholder={t('secretAddPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { textAlign: ta() }]}
+                  style={[styles.composerInput, { height: secretComposerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
+                  onContentSizeChange={(e) =>
+                    setSecretComposerH(
+                      Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
+                    )
+                  }
                   multiline
                   maxLength={2000}
                 />
@@ -5818,6 +6017,7 @@ export default function HomeScreen() {
         onRequestClose={() => setFileNoteId(null)}
       >
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setFileNoteId(null)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('moveToTab')}</Text>
             {(
@@ -5853,6 +6053,7 @@ export default function HomeScreen() {
       {/* ── invite modal ── */}
       <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setInviteOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('inviteTitle')}</Text>
             <Text style={styles.modalBody}>
@@ -5920,6 +6121,7 @@ export default function HomeScreen() {
       {/* ── family-slots paywall: first family free, extras need a slot ── */}
       <Modal visible={paywallOpen} transparent animationType="fade" onRequestClose={() => { setPaywallOpen(false); setPendingJoinCode(null); }}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => { setPaywallOpen(false); setPendingJoinCode(null); }} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('paywallTitle')}</Text>
             <Text style={styles.modalBody}>{t('paywallBody')}</Text>
@@ -5944,6 +6146,7 @@ export default function HomeScreen() {
       {/* ── families switcher + manager ── */}
       <Modal visible={famsOpen} transparent animationType="fade" onRequestClose={() => setFamsOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setFamsOpen(false)} />
           <View style={[styles.modalCard, styles.profileCard]}>
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               <Text style={styles.modalTitle}>{t('familiesTitle')}</Text>
@@ -5992,9 +6195,47 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* ── rename family (owner only) ── */}
-      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
+      {/* ── CFP-01 item 7: create / rename custom space ── */}
+      <Modal visible={spaceNameOpen} transparent animationType="fade" onRequestClose={() => setSpaceNameOpen(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{spaceNameTarget ? t('spaceRenameBtn') : t('newSpaceBtn')}</Text>
+            <TextInput
+              value={spaceNameValue}
+              onChangeText={setSpaceNameValue}
+              placeholder={t('spaceNamePh')}
+              placeholderTextColor={P.faint2}
+              autoCorrect={false}
+              style={[styles.fieldInput, { textAlign: ta() }]}
+              maxLength={40}
+              autoFocus
+              onSubmitEditing={() => void saveSpaceName()}
+              returnKeyType="done"
+            />
+            <Text style={{ fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 }}>
+              {spaceNameValue.length}/40
+            </Text>
+            {spaceNameMsg ? <Text style={styles.fieldError}>⚠️ {spaceNameMsg}</Text> : null}
+            <View style={styles.modalRow}>
+              <Pressable onPress={() => void saveSpaceName()} disabled={spaceNameBusy} style={styles.modalBtn}>
+                {spaceNameBusy ? (
+                  <ActivityIndicator color={P.paper} />
+                ) : (
+                  <Text style={styles.modalBtnText}>{t('save')}</Text>
+                )}
+              </Pressable>
+              <Pressable onPress={() => setSpaceNameOpen(false)} style={[styles.modalBtn, styles.modalBtnGhost]}>
+                <Text style={[styles.modalBtnText, styles.modalBtnGhostText]}>{t('cancel')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── rename family (owner only) ── */}
+      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(renameValue !== (viewSpace?.type === 'family' && viewSpace.name !== 'Family' ? viewSpace.name : ''), () => setRenameOpen(false))}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(renameValue !== (viewSpace?.type === 'family' && viewSpace.name !== 'Family' ? viewSpace.name : ''), () => setRenameOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('renameFamily')}</Text>
             <Text style={styles.modalBody}>{t('renameHint')}</Text>
@@ -6005,11 +6246,12 @@ export default function HomeScreen() {
               placeholderTextColor={P.faint2}
               autoCorrect={false}
               style={[styles.fieldInput, { textAlign: ta() }]}
-              maxLength={40}
+              maxLength={20}
               autoFocus
               onSubmitEditing={doRename}
               returnKeyType="done"
             />
+            <Text style={styles.charCount}>{renameValue.length}/20</Text>
             {renameMsg ? <Text style={styles.fieldError}>⚠️ {renameMsg}</Text> : null}
             <View style={styles.modalRow}>
               <Pressable onPress={doRename} disabled={renameBusy} style={styles.modalBtn}>
@@ -6035,6 +6277,7 @@ export default function HomeScreen() {
         onRequestClose={() => setActiveListId(null)}
       >
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setActiveListId(null)} />
           <View style={[styles.modalCard, styles.shopModalCard]}>
             {(() => {
               const list = shopLists.find((l) => l.id === activeListId);
@@ -6180,11 +6423,13 @@ export default function HomeScreen() {
         visible={newListOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => setNewListOpen(false)}
+        onRequestClose={() => requestBackdropClose(newListTitle.trim() !== '' || newListItems.trim() !== '', () => setNewListOpen(false))}
       >
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.modalBg, styles.modalBgAnchored]}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit, { top: -64 }]} onPress={() => requestBackdropClose(newListTitle.trim() !== '' || newListItems.trim() !== '', () => setNewListOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('newList')}</Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <TextInput
               value={newListTitle}
               onChangeText={setNewListTitle}
@@ -6222,11 +6467,10 @@ export default function HomeScreen() {
               onChangeText={setNewListItems}
               placeholder={t('newListItemsPh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%', height: listItemsH }]}
-              onContentSizeChange={(e) => setListItemsH(Math.max(90, Math.min(180, Math.ceil(e.nativeEvent.contentSize.height) + 24)))}
-              scrollEnabled={listItemsH >= 180}
+              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%' }]}
               multiline
             />
+            </ScrollView>
             <View style={styles.modalBtns}>
               <Pressable
                 onPress={() => setNewListOpen(false)}
