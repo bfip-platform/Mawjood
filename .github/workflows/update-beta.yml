@@ -90,7 +90,8 @@ jobs:
           UPDATE_MESSAGE: ${{ inputs.message }}
         run: eas update --channel beta --environment production --message "$UPDATE_MESSAGE"
 
-      - name: Show latest beta updates
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas update:list --branch beta --limit 3
+      # Publish success is determined by the exit status of eas update above.
+      # Do not call eas update:list here: on pinned EAS CLI 16.28.0 it can
+      # prompt "Load more update groups?" on a non-interactive CI runner,
+      # incorrectly failing the workflow after a successful publish.
+      # Inspect history separately in Expo Dashboard when needed.
