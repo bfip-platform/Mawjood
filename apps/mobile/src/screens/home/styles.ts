@@ -223,6 +223,21 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     marginTop: 12,
   },
   ghostBtnText: { fontSize: 15, fontWeight: '600', color: P.muted },
+  // UI polish: prominent filled create-space action (Profile → My extra
+  // spaces). Ink fill + paper content reads near-black/white in light mode
+  // and inverts with the palette in dark mode — existing tokens only.
+  newSpaceBtn: {
+    backgroundColor: P.ink,
+    borderRadius: 14,
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  newSpaceBtnPlus: { fontSize: 20, fontWeight: '700', color: P.paper },
+  newSpaceBtnText: { fontSize: 15, fontWeight: '700', color: P.paper },
   // ── 👻 ghost key styles: deliberately plain, no trace ──
   secretGhostRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   ghostBtnSmall: {
@@ -509,7 +524,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical: 5,
     minHeight: 46,
-    maxHeight: 132,
+    maxHeight: 160,
     shadowColor: P.ink,
     shadowOpacity: 0.07,
     shadowRadius: 10,
@@ -532,7 +547,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     color: P.ink,
     paddingHorizontal: 4,
     paddingVertical: 8,
-    maxHeight: 120,
+    maxHeight: 148,
   },
   micBtn: {
     width: TOUCH,
@@ -550,6 +565,11 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   micBtnRecording: { backgroundColor: P.danger },
   micBtnDisabled: { opacity: 0.5 },
   micBtnText: { fontSize: 22 },
+  // UI polish: SEND state of the round mic/send control — near-black disc
+  // (P.ink) with an explicitly paper-white arrow. The arrow previously had
+  // no color of its own and rendered dark on the dark disc in light mode.
+  micBtnSend: { backgroundColor: P.ink },
+  micBtnTextSend: { color: P.paper },
   chatInput: {
     flex: 1,
     backgroundColor: P.input,

@@ -2861,3 +2861,39 @@ describe('CFP-01 hotfix — Profile modal sequencing (stacked-modal wedge)', () 
     assert.ok(idx.includes(".getCustomSpacesLimit(user.id)"), 'the limit still loads once at sign-in');
   });
 });
+
+describe('UI polish — New Space button, composer growth, send contrast', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+  const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+  it('New Space is a filled ink button with a real white plus glyph; handler + label keys preserved', () => {
+    const btn = styles.slice(styles.indexOf('newSpaceBtn: {'), styles.indexOf('newSpaceBtn: {') + 260);
+    assert.ok(btn.includes('backgroundColor: P.ink'), 'filled with the ink token (near-black in light, inverted in dark)');
+    assert.ok(styles.includes("newSpaceBtnPlus: { fontSize: 20, fontWeight: '700', color: P.paper }"), 'plus glyph is paper-white');
+    assert.ok(styles.includes("newSpaceBtnText: { fontSize: 15, fontWeight: '700', color: P.paper }"), 'label is paper-white');
+    assert.ok(idx.includes('onPress={openSpaceCreate} style={styles.newSpaceBtn}'), 'same create handler, new style');
+    assert.ok(idx.includes('<Text style={styles.newSpaceBtnPlus}>+</Text>'), 'plus is a text glyph (inherits the paper color), not an emoji');
+    assert.ok(!i18n.includes("newSpaceBtn: '➕"), 'the emoji plus is gone from both dictionaries');
+  });
+  it('main composer grows to ~6 lines (148) then scrolls internally; vault cap untouched', () => {
+    assert.ok(idx.includes('Math.min(148, Math.ceil(e.nativeEvent.contentSize.height)'), 'main growth cap raised to ~6 lines');
+    assert.equal((idx.match(/Math\.min\(148/g) ?? []).length, 1, 'only the main composer handler uses the new cap');
+    const vault = idx.slice(idx.indexOf('setSecretComposerH('), idx.indexOf('setSecretComposerH(') + 140);
+    assert.ok(vault.includes('Math.min(120'), 'vault composer keeps its existing cap (out of scope)');
+    const input = styles.slice(styles.indexOf('composerInput: {'), styles.indexOf('composerInput: {') + 200);
+    assert.ok(input.includes('maxHeight: 148'), 'shared input style matches the new main cap');
+    assert.ok(!idx.includes('scrollEnabled={false}'), 'the input still scrolls internally past the cap');
+    const row = styles.slice(styles.indexOf('inputRow: {'), styles.indexOf('inputRow: {') + 120);
+    assert.ok(row.includes("alignItems: 'flex-end'"), 'send/mic stay bottom-aligned as the box grows');
+  });
+  it('send state is ink + paper arrow in both composers; logic and labels unchanged', () => {
+    assert.ok(styles.includes('micBtnSend: { backgroundColor: P.ink }'), 'send disc is ink');
+    assert.ok(styles.includes('micBtnTextSend: { color: P.paper }'), 'send arrow is explicitly paper-white');
+    assert.equal((idx.match(/styles\.micBtnSend/g) ?? []).length, 2, 'main + vault buttons both wired');
+    assert.equal((idx.match(/styles\.micBtnTextSend/g) ?? []).length, 2, 'both arrows tinted');
+    assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main handler logic untouched');
+    assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault handler logic untouched');
+    assert.ok(idx.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'a11y labels untouched');
+  });
+});
