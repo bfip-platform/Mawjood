@@ -2624,3 +2624,42 @@ describe('OTA env guard — behavior against fabricated keys (the real CLI, spaw
     assert.notEqual(r.code, 0);
   });
 });
+
+describe('CFP-01 A — modal stability, tap-outside policy, space labels', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+  const constants = read('../../apps/mobile/src/screens/home/constants.ts');
+  const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+
+  it('GUARD (item 5): space names are localized and rendered beside the tab icons', () => {
+    for (const k of ['spaceNamePrivate', 'spaceNameFamily', 'spaceNameWork']) {
+      assert.ok((i18n.match(new RegExp(`${k}:`, 'g')) ?? []).length >= 2, `${k} exists in both dicts`);
+    }
+    assert.ok(constants.includes('export function spaceLabel'), 'localized spaceLabel helper exists');
+    assert.ok(idx.includes('{spaceLabel(st)}'), 'space tab bar renders icon + visible name');
+    assert.ok(!idx.includes('SPACE_LABELS'), 'hardcoded-English label map no longer used by the screen');
+  });
+
+  it('GUARD (item 1): the new-list modal is anchored, scrollable, and free of JS height state', () => {
+    assert.ok(!idx.includes('listItemsH'), 'the state-driven input height (shake mechanism) is gone');
+    assert.ok(idx.includes('styles.modalBgAnchored'), 'new-list backdrop is top-anchored');
+    assert.ok(idx.includes('style={styles.modalScroll}'), 'form region scrolls inside the card');
+    assert.ok(styles.includes('modalBgAnchored'), 'anchored style defined');
+    assert.ok(styles.includes('modalScroll'), 'modal scroll style defined');
+  });
+
+  it('GUARD (item 2): backdrop-close covers exactly the eligible modals, guarded where input is at risk', () => {
+    const hits = idx.match(/modalBackdropHit/g) ?? [];
+    assert.equal(hits.length, 11, 'exactly the 11 eligible modals carry a backdrop hit-area');
+    assert.ok(idx.includes('function requestBackdropClose'), 'dirty-confirm policy helper defined');
+    assert.ok(idx.includes("t('closeConfirmTitle')"), 'confirmation copy is localized');
+    // security-sensitive flows stay excluded: no backdrop inside the join or delete-tab modals
+    const blockOf = (anchor) => {
+      const start = idx.indexOf(anchor);
+      return idx.slice(start, idx.indexOf('</Modal>', start));
+    };
+    assert.ok(!blockOf('visible={joinOpen}').includes('modalBackdropHit'), 'join-by-code modal has no backdrop dismiss');
+    assert.ok(!blockOf('visible={delTab !== null}').includes('modalBackdropHit'), 'delete-tab confirmation has no backdrop dismiss');
+  });
+});

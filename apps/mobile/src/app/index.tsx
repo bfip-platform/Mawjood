@@ -127,9 +127,9 @@ import { SignedImage } from '../components/SignedImage';
 import {
   VOICE_REPLY_KEY,
   KIND_ICON,
-  SPACE_LABELS,
+  SPACE_NAME_KEYS,
+  spaceLabel,
   FAMILY_BUILTIN_KEYS,
-  SPACE_SHORT,
   ACTIVE_CHAT_KEY,
   ACTIVE_FAMILY_KEY,
   HISTORY_IDLE_MS,
@@ -144,6 +144,23 @@ import { useBorrows } from '../screens/home/hooks/useBorrows';
 import { useAgenda } from '../screens/home/hooks/useAgenda';
 import { useShopping } from '../screens/home/hooks/useShopping';
 import { makeStyles } from '../screens/home/styles';
+
+/**
+ * CFP-01 item 2 — backdrop-tap close policy for input modals: when the form
+ * holds unsaved input, tapping outside (or Android back) asks first —
+ * [Stay] keeps the modal and its input untouched; [Confirm closing]
+ * discards and closes. Clean forms close immediately.
+ */
+function requestBackdropClose(dirty: boolean, close: () => void): void {
+  if (!dirty) {
+    close();
+    return;
+  }
+  Alert.alert(t('closeConfirmTitle'), t('closeConfirmBody'), [
+    { text: t('closeConfirmStay'), style: 'cancel' },
+    { text: t('closeConfirmYes'), style: 'destructive', onPress: close },
+  ]);
+}
 
 export default function HomeScreen() {
   const lang = useLang(); // re-renders the whole screen when the language changes
@@ -233,7 +250,6 @@ export default function HomeScreen() {
   const [textNote, setTextNote] = useState('');
   /** chat composer auto-grow height: follows content size, clamped 36–120 */
   const [composerH, setComposerH] = useState(44);
-  const [listItemsH, setListItemsH] = useState(90);
 
   /** empty-state example chip → fill the chat input and jump to Home */
   const tryExample = useCallback((example: string) => {
@@ -1113,7 +1129,7 @@ export default function HomeScreen() {
   const trashOrigin = (row: TrashRow): string => {
     if (row.kind === 'chat') return '';
     const sp = spaces.find((s) => s.id === row.space_id);
-    return sp ? (SPACE_LABELS[sp.type] ?? sp.name) : '';
+    return sp ? spaceLabel(sp.type, sp.name) : '';
   };
 
   const openTrash = useCallback(async (secret: boolean) => {
@@ -2927,7 +2943,7 @@ export default function HomeScreen() {
         } catch (e) {
           console.warn('auto space move failed', e);
         }
-        const msg = tx('savedInSpace', { space: SPACE_LABELS[finalType] });
+        const msg = tx('savedInSpace', { space: spaceLabel(finalType) });
         pushMsg('app', msg);
         speak(msg);
         if (userId) await maybeAssignTask(finalType, transcript, targetId, userId);
@@ -3078,7 +3094,7 @@ export default function HomeScreen() {
           } catch (e) {
             console.warn('auto space move failed', e);
           }
-          pushMsg('app', tx('savedInSpace', { space: SPACE_LABELS[finalType] }));
+          pushMsg('app', tx('savedInSpace', { space: spaceLabel(finalType) }));
           await maybeAssignTask(finalType, clean, targetId, userId);
         } else {
           pushMsg('app', t('saved'));
@@ -3638,7 +3654,7 @@ export default function HomeScreen() {
                     style={styles.moveTarget}
                   >
                     <Text style={styles.moveTargetText}>
-                      {SPACE_LABELS[s.type] ?? s.name}
+                      {spaceLabel(s.type, s.name)}
                     </Text>
                   </Pressable>
                 ))}
@@ -3987,7 +4003,7 @@ export default function HomeScreen() {
                       style={styles.moveTarget}
                     >
                       <Text style={styles.moveTargetText}>
-                        {SPACE_LABELS[s.type] ?? s.name}
+                        {spaceLabel(s.type, s.name)}
                       </Text>
                     </Pressable>
                   ))}
@@ -4161,7 +4177,7 @@ export default function HomeScreen() {
                       style={styles.tabMenuBtn}
                     >
                       <Text style={styles.tabMenuText}>
-                        {SPACE_LABELS[s.type] ?? s.name}
+                        {spaceLabel(s.type, s.name)}
                       </Text>
                     </Pressable>
                   ))}
@@ -4268,17 +4284,17 @@ export default function HomeScreen() {
             {t('tabHome')}
           </Text>
         </Pressable>
-        {(Object.keys(SPACE_LABELS) as SpaceType[]).map((t) => (
+        {(Object.keys(SPACE_NAME_KEYS) as SpaceType[]).map((st) => (
           <Pressable
-            key={t}
-            onPress={() => openSpace(t)}
-            style={[styles.tab, view === t && styles.tabActive]}
-            testID={`tab-space-${t}`}
+            key={st}
+            onPress={() => openSpace(st)}
+            style={[styles.tab, view === st && styles.tabActive]}
+            testID={`tab-space-${st}`}
             accessibilityRole="tab"
-            accessibilityState={{ selected: view === t }}
+            accessibilityState={{ selected: view === st }}
           >
-            <Text style={[styles.tabText, view === t && styles.tabTextActive]}>
-              {SPACE_SHORT[t]}
+            <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
+              {spaceLabel(st)}
             </Text>
           </Pressable>
         ))}
@@ -4567,8 +4583,9 @@ export default function HomeScreen() {
       )}
 
       {/* ── profile modal ── */}
-      <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => setProfileOpen(false)}>
+      <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(supportText.trim() !== '' || nameDraft !== (displayName ?? ''), () => setProfileOpen(false))}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(supportText.trim() !== '' || nameDraft !== (displayName ?? ''), () => setProfileOpen(false))} />
           <View style={[styles.modalCard, styles.profileCard]}>
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               {/* ── identity header (avatar 64 · name 20/700 · email 13 gray) ── */}
@@ -4832,6 +4849,7 @@ export default function HomeScreen() {
       {/* ── about modal ── */}
       <Modal visible={aboutOpen} transparent animationType="fade" onRequestClose={() => setAboutOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setAboutOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('aboutTitle')}</Text>
             <Text style={styles.modalBody}>
@@ -5328,7 +5346,7 @@ export default function HomeScreen() {
                             style={styles.moveTarget}
                           >
                             <Text style={styles.moveTargetText}>
-                              {SPACE_LABELS[s.type] ?? s.name}
+                              {spaceLabel(s.type, s.name)}
                             </Text>
                           </Pressable>
                         ))}
@@ -5438,8 +5456,9 @@ export default function HomeScreen() {
       )}
 
       {/* ── custom tab modal (create / rename) ── */}
-      <Modal visible={tabModalOpen} transparent animationType="fade" onRequestClose={() => setTabModalOpen(false)}>
+      <Modal visible={tabModalOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(editingTab ? (tabName !== editingTab.title || tabIcon !== editingTab.icon) : tabName.trim() !== '', () => setTabModalOpen(false))}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(editingTab ? (tabName !== editingTab.title || tabIcon !== editingTab.icon) : tabName.trim() !== '', () => setTabModalOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{editingTab ? t('renameTab') : t('newTab')}</Text>
             <View style={styles.iconRow}>
@@ -5486,6 +5505,7 @@ export default function HomeScreen() {
       {/* ── free-tier tab limit ── */}
       <Modal visible={limitModalOpen} transparent animationType="fade" onRequestClose={() => setLimitModalOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setLimitModalOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>🔒 {t('tabLimitTitle')}</Text>
             <Text style={styles.modalBody}>{tx('tabLimitBody', { count: String(tabLimit) })}</Text>
@@ -5818,6 +5838,7 @@ export default function HomeScreen() {
         onRequestClose={() => setFileNoteId(null)}
       >
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setFileNoteId(null)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('moveToTab')}</Text>
             {(
@@ -5853,6 +5874,7 @@ export default function HomeScreen() {
       {/* ── invite modal ── */}
       <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setInviteOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('inviteTitle')}</Text>
             <Text style={styles.modalBody}>
@@ -5920,6 +5942,7 @@ export default function HomeScreen() {
       {/* ── family-slots paywall: first family free, extras need a slot ── */}
       <Modal visible={paywallOpen} transparent animationType="fade" onRequestClose={() => { setPaywallOpen(false); setPendingJoinCode(null); }}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => { setPaywallOpen(false); setPendingJoinCode(null); }} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('paywallTitle')}</Text>
             <Text style={styles.modalBody}>{t('paywallBody')}</Text>
@@ -5944,6 +5967,7 @@ export default function HomeScreen() {
       {/* ── families switcher + manager ── */}
       <Modal visible={famsOpen} transparent animationType="fade" onRequestClose={() => setFamsOpen(false)}>
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setFamsOpen(false)} />
           <View style={[styles.modalCard, styles.profileCard]}>
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               <Text style={styles.modalTitle}>{t('familiesTitle')}</Text>
@@ -5993,8 +6017,9 @@ export default function HomeScreen() {
       </Modal>
 
       {/* ── rename family (owner only) ── */}
-      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
+      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => requestBackdropClose(renameValue !== (viewSpace?.type === 'family' && viewSpace.name !== 'Family' ? viewSpace.name : ''), () => setRenameOpen(false))}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => requestBackdropClose(renameValue !== (viewSpace?.type === 'family' && viewSpace.name !== 'Family' ? viewSpace.name : ''), () => setRenameOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('renameFamily')}</Text>
             <Text style={styles.modalBody}>{t('renameHint')}</Text>
@@ -6035,6 +6060,7 @@ export default function HomeScreen() {
         onRequestClose={() => setActiveListId(null)}
       >
         <View style={styles.modalBg}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit]} onPress={() => setActiveListId(null)} />
           <View style={[styles.modalCard, styles.shopModalCard]}>
             {(() => {
               const list = shopLists.find((l) => l.id === activeListId);
@@ -6180,11 +6206,13 @@ export default function HomeScreen() {
         visible={newListOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => setNewListOpen(false)}
+        onRequestClose={() => requestBackdropClose(newListTitle.trim() !== '' || newListItems.trim() !== '', () => setNewListOpen(false))}
       >
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.modalBg, styles.modalBgAnchored]}>
+          <Pressable accessible={false} style={[styles.modalBackdropHit, { top: -64 }]} onPress={() => requestBackdropClose(newListTitle.trim() !== '' || newListItems.trim() !== '', () => setNewListOpen(false))} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('newList')}</Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <TextInput
               value={newListTitle}
               onChangeText={setNewListTitle}
@@ -6222,11 +6250,10 @@ export default function HomeScreen() {
               onChangeText={setNewListItems}
               placeholder={t('newListItemsPh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%', height: listItemsH }]}
-              onContentSizeChange={(e) => setListItemsH(Math.max(90, Math.min(180, Math.ceil(e.nativeEvent.contentSize.height) + 24)))}
-              scrollEnabled={listItemsH >= 180}
+              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%' }]}
               multiline
             />
+            </ScrollView>
             <View style={styles.modalBtns}>
               <Pressable
                 onPress={() => setNewListOpen(false)}

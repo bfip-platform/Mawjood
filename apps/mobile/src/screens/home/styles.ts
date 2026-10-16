@@ -932,6 +932,19 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     padding: 22,
     alignItems: 'center',
   },
+  // CFP-01 item 1: top-anchored backdrop variant — a centered card is
+  // re-centered by KeyboardAvoidingView on every height change (the visible
+  // "shaking"); anchoring to the top keeps the card's origin fixed while the
+  // keyboard and content resize below it.
+  modalBgAnchored: { justifyContent: 'flex-start', paddingTop: 64 },
+  // CFP-01 item 2: invisible tap target covering the backdrop around a
+  // modal card (sibling behind the card inside modalBg). The -24 offsets
+  // cancel modalBg's uniform padding:24 so the hit area reaches the screen
+  // edges; the anchored variant (paddingTop 64) overrides top inline.
+  modalBackdropHit: { position: 'absolute', top: -24, left: -24, right: -24, bottom: -24 },
+  // scrollable form region inside a modal card; the action row stays pinned
+  // below it (outside the ScrollView) so buttons never scroll out of reach.
+  modalScroll: { alignSelf: 'stretch', width: '100%', flexShrink: 1 },
   kav: { flex: 1 },
   modalTitle: { fontSize: 19, fontWeight: '800', color: P.ink, marginBottom: 10 },
   modalBody: { fontSize: 14, color: P.text3, textAlign: 'center', lineHeight: 21, marginBottom: 14 },
