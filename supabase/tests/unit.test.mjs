@@ -2829,3 +2829,35 @@ describe('CFP-01 D navigation — custom spaces open in the generic browse UI', 
     assert.ok(idx.includes("viewSpace?.type === 'family' ? ("), 'family-vs-generic branch stays type-keyed (custom falls into generic)');
   });
 });
+
+describe('CFP-01 hotfix — Profile modal sequencing (stacked-modal wedge)', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  it('the space-name modal is only ever presented via the sequenced swap (never while Profile is open)', () => {
+    // every setSpaceNameOpen(true) sits inside a queueAfterModalClose callback
+    assert.equal((idx.match(/setSpaceNameOpen\(true\)/g) ?? []).length, 2, 'exactly the two queued presentations');
+    assert.equal((idx.match(/queueAfterModalClose\(\(\) => setSpaceNameOpen\(true\)\)/g) ?? []).length, 2);
+    // both entry points close Profile first
+    const create = idx.slice(idx.indexOf('const openSpaceCreate'), idx.indexOf('const openSpaceRename'));
+    const rename = idx.slice(idx.indexOf('const openSpaceRename'), idx.indexOf('const closeSpaceName'));
+    assert.ok(create.includes('setProfileOpen(false)'), 'create closes Profile before presenting');
+    assert.ok(rename.includes('setProfileOpen(false)'), 'rename closes Profile before presenting');
+  });
+  it('the swap helper waits out the fade and supersedes stale timers', () => {
+    assert.ok(idx.includes('const queueAfterModalClose = useCallback('), 'sequencing helper exists');
+    assert.ok(idx.includes('clearTimeout(modalSwapTimer.current)'), 'a newer swap cancels the pending one');
+    assert.ok(idx.includes('setTimeout(fn, 380)'), 'presentation waits for the dismissal fade');
+  });
+  it('closing the name modal returns to Profile through the same sequencing', () => {
+    assert.ok(idx.includes('const closeSpaceName = useCallback('), 'single close path');
+    const save = idx.slice(idx.indexOf('const saveSpaceName'), idx.indexOf('const onDeleteCustomSpace'));
+    assert.ok(save.includes('closeSpaceName(true)'), 'successful save returns to Profile (list refreshed first)');
+    assert.ok(idx.includes('onRequestClose={() => closeSpaceName(true)}'), 'Android back returns to Profile');
+    assert.equal((idx.match(/setSpaceNameOpen\(false\)/g) ?? []).length, 1, 'the raw close setter lives only inside closeSpaceName');
+  });
+  it('Profile open itself performs no manage-space load (no new async work on open)', () => {
+    const profileBtn = idx.slice(idx.indexOf('setProfileOpen(true);', idx.indexOf('menuProfile')) - 200, idx.indexOf('menuProfile'));
+    assert.ok(!profileBtn.includes('manageSpace') && !profileBtn.includes('getCustomSpacesLimit'), 'open handler only flips visibility');
+    assert.ok(idx.includes(".getCustomSpacesLimit(user.id)"), 'the limit still loads once at sign-in');
+  });
+});

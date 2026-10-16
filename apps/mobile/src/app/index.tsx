@@ -1743,6 +1743,15 @@ export default function HomeScreen() {
   const [spaceNameMsg, setSpaceNameMsg] = useState<string | null>(null);
   const [spaceDelArm, setSpaceDelArm] = useState<string | null>(null);
   const [spaceErr, setSpaceErr] = useState<string | null>(null);
+  // HOTFIX (CFP-01 regression): never present the space-name modal while the
+  // Profile modal is still visible — two stacked transparent modals wedge
+  // iOS presentation (content visible, touches dead). Sequence instead:
+  // close the current modal, wait out its fade, then present the next one.
+  const modalSwapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueAfterModalClose = useCallback((fn: () => void) => {
+    if (modalSwapTimer.current) clearTimeout(modalSwapTimer.current);
+    modalSwapTimer.current = setTimeout(fn, 380);
+  }, []);
   const customSpaces = useMemo(
     () => spaces.filter((sp) => (sp.type as string) === 'custom' && sp.owner_id === userId),
     [spaces, userId],
@@ -1758,14 +1767,21 @@ export default function HomeScreen() {
     setSpaceNameTarget(null);
     setSpaceNameValue('');
     setSpaceNameMsg(null);
-    setSpaceNameOpen(true);
-  }, []);
+    setProfileOpen(false);
+    queueAfterModalClose(() => setSpaceNameOpen(true));
+  }, [queueAfterModalClose]);
   const openSpaceRename = useCallback((sp: Space) => {
     setSpaceNameTarget(sp);
     setSpaceNameValue(sp.name);
     setSpaceNameMsg(null);
-    setSpaceNameOpen(true);
-  }, []);
+    setProfileOpen(false);
+    queueAfterModalClose(() => setSpaceNameOpen(true));
+  }, [queueAfterModalClose]);
+  /** Close the space-name modal; optionally return to Profile (sequenced). */
+  const closeSpaceName = useCallback((backToProfile: boolean) => {
+    setSpaceNameOpen(false);
+    if (backToProfile) queueAfterModalClose(() => setProfileOpen(true));
+  }, [queueAfterModalClose]);
   const saveSpaceName = useCallback(async () => {
     if (spaceNameBusy) return;
     if (!spaceNameValue.trim()) { setSpaceNameMsg(t('renameEmpty')); return; }
@@ -1774,13 +1790,13 @@ export default function HomeScreen() {
       if (spaceNameTarget) await engine.renameCustomSpace(spaceNameTarget.id, spaceNameValue);
       else await engine.createCustomSpace(spaceNameValue);
       setSpaces(await engine.listSpaces());
-      setSpaceNameOpen(false);
+      closeSpaceName(true);
     } catch (e) {
       setSpaceNameMsg(spaceErrText(e));
     } finally {
       setSpaceNameBusy(false);
     }
-  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText]);
+  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText, closeSpaceName]);
   const onDeleteCustomSpace = useCallback(async (sp: Space) => {
     if (spaceDelArm !== sp.id) { setSpaceDelArm(sp.id); setSpaceErr(null); return; }
     try {
@@ -6196,7 +6212,7 @@ export default function HomeScreen() {
       </Modal>
 
       {/* ── CFP-01 item 7: create / rename custom space ── */}
-      <Modal visible={spaceNameOpen} transparent animationType="fade" onRequestClose={() => setSpaceNameOpen(false)}>
+      <Modal visible={spaceNameOpen} transparent animationType="fade" onRequestClose={() => closeSpaceName(true)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{spaceNameTarget ? t('spaceRenameBtn') : t('newSpaceBtn')}</Text>
@@ -6224,7 +6240,7 @@ export default function HomeScreen() {
                   <Text style={styles.modalBtnText}>{t('save')}</Text>
                 )}
               </Pressable>
-              <Pressable onPress={() => setSpaceNameOpen(false)} style={[styles.modalBtn, styles.modalBtnGhost]}>
+              <Pressable onPress={() => closeSpaceName(true)} style={[styles.modalBtn, styles.modalBtnGhost]}>
                 <Text style={[styles.modalBtnText, styles.modalBtnGhostText]}>{t('cancel')}</Text>
               </Pressable>
             </View>
