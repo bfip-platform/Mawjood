@@ -90,13 +90,8 @@ jobs:
           UPDATE_MESSAGE: ${{ inputs.message }}
         run: eas update --channel beta --environment production --message "$UPDATE_MESSAGE"
 
-      # The update command above is authoritative for publish success.
-      # eas update:list can prompt "Load more update groups?" even with --limit,
-      # which fails on non-interactive GitHub runners after a successful publish.
-      # Keep history inspection optional and non-blocking.
-      - name: Show latest beta updates (diagnostic only)
-        continue-on-error: true
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          CI: "1"
-        run: eas update:list --branch beta --limit 3 --non-interactive
+      # Publish success is determined by the exit status of eas update above.
+      # Do not call eas update:list here: on pinned EAS CLI 16.28.0 it can
+      # prompt "Load more update groups?" on a non-interactive CI runner,
+      # incorrectly failing the workflow after a successful publish.
+      # Inspect history separately in Expo Dashboard when needed.
