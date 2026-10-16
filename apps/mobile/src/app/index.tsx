@@ -232,7 +232,8 @@ export default function HomeScreen() {
   }, []);
   const [textNote, setTextNote] = useState('');
   /** chat composer auto-grow height: follows content size, clamped 36–120 */
-  const [composerH, setComposerH] = useState(36);
+  const [composerH, setComposerH] = useState(44);
+  const [listItemsH, setListItemsH] = useState(90);
 
   /** empty-state example chip → fill the chat input and jump to Home */
   const tryExample = useCallback((example: string) => {
@@ -4921,10 +4922,10 @@ export default function HomeScreen() {
                   onChangeText={setTextNote}
                   placeholder={t('chatPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { height: composerH, textAlign: ta() }]}
+                  style={[styles.composerInput, { height: composerH, minHeight: 44, textAlign: ta(), textAlignVertical: 'top' }]}
                   onContentSizeChange={(e) =>
                     setComposerH(
-                      Math.max(36, Math.min(120, e.nativeEvent.contentSize.height)),
+                      Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
                     )
                   }
                   multiline
@@ -6189,7 +6190,7 @@ export default function HomeScreen() {
               onChangeText={setNewListTitle}
               placeholder={t('newListTitlePh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, { textAlign: ta() }]}
+              style={[styles.fieldInput, { textAlign: ta(), alignSelf: 'stretch', width: '100%' }]}
             />
             <Text style={styles.modalLabel}>{t('newListFor')}</Text>
             <View style={styles.chipRow}>
@@ -6221,7 +6222,9 @@ export default function HomeScreen() {
               onChangeText={setNewListItems}
               placeholder={t('newListItemsPh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta() }]}
+              style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%', height: listItemsH }]}
+              onContentSizeChange={(e) => setListItemsH(Math.max(90, Math.min(180, Math.ceil(e.nativeEvent.contentSize.height) + 24)))}
+              scrollEnabled={listItemsH >= 180}
               multiline
             />
             <View style={styles.modalBtns}>
