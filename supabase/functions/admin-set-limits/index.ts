@@ -26,6 +26,7 @@ const LIMITS: Record<string, [number, number]> = {
   trash_retention_days: [30, 3650],
   secret_vaults_limit: [1, 100],
   custom_tabs_limit: [0, 100],
+  custom_spaces_limit: [0, 100],
 };
 
 Deno.serve(async (req) => {
@@ -104,7 +105,7 @@ Deno.serve(async (req) => {
     const { data: row, error: upErr } = await admin
       .from('profiles')
       .upsert({ id: userId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'id' })
-      .select('family_slots, chat_retention_days, trash_retention_days, secret_vaults_limit, custom_tabs_limit')
+      .select('family_slots, chat_retention_days, trash_retention_days, secret_vaults_limit, custom_tabs_limit, custom_spaces_limit')
       .single();
     if (upErr) throw upErr;
 

@@ -19,6 +19,9 @@ const cors = {
     'authorization, x-client-info, apikey, content-type',
 };
 
+/** CFP-01 item 3: max length of an in-app support message (context='support'). */
+const SUPPORT_MESSAGE_MAX = 1000;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
@@ -44,9 +47,14 @@ Deno.serve(async (req) => {
       // F-SEC-07: the header contract is "error class only, never user
       // content" — sanitize before storage (control chars, tokens,
       // emails, URL query values) and cap tighter than the raw slices.
-      message = sanitizeTelemetryText(b?.message ?? '', 200);
-      stack = b?.stack ? sanitizeTelemetryText(b.stack, 500) : null;
+      // CFP-01 item 3 exception: the in-app SUPPORT feature rides this
+      // channel with context='support'; those messages are user content
+      // BY DESIGN and their cap is 1000. The sanitizer's redaction and
+      // the rate limit still apply unchanged, and every other context
+      // keeps the 200-char telemetry cap.
       context = b?.context ? sanitizeTelemetryText(b.context, 100) : null;
+      message = sanitizeTelemetryText(b?.message ?? '', context === 'support' ? SUPPORT_MESSAGE_MAX : 200);
+      stack = b?.stack ? sanitizeTelemetryText(b.stack, 500) : null;
     } catch { /* empty body */ }
     if (!message) {
       return new Response(JSON.stringify({ ok: false, error: 'message required' }), {

@@ -62,6 +62,8 @@ const MANIFEST = {
   extract: ['user-jwt', 'internal-secret'],
   'family-members': ['user-jwt'],
   'join-family': ['user-jwt'],
+  // CFP-01 item 7: user-facing custom-space management; JWT → user, owner-only writes inside
+  'manage-space': ['user-jwt'],
   'memory-consolidate': ['cron-secret'],
   'memory-learn': ['user-jwt'],
   notify: ['user-jwt', 'internal-secret'],

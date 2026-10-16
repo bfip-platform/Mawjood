@@ -200,6 +200,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     color: P.ink,
   },
   fieldHint: { fontSize: 12, color: P.muted, marginBottom: 8, lineHeight: 17, paddingHorizontal: 4 },
+  // CFP-01 item 3: character counter under length-limited inputs.
+  charCount: { fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 },
   fieldError: { fontSize: 12, color: P.danger, marginTop: 6, paddingHorizontal: 4 },
   fieldOk: { fontSize: 12, color: P.success, marginTop: 6, paddingHorizontal: 4 },
   // primary button: full-width, 52, 16/700 — thumb-zone save pattern
@@ -493,33 +495,43 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   },
   toastText: { color: P.paper, fontSize: 14, fontWeight: '600', textAlign: 'center' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  // CFP-01 item 8: composer polish — fuller pill, soft elevation, in-box
+  // action disc, 16px input text (also prevents iOS focus zoom). Shared by
+  // the main chat composer and the vault composer; colors stay P.* tokens.
   composerBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-end',
     backgroundColor: P.surface,
-    borderRadius: 22,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: P.border,
     paddingHorizontal: 4,
-    paddingVertical: 4,
-    minHeight: 44,
+    paddingVertical: 5,
+    minHeight: 46,
     maxHeight: 132,
+    shadowColor: P.ink,
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
+  composerBoxRecording: { borderColor: P.danger },
   cameraBtn: {
     width: 38,
     height: 38,
     borderRadius: 19,
+    backgroundColor: P.input,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cameraBtnText: { fontSize: 19 },
   composerInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     color: P.ink,
     paddingHorizontal: 4,
-    paddingVertical: 6,
+    paddingVertical: 8,
     maxHeight: 120,
   },
   micBtn: {
@@ -529,6 +541,11 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     backgroundColor: P.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: P.ink,
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   micBtnRecording: { backgroundColor: P.danger },
   micBtnDisabled: { opacity: 0.5 },
@@ -932,6 +949,19 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     padding: 22,
     alignItems: 'center',
   },
+  // CFP-01 item 1: top-anchored backdrop variant — a centered card is
+  // re-centered by KeyboardAvoidingView on every height change (the visible
+  // "shaking"); anchoring to the top keeps the card's origin fixed while the
+  // keyboard and content resize below it.
+  modalBgAnchored: { justifyContent: 'flex-start', paddingTop: 64 },
+  // CFP-01 item 2: invisible tap target covering the backdrop around a
+  // modal card (sibling behind the card inside modalBg). The -24 offsets
+  // cancel modalBg's uniform padding:24 so the hit area reaches the screen
+  // edges; the anchored variant (paddingTop 64) overrides top inline.
+  modalBackdropHit: { position: 'absolute', top: -24, left: -24, right: -24, bottom: -24 },
+  // scrollable form region inside a modal card; the action row stays pinned
+  // below it (outside the ScrollView) so buttons never scroll out of reach.
+  modalScroll: { alignSelf: 'stretch', width: '100%', flexShrink: 1 },
   kav: { flex: 1 },
   modalTitle: { fontSize: 19, fontWeight: '800', color: P.ink, marginBottom: 10 },
   modalBody: { fontSize: 14, color: P.text3, textAlign: 'center', lineHeight: 21, marginBottom: 14 },
