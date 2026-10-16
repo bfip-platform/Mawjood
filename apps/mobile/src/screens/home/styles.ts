@@ -75,7 +75,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  menuAvatarText: { fontSize: 22, fontWeight: '800', color: '#fff' },
+  menuAvatarText: { fontSize: 22, fontWeight: '800', color: P.paper },
   menuScroll: { flex: 1 }, // the whole drawer scrolls — less clutter, less pressure
   menuProfileInfo: { flex: 1 },  menuEmail: { fontSize: 17, fontWeight: '700', color: P.ink },
   menuEmailSub: { fontSize: 13, color: P.faint2, marginTop: 2 },
@@ -84,7 +84,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 14,
+    minHeight: TOUCH,
+    paddingVertical: 11,
     paddingHorizontal: 20,
   },
   // ── chat history (in-drawer) ──
@@ -124,7 +125,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: P.surface,
-    borderRadius: 10,
+    borderRadius: 14,
     marginBottom: 6,
     borderWidth: 1,
     borderColor: P.border,
@@ -136,7 +137,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   histDelText: { fontSize: 14, color: P.faint3 },
   histEmpty: { fontSize: 13, color: P.faint3, paddingVertical: 8 },
   histHint: { fontSize: 11, color: P.faint3, paddingHorizontal: 20, marginBottom: 10 },
-  menuItemIcon: { fontSize: 20, width: 28, textAlign: 'center' },
+  menuItemIcon: { fontSize: 19, width: 28, textAlign: 'center' },
   menuItemText: { fontSize: 16, fontWeight: '600', color: P.ink, flex: 1 },
   menuSoon: {
     fontSize: 11,
@@ -153,13 +154,13 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   // identity block: 64 avatar · 20/700 name · 13 gray email
   profileCard: { alignItems: 'stretch', maxHeight: '86%' },
   profileScroll: { flexGrow: 0 },
-  profileHeader: { alignItems: 'center', paddingTop: 4, paddingBottom: 16 },
+  profileHeader: { alignItems: 'center', paddingTop: 8, paddingBottom: 20 },
   profileAvatar: {
     width: 64, height: 64, borderRadius: 32,
     backgroundColor: P.accent, alignItems: 'center', justifyContent: 'center',
     marginBottom: 10,
   },
-  profileAvatarText: { fontSize: 26, fontWeight: '800', color: '#fff' },
+  profileAvatarText: { fontSize: 26, fontWeight: '800', color: P.paper },
   profileName: { fontSize: 20, fontWeight: '700', color: P.ink, textAlign: 'center' },
   profileEmail: { fontSize: 13, color: P.muted, marginTop: 3, textAlign: 'center' },
   profileBadge: { fontSize: 12, color: P.muted, marginTop: 6 },
@@ -171,7 +172,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   // info card: grouped rows, 48 min height, 1px inset dividers
   infoCard: {
     backgroundColor: P.surface,
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 16,
   },
   infoRow: {
@@ -191,7 +192,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   // no border, radius 14, min-height 52, 16px text (iOS zooms below 16)
   fieldInput: {
     backgroundColor: P.input,
-    borderRadius: 14,
+    borderRadius: 16,
     minHeight: 52,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -211,7 +212,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     marginTop: 12,
   },
   primaryBtnDisabled: { opacity: 0.6 },
-  primaryBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  primaryBtnText: { fontSize: 16, fontWeight: '700', color: P.paper },
   ghostBtn: {
     borderRadius: 14,
     minHeight: 48,
@@ -255,7 +256,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     backgroundColor: P.accent,
   },
   demoDanger: { backgroundColor: P.gray },
-  demoActionText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  demoActionText: { color: P.paper, fontSize: 13, fontWeight: '700' },
   tabs: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 8 },
   tab: {
     paddingVertical: 12,
@@ -265,7 +266,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   },
   // custom tabs: horizontal scrollable bar
   tabBar: { marginBottom: 8, maxHeight: 48 },
-  tabBarInner: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },
+  tabBarInner: { paddingHorizontal: 16, gap: 8, alignItems: 'center', minHeight: 48 },
   tabAdd: {
     width: 44,
     height: 44,
