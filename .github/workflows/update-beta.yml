@@ -90,7 +90,13 @@ jobs:
           UPDATE_MESSAGE: ${{ inputs.message }}
         run: eas update --channel beta --environment production --message "$UPDATE_MESSAGE"
 
-      - name: Show latest beta updates
+      # The update command above is authoritative for publish success.
+      # eas update:list can prompt "Load more update groups?" even with --limit,
+      # which fails on non-interactive GitHub runners after a successful publish.
+      # Keep history inspection optional and non-blocking.
+      - name: Show latest beta updates (diagnostic only)
+        continue-on-error: true
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas update:list --branch beta --limit 3
+          CI: "1"
+        run: eas update:list --branch beta --limit 3 --non-interactive
