@@ -6474,9 +6474,9 @@ export default function HomeScreen() {
         </SafeAreaView>
       </Modal>
       {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={closeMenu}>
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()}>
         <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+          <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
