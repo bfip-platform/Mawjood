@@ -4400,7 +4400,13 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Pressable onPress={openMenu} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t('a11yMenu')}>
+          <Pressable
+            onPress={openMenu}
+            hitSlop={12}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('a11yMenu')}
+          >
             <Text style={styles.iconBtnText}>☰</Text>
           </Pressable>
           <View>
