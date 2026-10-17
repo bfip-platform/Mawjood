@@ -2389,7 +2389,7 @@ describe('iOS remediation G2/G4 — lazy first-frame audio (P0-3) + boot state m
   it('GUARD: boot transitions to signed-in BEFORE the spaces load, and spaces load cannot throw', () => {
     const app = read('../../apps/mobile/src/app/index.tsx');
     const signedInAt = app.indexOf("setAuthState('signed-in');");
-    const loadAt = app.indexOf('await loadSpaces(user.id);');
+    const loadAt = app.indexOf('withTimeout(loadSpaces(user.id), 12000)');
     assert.ok(signedInAt > -1 && loadAt > signedInAt,
       'P1-2: setAuthState(signed-in) must precede the spaces load so a spaces failure cannot strand authState at loading');
     assert.ok(app.includes('const loadSpaces = useCallback'),
@@ -2466,7 +2466,7 @@ describe('UI-01 — keyboard safety, modal bounds, RTL inputs, swipe action boun
   });
 
   it('GUARD: composer and free-text modal inputs follow the language direction (ta())', () => {
-    assert.ok(idx.includes('height: composerH, textAlign: ta()'), 'main composer input is direction-aligned');
+    assert.ok(near(idx, "placeholder={t('chatPlaceholder')}").includes('textAlign: ta()'), 'main composer input is direction-aligned');
     assert.ok(near(idx, "placeholder={t('tabNamePh')}").includes('fieldInput'), 'tab-name input uses the filled field style, not the code style');
     assert.ok(near(idx, "placeholder={t('newListTitlePh')}").includes('fieldInput'), 'new-list title uses the filled field style');
     assert.ok(near(idx, "placeholder={t('newListItemsPh')}").includes('fieldInput'), 'new-list items use the filled field style');
@@ -2735,8 +2735,8 @@ describe('CFP-01 E — composer & microphone redesign (item 8)', () => {
 
   it('GUARD: both composers show the recording tint; the vault composer auto-grows like the main one', () => {
     assert.equal((idx.match(/composerBoxRecording/g) ?? []).length, 2, 'main + vault composers both wired');
-    assert.ok(idx.includes('const [secretComposerH, setSecretComposerH] = useState(44)'), 'vault auto-grow state exists');
-    assert.ok(idx.includes('setSecretComposerH('), 'vault input grows on content size');
+    assert.ok(!idx.includes('secretComposerH'), 'vault composer auto-grows natively (no JS height state — critical-hotfix change)');
+    assert.ok(idx.includes('maxHeight: 120'), 'vault input keeps its own 120 growth cap inline');
     // behavior preservation: the combined mic/send control logic is untouched
     assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main mic/send swap unchanged');
     assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault mic/send swap unchanged');
@@ -2877,10 +2877,8 @@ describe('UI polish — New Space button, composer growth, send contrast', () =>
     assert.ok(!i18n.includes("newSpaceBtn: '➕"), 'the emoji plus is gone from both dictionaries');
   });
   it('main composer grows to ~6 lines (148) then scrolls internally; vault cap untouched', () => {
-    assert.ok(idx.includes('Math.min(148, Math.ceil(e.nativeEvent.contentSize.height)'), 'main growth cap raised to ~6 lines');
-    assert.equal((idx.match(/Math\.min\(148/g) ?? []).length, 1, 'only the main composer handler uses the new cap');
-    const vault = idx.slice(idx.indexOf('setSecretComposerH('), idx.indexOf('setSecretComposerH(') + 140);
-    assert.ok(vault.includes('Math.min(120'), 'vault composer keeps its existing cap (out of scope)');
+    assert.ok(!idx.includes('setComposerH(') && !idx.includes('height: composerH'), 'growth is native auto-sizing, not JS height state (critical-hotfix change)');
+    assert.ok(!idx.includes('Math.min(148'), 'the unreliable content-size clamp is gone');
     const input = styles.slice(styles.indexOf('composerInput: {'), styles.indexOf('composerInput: {') + 200);
     assert.ok(input.includes('maxHeight: 148'), 'shared input style matches the new main cap');
     assert.ok(!idx.includes('scrollEnabled={false}'), 'the input still scrolls internally past the cap');
@@ -2895,5 +2893,44 @@ describe('UI polish — New Space button, composer growth, send contrast', () =>
     assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main handler logic untouched');
     assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault handler logic untouched');
     assert.ok(idx.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'a11y labels untouched');
+  });
+});
+
+describe('Critical regression hotfix — startup bounds, drawer guarantee, recording audio-mode, native composer sizing', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const idx = read('../../apps/mobile/src/app/index.tsx');
+  const hook = read('../../apps/mobile/src/hooks/useVoiceRecorder.ts');
+  it('BEHAVIOR: withTimeout resolves fast values, nulls slow ones, propagates rejections', async () => {
+    const { withTimeout } = await import('../../apps/mobile/src/lib/withTimeout.ts');
+    assert.equal(await withTimeout(Promise.resolve(42), 1000), 42);
+    assert.equal(await withTimeout(new Promise((r) => setTimeout(() => r('late'), 200)), 30), null);
+    await assert.rejects(withTimeout(Promise.reject(new Error('boom')), 1000), /boom/);
+  });
+  it('boot-critical network awaits are bounded; the draft archive no longer gates first paint', () => {
+    assert.ok(idx.includes('withTimeout(supabase.auth.getSession(), 12000)'), 'session establishment is bounded');
+    assert.ok(idx.includes('withTimeout(loadSpaces(user.id), 12000)'), 'spaces load is bounded');
+    const boot = idx.slice(idx.indexOf('const boot = useCallback'), idx.indexOf('const handleAuthEvent'));
+    assert.ok(!boot.includes('await persistSession('), 'stale-draft archive is background work now');
+    assert.ok(boot.includes('void persistSession('), 'the archive still happens, off the critical path');
+  });
+  it('drawer close always unmounts the full-screen backdrop (animation callback + timer guarantee)', () => {
+    const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
+    assert.ok(cm.includes('setTimeout(() => setMenuOpen(false), 280)'), 'a lost animation callback can no longer strand the backdrop');
+    assert.ok(cm.includes('clearTimeout(fallback)'), 'the normal animation path disarms the fallback');
+  });
+  it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
+    assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
+    assert.ok(
+      hook.indexOf('setAudioModeAsync') < hook.indexOf('prepareToRecordAsync'),
+      'the audio mode is set before prepareToRecordAsync',
+    );
+    assert.ok(hook.includes("console.warn('recording start failed', e)"), 'start() catches and reports instead of throwing into the void');
+    assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })'), 'stop() hands the session back to playback');
+    assert.ok(idx.includes("if (!ok) pushMsg('app', t('recordFail'))"), 'a failed start surfaces the existing recordFail message in chat');
+  });
+  it('both composers size natively: no explicit height, min 44, caps in style only', () => {
+    assert.ok(!idx.includes('height: secretComposerH') && !idx.includes('height: composerH'), 'no controlled heights remain');
+    assert.equal((idx.match(/minHeight: 44/g) ?? []).length, 2, 'both inputs keep the one-line minimum');
+    assert.ok(idx.includes("maxHeight: 120, textAlignVertical: 'top'"), 'vault input caps at 120 inline');
   });
 });
