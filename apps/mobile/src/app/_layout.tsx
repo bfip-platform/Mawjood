@@ -1,11 +1,17 @@
 import '../lib/crash-guard';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect } from 'react';
 import { Platform, StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme, initTheme } from '../lib/theme';
 import { supabaseConfigError } from '../lib/supabase';
 import ErrorBoundary from '../components/ErrorBoundary';
+
+// Keep the native splash under our control. If a route/module stalls during
+// startup, the user must still reach a visible loading or configuration/error
+// screen instead of being trapped on the static splash image forever.
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /**
  * Web only: browsers draw their own focus ring on text inputs/textareas and
@@ -73,6 +79,12 @@ function useWebMeta() {
 // shows on screen instead of crashing the app.
 function InnerLayout() {
   const { resolved, palette: P } = useTheme();
+  useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      void SplashScreen.hideAsync().catch(() => {});
+    }, 4000);
+    return () => clearTimeout(safetyTimer);
+  }, []);
   useNoInputFocusRing();
   useWebMeta();
   const { width } = useWindowDimensions();
@@ -138,6 +150,11 @@ function ConfigErrorScreen({ reason }: { reason: string }) {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    // Hide as soon as the root commits; the 4s timer above is a final guard
+    // for a child route that takes longer than expected to mount.
+    void SplashScreen.hideAsync().catch(() => {});
+  }, []);
   return (
     <ErrorBoundary>
       {supabaseConfigError ? <ConfigErrorScreen reason={supabaseConfigError} /> : <InnerLayout />}
