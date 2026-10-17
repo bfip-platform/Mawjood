@@ -1997,7 +1997,9 @@ export default function HomeScreen() {
   // trial keep working and can be upgraded to permanent (same user id).
   const boot = useCallback(async () => {
     setLoading(true);
-    await initLanguage();
+    // AsyncStorage can stall during an iOS bridge hiccup; language preference
+    // is cosmetic and must never block first paint.
+    await withTimeout(initLanguage(), 2000);
     try {
       const v = await AsyncStorage.getItem(VOICE_REPLY_KEY);
       const on = v !== '0';
