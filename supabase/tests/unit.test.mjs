@@ -2824,7 +2824,7 @@ describe('CFP-01 D navigation — custom spaces open in the generic browse UI', 
 
   it('GUARD: entry point + demo re-open routing handle the custom view', () => {
     assert.ok(idx.includes('openCustomSpace(sp); }}'), 'profile My Spaces rows open the space');
-    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 2, 'both demo re-open sites route custom views');
+    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 3, 'two demo re-open sites plus the active custom-space tab route custom views');
     // the generic browse branch is type-keyed, so custom spaces reuse it:
     assert.ok(idx.includes("viewSpace?.type === 'family' ? ("), 'family-vs-generic branch stays type-keyed (custom falls into generic)');
   });
@@ -2932,5 +2932,26 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.ok(!idx.includes('height: secretComposerH') && !idx.includes('height: composerH'), 'no controlled heights remain');
     assert.equal((idx.match(/minHeight: 44/g) ?? []).length, 2, 'both inputs keep the one-line minimum');
     assert.ok(idx.includes("maxHeight: 120, textAlignVertical: 'top'"), 'vault input caps at 120 inline');
+  });
+});
+
+
+describe('mobile home navigation regressions', () => {
+  it('keeps the drawer above Home content in the render tree', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const drawer = idx.indexOf("      {/* ── side drawer menu ── */}");
+    const homeContent = idx.indexOf("      {view === 'chat' ? (");
+    assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
+  });
+
+  it('renders user-created spaces beside the built-in space tabs', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const tabs = idx.slice(
+      idx.indexOf("      {/* view tabs: chat home + spaces for browsing */}"),
+      idx.indexOf("      {/* anonymous trial account"),
+    );
+    assert.match(tabs, /customSpaces\.map/);
+    assert.match(tabs, /openCustomSpace\(sp\)/);
+    assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
   });
 });
