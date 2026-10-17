@@ -3012,3 +3012,27 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
   });
 });
+
+
+describe('first-run welcome hardening', () => {
+  it('keeps onboarding content keyboard-safe and scrollable', () => {
+    const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
+    assert.ok(welcome.includes('KeyboardAvoidingView'), 'welcome avoids the iOS keyboard');
+    assert.ok(welcome.includes('keyboardShouldPersistTaps="handled"'), 'welcome keeps controls tappable with the keyboard open');
+    assert.ok(welcome.includes('showsVerticalScrollIndicator={false}'), 'welcome content can scroll without visual clutter');
+  });
+
+  it('does not leave onboarding actions waiting forever', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(idx.includes('withTimeout(engine.saveVoiceNote'), 'voice save is bounded');
+    assert.ok(idx.includes('withTimeout(engine.saveTextNote'), 'text save is bounded');
+    assert.ok(idx.includes('withTimeout(engine.chat('), 'demo question is bounded');
+    assert.ok(idx.includes('const deadline = Date.now() + 30_000'), 'transcription polling is bounded');
+  });
+
+  it('recorder and onboarding callbacks recover from rejected promises', () => {
+    const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
+    assert.ok(welcome.includes("setMic('failed')"), 'recorder failures return to a retryable state');
+    assert.ok(welcome.includes('finally {'), 'save and ask states always clear');
+  });
+});
