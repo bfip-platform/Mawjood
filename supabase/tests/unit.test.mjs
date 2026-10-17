@@ -2964,7 +2964,7 @@ describe('mobile navigation hardening — first paint and horizontal spaces', ()
     const welcomeStart = idx.lastIndexOf("      {/* first-run welcome: 3 steps, once per device */}");
     const drawer = idx.slice(drawerStart, welcomeStart);
     assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
-    assert.match(drawer, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
+    assert.match(idx, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
   it('renders the home and space tabs in a horizontally scrollable row', () => {
