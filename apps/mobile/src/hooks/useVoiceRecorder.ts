@@ -7,6 +7,7 @@ import {
   getRecordingPermissionsAsync,
   IOSOutputFormat,
   requestRecordingPermissionsAsync,
+  setAudioModeAsync,
   type AudioPlayer,
   type AudioRecorder,
   type RecordingOptions,
@@ -114,22 +115,34 @@ export function useVoiceRecorder() {
 
   const start = useCallback(async (): Promise<boolean> => {
     if (isRecording) return true;
-    if (!permissionGranted) {
-      const res = await requestRecordingPermissionsAsync();
-      if (!res.granted) return false;
-      setPermissionGranted(true);
+    try {
+      if (!permissionGranted) {
+        const res = await requestRecordingPermissionsAsync();
+        if (!res.granted) return false;
+        setPermissionGranted(true);
+      }
+      // iOS: the audio session must be switched into a recordable
+      // category BEFORE preparing the recorder. Without this call,
+      // prepareToRecordAsync throws on iOS and the mic tap used to die
+      // silently (no catch, no feedback) — the call existed before the
+      // lazy-recorder rewrite (PR #51) and was lost in it.
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      const recorder = getRecorder();
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      durationRef.current = 0;
+      setDuration(0);
+      setIsRecording(true);
+      timer.current = setInterval(() => {
+        durationRef.current += 1;
+        setDuration(durationRef.current);
+      }, 1000);
+      return true;
+    } catch (e) {
+      // Never wedge or fail silently: the caller surfaces recordFail.
+      console.warn('recording start failed', e);
+      return false;
     }
-    const recorder = getRecorder();
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-    durationRef.current = 0;
-    setDuration(0);
-    setIsRecording(true);
-    timer.current = setInterval(() => {
-      durationRef.current += 1;
-      setDuration(durationRef.current);
-    }, 1000);
-    return true;
   }, [isRecording, permissionGranted, getRecorder]);
 
   const stop = useCallback(async (): Promise<RecordedAudio | null> => {
@@ -145,6 +158,9 @@ export function useVoiceRecorder() {
     }
     await recorder.stop();
     setIsRecording(false);
+    // hand the audio session back to playback so voice replies and TTS
+    // play normally (and through the speaker with the ringer silent)
+    void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
     const uri = recorder.uri;
     if (!uri) return null;
     return {

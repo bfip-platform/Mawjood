@@ -42,6 +42,7 @@ import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
 import { parseDeepLink } from '../lib/deeplinks';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
+import { withTimeout } from '../lib/withTimeout';
 import { useTheme } from '../lib/theme';
 import { SearchBar } from '../lib/SearchBar';
 import { SwipeRow } from '../lib/SwipeRow';
@@ -248,10 +249,14 @@ export default function HomeScreen() {
     AsyncStorage.setItem(WELCOME_KEY, '1').catch(() => {});
   }, []);
   const [textNote, setTextNote] = useState('');
-  /** chat composer auto-grow height: follows content size, clamped 44–148 (~6 lines; beyond that the input scrolls internally) */
-  const [composerH, setComposerH] = useState(44);
-  /** vault composer auto-grow (CFP-01 item 8 parity with the main composer) */
-  const [secretComposerH, setSecretComposerH] = useState(44);
+  // Composer growth is NATIVE auto-sizing: a multiline TextInput with no
+  // explicit height grows itself between the style's minHeight (44, one
+  // line) and maxHeight (148 ≈ 6 lines on the shared composerInput style;
+  // the vault input caps itself at 120 inline), then scrolls internally.
+  // The previous pattern — JS state fed by onContentSizeChange driving an
+  // explicit height — could pin the input at one line on iOS, where
+  // content-size events are unreliable once the frame height is
+  // controlled (the "input does not expand" report).
 
   /** empty-state example chip → fill the chat input and jump to Home */
   const tryExample = useCallback((example: string) => {
@@ -1418,8 +1423,18 @@ export default function HomeScreen() {
   // ── side menu open/close (slides from the left) ──
   const closeMenu = useCallback(() => {
     setHistVisible(5); // collapse the history list back to 5 next open
+    // The drawer backdrop is a full-screen Pressable: menuOpen must ALWAYS
+    // clear, even if the animation's completion callback is lost (an
+    // interrupted JS-driven animation used to be able to strand an
+    // invisible full-screen touch layer over the whole app — the
+    // "hamburger sometimes does nothing" report). The animation still
+    // closes it in the normal case; the timer is the guarantee.
+    const fallback = setTimeout(() => setMenuOpen(false), 280);
     Animated.timing(menuX, { toValue: -320, duration: 200, useNativeDriver: false }).start(
-      () => setMenuOpen(false),
+      () => {
+        clearTimeout(fallback);
+        setMenuOpen(false);
+      },
     );
   }, [menuX]);
 
@@ -1986,8 +2001,13 @@ export default function HomeScreen() {
       /* keep default (on) */
     }
     try {
-      const { data } = await supabase.auth.getSession();
-      const session = data.session;
+      // Bounded: getSession() may need a network token refresh, and a
+      // stalled connection must never hold the loading screen forever
+      // ("freezes on startup, sometimes"). On timeout we fall through to
+      // the signed-out screen; the stored session is untouched and a
+      // later SIGNED_IN event re-runs boot.
+      const sessRes = await withTimeout(supabase.auth.getSession(), 12000);
+      const session = sessRes?.data.session ?? null;
       if (!session) {
         setAuthState('signed-out');
         return;
@@ -2018,7 +2038,14 @@ export default function HomeScreen() {
       // authState never advanced). loadSpaces never throws — it reports
       // failure via the retryable boot-error banner.
       setAuthState('signed-in');
-      await loadSpaces(user.id);
+      // Bounded for the same reason: a stalled spaces fetch must not
+      // hold first paint. On timeout we land on the retryable boot-error
+      // state; if the abandoned load later completes it self-heals.
+      const spacesOk = await withTimeout(loadSpaces(user.id), 12000);
+      if (spacesOk === null) {
+        setSpaces([]);
+        setBootError(true);
+      }
       // 📥 replay queued offline creates from a previous session
       void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
       // custom-tab free-tier cap (future paid plans raise it)
@@ -2067,16 +2094,20 @@ export default function HomeScreen() {
         .then((v) => { if (v) setActiveFamilyId(v); })
         .catch(() => {});
       // chat history: retention tier (future paid plans), draft restore, history list
-      try {
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('chat_retention_days')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (prof?.chat_retention_days) retentionDaysRef.current = prof.chat_retention_days;
-      } catch {
-        /* keep default 7 */
-      }
+      // Fire-and-forget: the retention value only feeds a ref used later;
+      // it must not sit on the first-paint path.
+      void (async () => {
+        try {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('chat_retention_days')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (prof?.chat_retention_days) retentionDaysRef.current = prof.chat_retention_days;
+        } catch {
+          /* keep default 7 */
+        }
+      })();
       // Phase E P2-3: sync device timezone → profiles.timezone (fire-and-forget)
       engine.syncDeviceTimezone().catch(() => {});
       try {
@@ -2089,7 +2120,8 @@ export default function HomeScreen() {
           };
           if (Date.now() - d.updatedAt > HISTORY_IDLE_MS) {
             // stale draft (app was killed long ago) → archive it silently
-            if (d.messages?.length > 0) await persistSession(d.sessionId, d.messages, user.id);
+            // (background: a network write must not gate first paint)
+            if (d.messages?.length > 0) void persistSession(d.sessionId, d.messages, user.id);
             await clearDraft();
           } else if (d.messages?.length > 0) {
             sessionIdRef.current = d.sessionId;
@@ -3179,7 +3211,8 @@ export default function HomeScreen() {
         setSaving(false);
       }
     } else {
-      await start();
+      const ok = await start();
+      if (!ok) pushMsg('app', t('recordFail'));
     }
   }, [isRecording, stop, start, userId, spaceIdByType, pollChatNote, pushMsg, updateMsg, chatPhotoUri]);
 
@@ -3239,7 +3272,6 @@ export default function HomeScreen() {
     // target — never saved as a note, never sent anywhere (see tryGhostIntercept)
     if (await tryGhostIntercept(clean)) {
       setTextNote('');
-      setComposerH(36);
       return;
     }
     voiceModeRef.current = false; // text in → text out (no voice reply)
@@ -3248,7 +3280,6 @@ export default function HomeScreen() {
     setChatPhotoUri(null);
     const userMsgId = pushMsg('user', clean, { photo: photoUri });
     setTextNote('');
-    setComposerH(36);
     // "ضيّعت الريموت" → detective (no photo: with a photo the normal flow
     // keeps it — a photo of the lost item must never be silently dropped)
     if (!photoUri && (await maybeDetective(clean))) return;
@@ -5126,12 +5157,7 @@ export default function HomeScreen() {
                   onChangeText={setTextNote}
                   placeholder={t('chatPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { height: composerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
-                  onContentSizeChange={(e) =>
-                    setComposerH(
-                      Math.max(44, Math.min(148, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
-                    )
-                  }
+                  style={[styles.composerInput, { textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
                   multiline
                   maxLength={2000}
                 />
@@ -5850,12 +5876,7 @@ export default function HomeScreen() {
                   onChangeText={setSecretDraft}
                   placeholder={t('secretAddPlaceholder')}
                   placeholderTextColor={P.faint}
-                  style={[styles.composerInput, { height: secretComposerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
-                  onContentSizeChange={(e) =>
-                    setSecretComposerH(
-                      Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
-                    )
-                  }
+                  style={[styles.composerInput, { textAlign: ta(), minHeight: 44, maxHeight: 120, textAlignVertical: 'top' }]}
                   multiline
                   maxLength={2000}
                 />
