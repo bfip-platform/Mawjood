@@ -2934,3 +2934,24 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.ok(idx.includes("maxHeight: 120, textAlignVertical: 'top'"), 'vault input caps at 120 inline');
   });
 });
+
+
+describe('mobile home navigation regressions', () => {
+  it('keeps the drawer above Home content in the render tree', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const drawer = idx.indexOf("      {/* ── side drawer menu ── */}");
+    const homeContent = idx.indexOf("      {view === 'chat' ? (");
+    assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
+  });
+
+  it('renders user-created spaces beside the built-in space tabs', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const tabs = idx.slice(
+      idx.indexOf("      {/* view tabs: chat home + spaces for browsing */}"),
+      idx.indexOf("      {/* anonymous trial account"),
+    );
+    assert.match(tabs, /customSpaces\.map/);
+    assert.match(tabs, /openCustomSpace\(sp\)/);
+    assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
+  });
+});
