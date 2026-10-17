@@ -3343,11 +3343,12 @@ export default function HomeScreen() {
     const spaceId = spaceIdByType('private');
     if (!audio || !spaceId || !userId) return null;
     try {
-      const note = await engine.saveVoiceNote(spaceId, audio, userId, null);
-      const deadline = Date.now() + 90_000;
+      const note = await withTimeout(engine.saveVoiceNote(spaceId, audio, userId, null), 15_000);
+      if (!note) return null;
+      const deadline = Date.now() + 30_000;
       for (;;) {
-        await new Promise((r) => setTimeout(r, 2500));
-        const n = await engine.getNote(note.id).catch(() => null);
+        await new Promise((r) => setTimeout(r, 1500));
+        const n = await withTimeout(engine.getNote(note.id), 10_000).catch(() => null);
         if (n && (n.status === 'ready' || n.status === 'failed')) {
           const tr = n.status === 'ready' ? n.transcript?.trim() || null : null;
           // ghost words never survive onboarding either — same rule as chat
@@ -3369,7 +3370,8 @@ export default function HomeScreen() {
       if (!clean || !spaceId || !userId) return null;
       if (await tryGhostIntercept(clean)) return null;
       try {
-        await engine.saveTextNote(spaceId, clean, userId, null);
+        const saved = await withTimeout(engine.saveTextNote(spaceId, clean, userId, null), 15_000);
+        if (saved === null) return null;
         return clean;
       } catch (e) {
         console.warn('demoSaveText failed', e);
@@ -3388,15 +3390,16 @@ export default function HomeScreen() {
       pushMsg('user', clean);
       const thinkId = pushMsg('app', '…', { pending: true });
       try {
-        const mems = await getMemories();
-        const r = await engine.chat(
+        const mems = await withTimeout(getMemories(), 12_000);
+        if (!mems) return null;
+        const r = await withTimeout(engine.chat(
           clean,
           chatHistory(),
           undefined,
           null,
           getLang(),
           mems.map((m) => m.label),
-        );
+        ), 30_000);
         if (r?.answer) {
           updateMsg(thinkId, { text: r.answer, pending: false, proposal: r.proposal ?? null });
           speak(r.answer);

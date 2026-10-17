@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  ScrollView,
   Pressable,
   StyleSheet,
   Text,
@@ -65,22 +68,28 @@ export function WelcomeScreen({
   const [askFailed, setAskFailed] = useState(false);
 
   const onMicPress = async () => {
-    if (mic === 'idle' || mic === 'failed') {
-      setMic('waiting');
-      setWriteMode(false);
-      const ok = await onStartRecord();
-      // mic denied / unavailable → fall back to typing
-      setMic(ok ? 'recording' : 'failed');
-    } else if (mic === 'recording') {
-      setMic('transcribing');
-      const tr = await onStopRecord();
-      if (tr) {
-        setTranscript(tr);
-        setMic('done');
-        setTimeout(() => setStep('ask'), 1600);
-      } else {
-        setMic('failed');
+    try {
+      if (mic === 'idle' || mic === 'failed') {
+        setMic('waiting');
+        setWriteMode(false);
+        const ok = await onStartRecord();
+        // mic denied / unavailable → fall back to typing
+        setMic(ok ? 'recording' : 'failed');
+      } else if (mic === 'recording') {
+        setMic('transcribing');
+        const tr = await onStopRecord();
+        if (tr) {
+          setTranscript(tr);
+          setMic('done');
+          setTimeout(() => setStep('ask'), 1600);
+        } else {
+          setMic('failed');
+        }
       }
+    } catch {
+      // A rejected permission/recorder promise must never strand the screen
+      // in the disabled waiting/transcribing state.
+      setMic('failed');
     }
   };
 
@@ -88,12 +97,17 @@ export function WelcomeScreen({
     const clean = typed.trim();
     if (!clean || saving) return;
     setSaving(true);
-    const tr = await onSaveTextDemo(clean);
-    setSaving(false);
-    if (tr) {
-      setTranscript(tr);
-      setMic('done');
-      setTimeout(() => setStep('ask'), 1200);
+    try {
+      const tr = await onSaveTextDemo(clean);
+      if (tr) {
+        setTranscript(tr);
+        setMic('done');
+        setTimeout(() => setStep('ask'), 1200);
+      }
+    } catch {
+      setMic('failed');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -103,10 +117,15 @@ export function WelcomeScreen({
     setAsking(true);
     setAskFailed(false);
     setAnswer(null);
-    const a = await onAskDemo(clean);
-    setAsking(false);
-    if (a) setAnswer(a);
-    else setAskFailed(true);
+    try {
+      const a = await onAskDemo(clean);
+      if (a) setAnswer(a);
+      else setAskFailed(true);
+    } catch {
+      setAskFailed(true);
+    } finally {
+      setAsking(false);
+    }
   };
 
   const showMilkChip = /حليب|milk/i.test(transcript);
@@ -120,8 +139,17 @@ export function WelcomeScreen({
           </Pressable>
         </View>
 
+        <KeyboardAvoidingView
+          style={styles.kav}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <ScrollView
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
         {step === 'intro' && (
-          <View style={styles.body}>
+          <View style={styles.stepBody}>
             <Text style={styles.icon}>✨</Text>
             <Text style={[styles.title, { color: P.ink }]}>{t('obIntroTitle')}</Text>
             <Text style={[styles.sub, { color: P.text2 }]}>{t('obIntroBody')}</Text>
@@ -133,7 +161,7 @@ export function WelcomeScreen({
         )}
 
         {step === 'speak' && (
-          <View style={styles.body}>
+          <View style={styles.stepBody}>
             <Text style={[styles.title, { color: P.ink }]}>{t('obSayTitle')}</Text>
 
             {!writeMode ? (
@@ -224,7 +252,7 @@ export function WelcomeScreen({
         )}
 
         {step === 'ask' && (
-          <View style={styles.body}>
+          <View style={styles.stepBody}>
             <Text style={[styles.title, { color: P.ink }]}>{t('obAskTitle')}</Text>
             {!!transcript && (
               <Text style={[styles.hint, { color: P.faint, textAlign: alignFor(transcript) }]} numberOfLines={2}>
@@ -311,6 +339,8 @@ export function WelcomeScreen({
             )}
           </View>
         )}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
@@ -326,11 +356,18 @@ const styles = StyleSheet.create({
   },
   skipBtn: { padding: SPACE.sm, minWidth: 64, alignItems: 'center' },
   skipText: { fontSize: TYPO.sub.size, fontWeight: '600' },
+  kav: { flex: 1 },
   body: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: SPACE.xxl,
+    gap: SPACE.lg,
+  },
+  stepBody: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
     gap: SPACE.lg,
   },
   icon: { fontSize: 76 },
