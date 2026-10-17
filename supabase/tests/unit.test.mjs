@@ -3006,7 +3006,8 @@ describe('mobile drawer modal sequencing', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
-    assert.match(close, /setTimeout\(after, 60\)/);
+    assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
+    assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
     assert.match(close, /useNativeDriver: true/);
     assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
