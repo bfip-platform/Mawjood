@@ -2955,3 +2955,27 @@ describe('mobile home navigation regressions', () => {
     assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
   });
 });
+
+
+describe('mobile navigation hardening — first paint and horizontal spaces', () => {
+  it('uses a native modal for the drawer and defers history refresh', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const drawer = idx.slice(
+      idx.indexOf("side drawer menu: native modal"),
+      idx.indexOf("first-run welcome"),
+    );
+    assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
+    assert.match(drawer, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
+  });
+
+  it('renders the home and space tabs in a horizontally scrollable row', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const tabs = idx.slice(
+      idx.indexOf("view tabs: chat home + spaces for browsing"),
+      idx.indexOf("anonymous trial account"),
+    );
+    assert.match(tabs, /<ScrollView[\s\S]*horizontal/);
+    assert.match(tabs, /showsHorizontalScrollIndicator={false}/);
+    assert.match(tabs, /customSpaces\.map/);
+  });
+});
