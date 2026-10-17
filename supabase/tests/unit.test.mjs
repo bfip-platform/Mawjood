@@ -2915,7 +2915,8 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
   });
   it('drawer close always unmounts the full-screen backdrop (animation callback + timer guarantee)', () => {
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
-    assert.ok(cm.includes('setTimeout(() => setMenuOpen(false), 280)'), 'a lost animation callback can no longer strand the backdrop');
+    assert.ok(cm.includes('fallback = setTimeout(finish, 320)'), 'a lost animation callback can no longer strand the backdrop');
+    assert.ok(cm.includes('setMenuOpen(false)'), 'the fallback still unmounts the backdrop');
     assert.ok(cm.includes('clearTimeout(fallback)'), 'the normal animation path disarms the fallback');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
