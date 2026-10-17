@@ -2938,9 +2938,9 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
 
 
 describe('mobile home navigation regressions', () => {
-  it('keeps the drawer above Home content in the render tree', () => {
+  it('keeps the drawer overlay above Home content in the render tree', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawer = idx.indexOf("side drawer menu: native modal");
+    const drawer = idx.indexOf("side drawer menu: in-tree overlay");
     const homeContent = idx.indexOf("      {view === 'chat' ? (");
     assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
   });
@@ -2959,12 +2959,13 @@ describe('mobile home navigation regressions', () => {
 
 
 describe('mobile navigation hardening — first paint and horizontal spaces', () => {
-  it('uses a native modal for the drawer and defers history refresh', () => {
+  it('uses an in-tree overlay for the drawer and defers history refresh', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawerStart = idx.indexOf("side drawer menu: native modal");
+    const drawerStart = idx.indexOf("side drawer menu: in-tree overlay");
     const welcomeStart = idx.lastIndexOf("      {/* first-run welcome: 3 steps, once per device */}");
     const drawer = idx.slice(drawerStart, welcomeStart);
-    assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
+    assert.match(drawer, /\{menuOpen \? \(/, 'drawer is rendered in the app tree');
+    assert.doesNotMatch(drawer, /<Modal visible=\{menuOpen\}/, 'drawer does not use a native Modal presenter');
     assert.match(idx, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
@@ -3002,11 +3003,11 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(open, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
-  it('closes the native drawer before presenting another native surface', () => {
+  it('removes the in-tree drawer before presenting another native surface', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
-    assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
+    assert.match(close, /menuAfterDismissRef/, 'queued actions survive overlay removal');
     assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
     assert.match(close, /useNativeDriver: true/);
     assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
@@ -3042,8 +3043,9 @@ describe('first-run welcome hardening', () => {
 describe('drawer native modal dismissal sequencing', () => {
   it('waits for drawer onDismiss before presenting a queued profile modal', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.match(idx, /onDismiss=\{handleMenuDismiss\}/, 'drawer listens for native dismissal');
-    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
+    assert.match(idx, /\{menuOpen \? \(/, 'drawer is conditionally mounted');
+    assert.doesNotMatch(idx, /<Modal visible=\{menuOpen\}/, 'drawer has no native presenter');
+    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across removal');
     assert.match(idx, /setTimeout\(handleMenuDismiss, 450\)/, 'drawer has a bounded fallback');
   });
 });
