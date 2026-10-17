@@ -2991,3 +2991,23 @@ describe('mobile navigation hardening — header hit target', () => {
     assert.ok(idx.includes('hitSlop={12}'), 'hamburger keeps the enlarged touch target');
   });
 });
+
+
+describe('mobile drawer modal sequencing', () => {
+  it('defers history work and uses the native animation driver when opening', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const open = idx.slice(idx.indexOf('const openMenu'), idx.indexOf('const openMenu') + 800);
+    assert.match(open, /useNativeDriver: true/);
+    assert.match(open, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
+  });
+
+  it('closes the native drawer before presenting another native surface', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
+    assert.match(close, /after\?: \(\) => void/);
+    assert.match(close, /setTimeout\(after, 60\)/);
+    assert.match(close, /useNativeDriver: true/);
+    assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
+    assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
+  });
+});
