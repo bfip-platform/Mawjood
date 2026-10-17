@@ -2824,7 +2824,7 @@ describe('CFP-01 D navigation — custom spaces open in the generic browse UI', 
 
   it('GUARD: entry point + demo re-open routing handle the custom view', () => {
     assert.ok(idx.includes('openCustomSpace(sp); }}'), 'profile My Spaces rows open the space');
-    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 2, 'both demo re-open sites route custom views');
+    assert.equal((idx.match(/view === 'custom'/g) ?? []).length, 3, 'two demo re-open sites plus the active custom-space tab route custom views');
     // the generic browse branch is type-keyed, so custom spaces reuse it:
     assert.ok(idx.includes("viewSpace?.type === 'family' ? ("), 'family-vs-generic branch stays type-keyed (custom falls into generic)');
   });
