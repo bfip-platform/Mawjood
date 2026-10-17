@@ -1422,21 +1422,24 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close (slides from the left) ──
-  const closeMenu = useCallback(() => {
+  const closeMenu = useCallback((after?: () => void) => {
     setHistVisible(5); // collapse the history list back to 5 next open
-    // The drawer backdrop is a full-screen Pressable: menuOpen must ALWAYS
-    // clear, even if the animation's completion callback is lost (an
-    // interrupted JS-driven animation used to be able to strand an
-    // invisible full-screen touch layer over the whole app — the
-    // "hamburger sometimes does nothing" report). The animation still
-    // closes it in the normal case; the timer is the guarantee.
-    const fallback = setTimeout(() => setMenuOpen(false), 280);
-    Animated.timing(menuX, { toValue: -320, duration: 200, useNativeDriver: false }).start(
-      () => {
-        clearTimeout(fallback);
-        setMenuOpen(false);
-      },
-    );
+    // A drawer item may open another native Modal (Profile, Families, About,
+    // etc.). Do not present it while this Modal is still mounted: iOS can
+    // leave both presenters stuck, which looks like the whole app froze.
+    // The completion callback is guarded and the timer is the recovery path
+    // if an animation callback is lost.
+    let finished = false;
+    let fallback: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(fallback);
+      setMenuOpen(false);
+      if (after) setTimeout(after, 60);
+    };
+    fallback = setTimeout(finish, 320);
+    Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
   }, [menuX]);
 
   // ── chat history (ChatGPT-style) ──
@@ -1524,8 +1527,10 @@ export default function HomeScreen() {
   const openMenu = useCallback(() => {
     setMenuOpen(true);
     menuX.setValue(-320);
-    Animated.timing(menuX, { toValue: 0, duration: 220, useNativeDriver: false }).start();
-    void loadHistory();
+    Animated.timing(menuX, { toValue: 0, duration: 220, useNativeDriver: true }).start();
+    // Let the native Modal mount and receive the first tap before doing any
+    // Supabase work for chat history.
+    setTimeout(() => { void loadHistory(); }, 0);
   }, [menuX, loadHistory]);
 
   /** archive the current chat and start a fresh one */
@@ -6469,9 +6474,9 @@ export default function HomeScreen() {
         </SafeAreaView>
       </Modal>
       {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={closeMenu}>
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()}>
         <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+          <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
@@ -6505,8 +6510,7 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                setProfileOpen(true);
+                closeMenu(() => setProfileOpen(true));
               }}
             >
               <Text style={styles.menuItemIcon}>👤</Text>
@@ -6516,7 +6520,7 @@ export default function HomeScreen() {
             {drawerIsManager && (
               <Pressable
                 style={styles.menuItem}
-                onPress={() => openInviteFor(drawerFamSpace?.id ?? null)}
+                onPress={() => closeMenu(() => openInviteFor(drawerFamSpace?.id ?? null))}
               >
                 <Text style={styles.menuItemIcon}>✉️</Text>
                 <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuInvite')}</Text>
@@ -6527,10 +6531,11 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                setFamMsg(null);
-                setFamConfirm(null);
-                setFamsOpen(true);
+                closeMenu(() => {
+                  setFamMsg(null);
+                  setFamConfirm(null);
+                  setFamsOpen(true);
+                });
               }}
             >
               <Text style={styles.menuItemIcon}>👨‍👩‍👧</Text>
@@ -6549,8 +6554,7 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                setLanguage(lang === 'ar' ? 'en' : 'ar');
+                closeMenu(() => setLanguage(lang === 'ar' ? 'en' : 'ar'));
               }}
             >
               <Text style={styles.menuItemIcon}>🌐</Text>
@@ -6561,8 +6565,7 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                cycleTheme();
+                closeMenu(cycleTheme);
               }}
             >
               <Text style={styles.menuItemIcon}>{themeMode === 'light' ? '☀️' : themeMode === 'dark' ? '🌙' : '🌓'}</Text>
@@ -6573,8 +6576,7 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                setVoiceReply(!voiceReplyOn);
+                closeMenu(() => setVoiceReply(!voiceReplyOn));
               }}
             >
               <Text style={styles.menuItemIcon}>{voiceReplyOn ? '🔊' : '🔇'}</Text>
@@ -6585,8 +6587,7 @@ export default function HomeScreen() {
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu();
-                setAboutOpen(true);
+                closeMenu(() => setAboutOpen(true));
               }}
             >
               <Text style={styles.menuItemIcon}>ℹ️</Text>
@@ -6596,7 +6597,7 @@ export default function HomeScreen() {
             {/* ── P2-4: privacy — export / delete ── */}
             <Pressable
               style={styles.menuItem}
-              onPress={doExportData}
+              onPress={() => closeMenu(() => void doExportData())}
               disabled={privacyBusy}
             >
               <Text style={styles.menuItemIcon}>📥</Text>
@@ -6607,7 +6608,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={doDeleteAccount}
+              onPress={() => closeMenu(() => void doDeleteAccount())}
             >
               <Text style={styles.menuItemIcon}>🗑️</Text>
               <Text style={[styles.menuItemText, { textAlign: ta(), color: '#d33' }]}>
@@ -6662,8 +6663,9 @@ export default function HomeScreen() {
               <Pressable
                 style={styles.menuItem}
                 onPress={() => {
-                  closeMenu();
-                  void openTrash(false);
+                  closeMenu(() => {
+                    void openTrash(false);
+                  });
                 }}
               >
                 <Text style={styles.menuItemIcon}>🗑️</Text>
@@ -6675,8 +6677,7 @@ export default function HomeScreen() {
               <Pressable
                 style={[styles.menuItem, styles.menuLogout]}
                 onPress={() => {
-                  closeMenu();
-                  doSignOut();
+                  closeMenu(doSignOut);
                 }}
               >
                 <Text style={styles.menuItemIcon}>🚪</Text>
