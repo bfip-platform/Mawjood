@@ -12,6 +12,11 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    // Keep the header above the Home FlatList on the first layout so the
+    // hamburger remains touchable before navigation causes a re-layout.
+    position: 'relative',
+    zIndex: 100,
+    elevation: 10,
   },
   title: { fontSize: 26, fontWeight: '800', color: P.ink },
   subtitle: { fontSize: 14, color: P.muted, marginTop: 2 },
@@ -22,6 +27,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     backgroundColor: P.surface2,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 101,
+    elevation: 4,
   },
   iconBtnText: { fontSize: 20 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },

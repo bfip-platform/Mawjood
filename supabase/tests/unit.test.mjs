@@ -2978,3 +2978,16 @@ describe('mobile navigation hardening — first paint and horizontal spaces', ()
     assert.match(tabs, /customSpaces\.map/);
   });
 });
+
+
+describe('mobile navigation hardening — header hit target', () => {
+  it('keeps the Home header above the content touch surface', () => {
+    const styles = readFileSync(new URL('../../apps/mobile/src/screens/home/styles.ts', import.meta.url), 'utf8');
+    const header = styles.slice(styles.indexOf('header:'), styles.indexOf('title:'));
+    assert.match(header, /zIndex: 100/);
+    assert.match(header, /elevation: 10/);
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.ok(idx.includes('onPress={openMenu}'), 'hamburger keeps its open handler');
+    assert.ok(idx.includes('hitSlop={12}'), 'hamburger keeps the enlarged touch target');
+  });
+});
