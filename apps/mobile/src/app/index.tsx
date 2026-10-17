@@ -3391,7 +3391,10 @@ export default function HomeScreen() {
       const thinkId = pushMsg('app', '…', { pending: true });
       try {
         const mems = await withTimeout(getMemories(), 12_000);
-        if (!mems) return null;
+        if (!mems) {
+          removeMsg(thinkId);
+          return null;
+        }
         const r = await withTimeout(engine.chat(
           clean,
           chatHistory(),
@@ -3400,7 +3403,11 @@ export default function HomeScreen() {
           getLang(),
           mems.map((m) => m.label),
         ), 30_000);
-        if (r?.answer) {
+        if (!r) {
+          removeMsg(thinkId);
+          return null;
+        }
+        if (r.answer) {
           updateMsg(thinkId, { text: r.answer, pending: false, proposal: r.proposal ?? null });
           speak(r.answer);
           return r.answer;
