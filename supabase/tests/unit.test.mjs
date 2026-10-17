@@ -3036,3 +3036,13 @@ describe('first-run welcome hardening', () => {
     assert.ok(welcome.includes('finally {'), 'save and ask states always clear');
   });
 });
+
+
+describe('drawer native modal dismissal sequencing', () => {
+  it('waits for drawer onDismiss before presenting a queued profile modal', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.match(idx, /onDismiss=\{handleMenuDismiss\}/, 'drawer listens for native dismissal');
+    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
+    assert.match(idx, /setTimeout\(handleMenuDismiss, 450\)/, 'drawer has a bounded fallback');
+  });
+});
