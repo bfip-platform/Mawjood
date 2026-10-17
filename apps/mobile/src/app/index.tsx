@@ -1422,10 +1422,9 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close (slides from the left) ──
-  // iOS can keep a native Modal presenter alive briefly after visible=false.
-  // Queue drawer actions behind onDismiss instead of guessing with a fixed
-  // delay; this prevents Profile from being presented over the Home drawer
-  // on the first open.
+  // Keep drawer actions queued until the in-tree overlay is fully removed.
+  // This avoids presenting Profile/About in the same render pass as the
+  // drawer, which can wedge iOS when Home is the first screen.
   const menuAfterDismissRef = useRef<(() => void) | null>(null);
   const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleMenuDismiss = useCallback(() => {
@@ -1447,8 +1446,8 @@ export default function HomeScreen() {
       finished = true;
       clearTimeout(fallback);
       setMenuOpen(false);
-      // Native Modal.onDismiss is authoritative on iOS. Keep a bounded
-      // fallback for platforms/builds that do not emit it.
+      // The overlay is unmounted from the same React tree. Keep a bounded
+      // handoff so queued native surfaces never share a render pass.
       if (after) {
         menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
       }
@@ -6500,8 +6499,8 @@ export default function HomeScreen() {
           )}
         </SafeAreaView>
       </Modal>
-      {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()} onDismiss={handleMenuDismiss}>
+      {/* ── side drawer menu: in-tree overlay avoids iOS native presenter freezes on Home ── */}
+      {menuOpen ? (
         <View style={styles.menuOverlay}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
@@ -6714,7 +6713,8 @@ export default function HomeScreen() {
             </ScrollView>
           </Animated.View>
         </View>
-      </Modal>
+      </View>
+      ) : null}
 
       {/* first-run welcome: 3 steps, once per device */}
       <WelcomeScreen
