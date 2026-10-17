@@ -1236,7 +1236,8 @@ export default function HomeScreen() {
       void refreshFamily(viewSpace.id);
       void refreshThings(viewSpace.id);
     }
-    void loadHistory();
+    // Open the drawer first; history refresh must never compete with the initial tap.
+    setTimeout(() => { void loadHistory(); }, 0);
     refreshSecretNotes();
   }, [viewSpace, notesPage, tasksPage, upcomingPage, refreshTabs, refreshFamily, refreshThings, refreshSecretNotes, loadHistory]);
 
@@ -4452,7 +4453,12 @@ export default function HomeScreen() {
       )}
 
       {/* view tabs: chat home + spaces for browsing */}
-      <View style={styles.tabs}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBar}
+        contentContainerStyle={styles.tabBarInner}
+      >
         <Pressable
           onPress={() => setView('chat')}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
@@ -4496,7 +4502,7 @@ export default function HomeScreen() {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {/* anonymous trial account → link an email to keep the data */}
       {isAnonymous && !upgradeSent && (
@@ -6456,8 +6462,8 @@ export default function HomeScreen() {
           )}
         </SafeAreaView>
       </Modal>
-      {/* ── side drawer menu ── */}
-      {menuOpen && (
+      {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={closeMenu}>
         <View style={styles.menuOverlay}>
           <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
@@ -6674,9 +6680,7 @@ export default function HomeScreen() {
             </ScrollView>
           </Animated.View>
         </View>
-      )}
-
-
+      </Modal>
 
       {/* first-run welcome: 3 steps, once per device */}
       <WelcomeScreen
