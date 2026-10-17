@@ -3006,7 +3006,8 @@ describe('mobile drawer modal sequencing', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
-    assert.match(close, /setTimeout\(after, 60\)/);
+    assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
+    assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
     assert.match(close, /useNativeDriver: true/);
     assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
@@ -3034,5 +3035,15 @@ describe('first-run welcome hardening', () => {
     const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
     assert.ok(welcome.includes("setMic('failed')"), 'recorder failures return to a retryable state');
     assert.ok(welcome.includes('finally {'), 'save and ask states always clear');
+  });
+});
+
+
+describe('drawer native modal dismissal sequencing', () => {
+  it('waits for drawer onDismiss before presenting a queued profile modal', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.match(idx, /onDismiss=\{handleMenuDismiss\}/, 'drawer listens for native dismissal');
+    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
+    assert.match(idx, /setTimeout\(handleMenuDismiss, 450\)/, 'drawer has a bounded fallback');
   });
 });

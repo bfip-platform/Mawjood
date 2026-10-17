@@ -1422,13 +1422,24 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close (slides from the left) ──
+  // iOS can keep a native Modal presenter alive briefly after visible=false.
+  // Queue drawer actions behind onDismiss instead of guessing with a fixed
+  // delay; this prevents Profile from being presented over the Home drawer
+  // on the first open.
+  const menuAfterDismissRef = useRef<(() => void) | null>(null);
+  const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMenuDismiss = useCallback(() => {
+    if (menuDismissFallbackRef.current) {
+      clearTimeout(menuDismissFallbackRef.current);
+      menuDismissFallbackRef.current = null;
+    }
+    const next = menuAfterDismissRef.current;
+    menuAfterDismissRef.current = null;
+    if (next) setTimeout(next, 80);
+  }, []);
   const closeMenu = useCallback((after?: () => void) => {
     setHistVisible(5); // collapse the history list back to 5 next open
-    // A drawer item may open another native Modal (Profile, Families, About,
-    // etc.). Do not present it while this Modal is still mounted: iOS can
-    // leave both presenters stuck, which looks like the whole app froze.
-    // The completion callback is guarded and the timer is the recovery path
-    // if an animation callback is lost.
+    menuAfterDismissRef.current = after ?? null;
     let finished = false;
     let fallback: ReturnType<typeof setTimeout>;
     const finish = () => {
@@ -1436,11 +1447,15 @@ export default function HomeScreen() {
       finished = true;
       clearTimeout(fallback);
       setMenuOpen(false);
-      if (after) setTimeout(after, 60);
+      // Native Modal.onDismiss is authoritative on iOS. Keep a bounded
+      // fallback for platforms/builds that do not emit it.
+      if (after) {
+        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
+      }
     };
     fallback = setTimeout(finish, 320);
     Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
-  }, [menuX]);
+  }, [menuX, handleMenuDismiss]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
@@ -6486,7 +6501,7 @@ export default function HomeScreen() {
         </SafeAreaView>
       </Modal>
       {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()}>
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()} onDismiss={handleMenuDismiss}>
         <View style={styles.menuOverlay}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
