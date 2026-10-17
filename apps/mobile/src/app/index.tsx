@@ -4478,6 +4478,24 @@ export default function HomeScreen() {
             </Text>
           </Pressable>
         ))}
+
+        {customSpaces.map((sp) => {
+          const active = view === 'custom' && viewSpace?.id === sp.id;
+          return (
+            <Pressable
+              key={`custom-${sp.id}`}
+              onPress={() => openCustomSpace(sp)}
+              style={[styles.tab, active && styles.tabActive]}
+              testID={`tab-custom-${sp.id}`}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
+                🗂️ {sp.name}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* anonymous trial account → link an email to keep the data */}
@@ -4539,226 +4557,6 @@ export default function HomeScreen() {
               <Text style={styles.ghostBtnText}>{t('maintDismiss')}</Text>
             </Pressable>
           </View>
-        </View>
-      )}
-
-      {/* ── side drawer menu ── */}
-      {menuOpen && (
-        <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
-          <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
-            <View style={styles.menuProfile}>
-              <View style={styles.menuAvatar}>
-                <Text style={styles.menuAvatarText}>
-                  {(displayName?.[0] ?? userEmail?.[0] ?? '؟').toUpperCase()}
-                </Text>
-              </View>
-              <View style={styles.menuProfileInfo}>
-                <Text style={[styles.menuEmail, { textAlign: ta() }]} numberOfLines={1}>
-                  {displayName ?? userEmail ?? t('trialAccount')}
-                </Text>
-                {displayName && userEmail ? (
-                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
-                    {userEmail}
-                  </Text>
-                ) : null}
-                <Text style={[styles.menuBadge, { textAlign: ta() }]}>
-                  {isAnonymous ? t('trialBadge') : t('permAccountBadge')}
-                </Text>
-                {pendingSync > 0 ? (
-                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
-                    {tx('offlinePending', { n: String(pendingSync) })}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-
-
-            <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                setProfileOpen(true);
-              }}
-            >
-              <Text style={styles.menuItemIcon}>👤</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuProfile')}</Text>
-            </Pressable>
-
-            {drawerIsManager && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => openInviteFor(drawerFamSpace?.id ?? null)}
-              >
-                <Text style={styles.menuItemIcon}>✉️</Text>
-                <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuInvite')}</Text>
-              </Pressable>
-            )}
-
-            {/* multi-family switcher lives here now (keeps the family page short) */}
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                setFamMsg(null);
-                setFamConfirm(null);
-                setFamsOpen(true);
-              }}
-            >
-              <Text style={styles.menuItemIcon}>👨‍👩‍👧</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuFamilies')}</Text>
-              <Text style={styles.menuSoon} numberOfLines={1}>
-                {familyTitle(drawerFamSpace)}
-              </Text>
-            </Pressable>
-
-            <View style={styles.menuItem}>
-              <Text style={styles.menuItemIcon}>💳</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuSubscription')}</Text>
-              <Text style={styles.menuSoon}>{t('soon')}</Text>
-            </View>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                setLanguage(lang === 'ar' ? 'en' : 'ar');
-              }}
-            >
-              <Text style={styles.menuItemIcon}>🌐</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuLanguage')}</Text>
-              <Text style={styles.menuSoon}>{lang === 'ar' ? 'EN' : 'عربي'}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                cycleTheme();
-              }}
-            >
-              <Text style={styles.menuItemIcon}>{themeMode === 'light' ? '☀️' : themeMode === 'dark' ? '🌙' : '🌓'}</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuTheme')}</Text>
-              <Text style={styles.menuSoon}>{themeMode === 'light' ? t('themeLight') : themeMode === 'dark' ? t('themeDark') : t('themeAuto')}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                setVoiceReply(!voiceReplyOn);
-              }}
-            >
-              <Text style={styles.menuItemIcon}>{voiceReplyOn ? '🔊' : '🔇'}</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuVoiceReply')}</Text>
-              <Text style={styles.menuSoon}>{voiceReplyOn ? '✓' : '–'}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                closeMenu();
-                setAboutOpen(true);
-              }}
-            >
-              <Text style={styles.menuItemIcon}>ℹ️</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuAbout')}</Text>
-            </Pressable>
-
-            {/* ── P2-4: privacy — export / delete ── */}
-            <Pressable
-              style={styles.menuItem}
-              onPress={doExportData}
-              disabled={privacyBusy}
-            >
-              <Text style={styles.menuItemIcon}>📥</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta() }]}>
-                {privacyBusy ? '…' : t('menuPrivacyExport')}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={doDeleteAccount}
-            >
-              <Text style={styles.menuItemIcon}>🗑️</Text>
-              <Text style={[styles.menuItemText, { textAlign: ta(), color: '#d33' }]}>
-                {t('menuPrivacyDelete')}
-              </Text>
-            </Pressable>
-
-            {/* ── chat history (ChatGPT-style) — bottom of the drawer ── */}
-            <View style={styles.histSection}>
-              <Pressable style={styles.newChatBtn} onPress={startNewChat}>
-                <Text style={styles.newChatBtnText}>{t('newChat')}</Text>
-              </Pressable>
-              <Text style={[styles.histTitle, { textAlign: ta() }]}>{t('chatHistory')}</Text>
-              <View style={styles.histList}>
-                {historyLoading ? (
-                  <ActivityIndicator size="small" color={P.accentDeep} />
-                ) : history.length === 0 ? (
-                  <Text style={[styles.histEmpty, { textAlign: ta() }]}>{t('noHistory')}</Text>
-                ) : (
-                  history.slice(0, histVisible).map((sess) => (
-                    <View key={sess.id} style={styles.histRow}>
-                      <Pressable style={styles.histMain} onPress={() => openSession(sess)}>
-                        <Text
-                          style={[styles.histRowTitle, { textAlign: ta() }]}
-                          numberOfLines={1}
-                        >
-                          {sess.title || '💬'}
-                        </Text>
-                        <Text style={[styles.histTtl, { textAlign: ta() }]}>
-                          {sess.ttl}
-                        </Text>
-                      </Pressable>
-                      <Pressable style={styles.histDel} onPress={() => deleteSession(sess.id)} accessibilityRole="button" accessibilityLabel={t('a11yDeleteChat')}>
-                        <Text style={styles.histDelText}>✕</Text>
-                      </Pressable>
-                    </View>
-                  ))
-                )}
-              </View>
-              {histVisible < history.length && (
-                <Pressable
-                  style={styles.showMoreBtn}
-                  onPress={() => setHistVisible((v) => v + 5)}
-                >
-                  <Text style={styles.showMoreText}>{t('showMore')}</Text>
-                </Pressable>
-              )}
-              <Text style={[styles.histHint, { textAlign: ta() }]}>{t('historyHint')}</Text>
-            </View>
-
-            {trashRetention > 0 && (
-              <Pressable
-                style={styles.menuItem}
-                onPress={() => {
-                  closeMenu();
-                  void openTrash(false);
-                }}
-              >
-                <Text style={styles.menuItemIcon}>🗑️</Text>
-                <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuTrash')}</Text>
-              </Pressable>
-            )}
-
-            {!isAnonymous && authState === 'signed-in' && (
-              <Pressable
-                style={[styles.menuItem, styles.menuLogout]}
-                onPress={() => {
-                  closeMenu();
-                  doSignOut();
-                }}
-              >
-                <Text style={styles.menuItemIcon}>🚪</Text>
-                <Text style={[styles.menuItemText, styles.menuLogoutText, { textAlign: ta() }]}>{t('menuLogout')}</Text>
-              </Pressable>
-            )}
-            </ScrollView>
-          </Animated.View>
         </View>
       )}
 
@@ -6658,6 +6456,228 @@ export default function HomeScreen() {
           )}
         </SafeAreaView>
       </Modal>
+      {/* ── side drawer menu ── */}
+      {menuOpen && (
+        <View style={styles.menuOverlay}>
+          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
+          <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
+            <View style={styles.menuProfile}>
+              <View style={styles.menuAvatar}>
+                <Text style={styles.menuAvatarText}>
+                  {(displayName?.[0] ?? userEmail?.[0] ?? '؟').toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.menuProfileInfo}>
+                <Text style={[styles.menuEmail, { textAlign: ta() }]} numberOfLines={1}>
+                  {displayName ?? userEmail ?? t('trialAccount')}
+                </Text>
+                {displayName && userEmail ? (
+                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
+                    {userEmail}
+                  </Text>
+                ) : null}
+                <Text style={[styles.menuBadge, { textAlign: ta() }]}>
+                  {isAnonymous ? t('trialBadge') : t('permAccountBadge')}
+                </Text>
+                {pendingSync > 0 ? (
+                  <Text style={[styles.menuEmailSub, { textAlign: ta() }]} numberOfLines={1}>
+                    {tx('offlinePending', { n: String(pendingSync) })}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+
+
+            <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                setProfileOpen(true);
+              }}
+            >
+              <Text style={styles.menuItemIcon}>👤</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuProfile')}</Text>
+            </Pressable>
+
+            {drawerIsManager && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => openInviteFor(drawerFamSpace?.id ?? null)}
+              >
+                <Text style={styles.menuItemIcon}>✉️</Text>
+                <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuInvite')}</Text>
+              </Pressable>
+            )}
+
+            {/* multi-family switcher lives here now (keeps the family page short) */}
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                setFamMsg(null);
+                setFamConfirm(null);
+                setFamsOpen(true);
+              }}
+            >
+              <Text style={styles.menuItemIcon}>👨‍👩‍👧</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuFamilies')}</Text>
+              <Text style={styles.menuSoon} numberOfLines={1}>
+                {familyTitle(drawerFamSpace)}
+              </Text>
+            </Pressable>
+
+            <View style={styles.menuItem}>
+              <Text style={styles.menuItemIcon}>💳</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuSubscription')}</Text>
+              <Text style={styles.menuSoon}>{t('soon')}</Text>
+            </View>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                setLanguage(lang === 'ar' ? 'en' : 'ar');
+              }}
+            >
+              <Text style={styles.menuItemIcon}>🌐</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuLanguage')}</Text>
+              <Text style={styles.menuSoon}>{lang === 'ar' ? 'EN' : 'عربي'}</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                cycleTheme();
+              }}
+            >
+              <Text style={styles.menuItemIcon}>{themeMode === 'light' ? '☀️' : themeMode === 'dark' ? '🌙' : '🌓'}</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuTheme')}</Text>
+              <Text style={styles.menuSoon}>{themeMode === 'light' ? t('themeLight') : themeMode === 'dark' ? t('themeDark') : t('themeAuto')}</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                setVoiceReply(!voiceReplyOn);
+              }}
+            >
+              <Text style={styles.menuItemIcon}>{voiceReplyOn ? '🔊' : '🔇'}</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuVoiceReply')}</Text>
+              <Text style={styles.menuSoon}>{voiceReplyOn ? '✓' : '–'}</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                closeMenu();
+                setAboutOpen(true);
+              }}
+            >
+              <Text style={styles.menuItemIcon}>ℹ️</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuAbout')}</Text>
+            </Pressable>
+
+            {/* ── P2-4: privacy — export / delete ── */}
+            <Pressable
+              style={styles.menuItem}
+              onPress={doExportData}
+              disabled={privacyBusy}
+            >
+              <Text style={styles.menuItemIcon}>📥</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta() }]}>
+                {privacyBusy ? '…' : t('menuPrivacyExport')}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={doDeleteAccount}
+            >
+              <Text style={styles.menuItemIcon}>🗑️</Text>
+              <Text style={[styles.menuItemText, { textAlign: ta(), color: '#d33' }]}>
+                {t('menuPrivacyDelete')}
+              </Text>
+            </Pressable>
+
+            {/* ── chat history (ChatGPT-style) — bottom of the drawer ── */}
+            <View style={styles.histSection}>
+              <Pressable style={styles.newChatBtn} onPress={startNewChat}>
+                <Text style={styles.newChatBtnText}>{t('newChat')}</Text>
+              </Pressable>
+              <Text style={[styles.histTitle, { textAlign: ta() }]}>{t('chatHistory')}</Text>
+              <View style={styles.histList}>
+                {historyLoading ? (
+                  <ActivityIndicator size="small" color={P.accentDeep} />
+                ) : history.length === 0 ? (
+                  <Text style={[styles.histEmpty, { textAlign: ta() }]}>{t('noHistory')}</Text>
+                ) : (
+                  history.slice(0, histVisible).map((sess) => (
+                    <View key={sess.id} style={styles.histRow}>
+                      <Pressable style={styles.histMain} onPress={() => openSession(sess)}>
+                        <Text
+                          style={[styles.histRowTitle, { textAlign: ta() }]}
+                          numberOfLines={1}
+                        >
+                          {sess.title || '💬'}
+                        </Text>
+                        <Text style={[styles.histTtl, { textAlign: ta() }]}>
+                          {sess.ttl}
+                        </Text>
+                      </Pressable>
+                      <Pressable style={styles.histDel} onPress={() => deleteSession(sess.id)} accessibilityRole="button" accessibilityLabel={t('a11yDeleteChat')}>
+                        <Text style={styles.histDelText}>✕</Text>
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+              </View>
+              {histVisible < history.length && (
+                <Pressable
+                  style={styles.showMoreBtn}
+                  onPress={() => setHistVisible((v) => v + 5)}
+                >
+                  <Text style={styles.showMoreText}>{t('showMore')}</Text>
+                </Pressable>
+              )}
+              <Text style={[styles.histHint, { textAlign: ta() }]}>{t('historyHint')}</Text>
+            </View>
+
+            {trashRetention > 0 && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  closeMenu();
+                  void openTrash(false);
+                }}
+              >
+                <Text style={styles.menuItemIcon}>🗑️</Text>
+                <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuTrash')}</Text>
+              </Pressable>
+            )}
+
+            {!isAnonymous && authState === 'signed-in' && (
+              <Pressable
+                style={[styles.menuItem, styles.menuLogout]}
+                onPress={() => {
+                  closeMenu();
+                  doSignOut();
+                }}
+              >
+                <Text style={styles.menuItemIcon}>🚪</Text>
+                <Text style={[styles.menuItemText, styles.menuLogoutText, { textAlign: ta() }]}>{t('menuLogout')}</Text>
+              </Pressable>
+            )}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      )}
+
+
+
       {/* first-run welcome: 3 steps, once per device */}
       <WelcomeScreen
         visible={showWelcome}
