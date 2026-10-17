@@ -248,7 +248,7 @@ export default function HomeScreen() {
     AsyncStorage.setItem(WELCOME_KEY, '1').catch(() => {});
   }, []);
   const [textNote, setTextNote] = useState('');
-  /** chat composer auto-grow height: follows content size, clamped 44–120 */
+  /** chat composer auto-grow height: follows content size, clamped 44–148 (~6 lines; beyond that the input scrolls internally) */
   const [composerH, setComposerH] = useState(44);
   /** vault composer auto-grow (CFP-01 item 8 parity with the main composer) */
   const [secretComposerH, setSecretComposerH] = useState(44);
@@ -5019,8 +5019,9 @@ export default function HomeScreen() {
                 </View>
               ))}
               {spaceErr ? <Text style={styles.fieldError}>⚠️ {spaceErr}</Text> : null}
-              <Pressable onPress={openSpaceCreate} style={styles.ghostBtn} accessibilityRole="button">
-                <Text style={styles.ghostBtnText}>{t('newSpaceBtn')}</Text>
+              <Pressable onPress={openSpaceCreate} style={styles.newSpaceBtn} accessibilityRole="button">
+                <Text style={styles.newSpaceBtnPlus}>+</Text>
+                <Text style={styles.newSpaceBtnText}>{t('newSpaceBtn')}</Text>
               </Pressable>
 
               <Pressable onPress={() => setProfileOpen(false)} style={styles.ghostBtn}>
@@ -5128,7 +5129,7 @@ export default function HomeScreen() {
                   style={[styles.composerInput, { height: composerH, textAlign: ta(), minHeight: 44, textAlignVertical: 'top' }]}
                   onContentSizeChange={(e) =>
                     setComposerH(
-                      Math.max(44, Math.min(120, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
+                      Math.max(44, Math.min(148, Math.ceil(e.nativeEvent.contentSize.height) + 12)),
                     )
                   }
                   multiline
@@ -5144,13 +5145,14 @@ export default function HomeScreen() {
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
+                  !isRecording && !!textNote.trim() && styles.micBtnSend,
                   (saving || savingText || asking) && styles.micBtnDisabled,
                 ]}
               >
                 {saving || savingText ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.micBtnText}>
+                  <Text style={[styles.micBtnText, !isRecording && !!textNote.trim() && styles.micBtnTextSend]}>
                     {isRecording ? '⏹' : textNote.trim() ? '➤' : '🎙️'}
                   </Text>
                 )}
@@ -5869,13 +5871,14 @@ export default function HomeScreen() {
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
+                  !isRecording && !!secretDraft.trim() && styles.micBtnSend,
                   secretSaving && styles.micBtnDisabled,
                 ]}
               >
                 {secretSaving ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.micBtnText}>
+                  <Text style={[styles.micBtnText, !isRecording && !!secretDraft.trim() && styles.micBtnTextSend]}>
                     {isRecording ? '⏹' : secretDraft.trim() ? '➤' : '🎙️'}
                   </Text>
                 )}
