@@ -2939,7 +2939,7 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
 describe('mobile home navigation regressions', () => {
   it('keeps the drawer above Home content in the render tree', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawer = idx.indexOf("      {/* ── side drawer menu ── */}");
+    const drawer = idx.indexOf("side drawer menu: native modal");
     const homeContent = idx.indexOf("      {view === 'chat' ? (");
     assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
   });
@@ -2953,5 +2953,28 @@ describe('mobile home navigation regressions', () => {
     assert.match(tabs, /customSpaces\.map/);
     assert.match(tabs, /openCustomSpace\(sp\)/);
     assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
+  });
+});
+
+
+describe('mobile navigation hardening — first paint and horizontal spaces', () => {
+  it('uses a native modal for the drawer and defers history refresh', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const drawerStart = idx.indexOf("side drawer menu: native modal");
+    const welcomeStart = idx.lastIndexOf("      {/* first-run welcome: 3 steps, once per device */}");
+    const drawer = idx.slice(drawerStart, welcomeStart);
+    assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
+    assert.match(idx, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
+  });
+
+  it('renders the home and space tabs in a horizontally scrollable row', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    const tabs = idx.slice(
+      idx.indexOf("view tabs: chat home + spaces for browsing"),
+      idx.indexOf("anonymous trial account"),
+    );
+    assert.match(tabs, /<ScrollView[\s\S]*horizontal/);
+    assert.match(tabs, /showsHorizontalScrollIndicator={false}/);
+    assert.match(tabs, /customSpaces\.map/);
   });
 });
