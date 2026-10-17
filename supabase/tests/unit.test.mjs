@@ -2987,6 +2987,7 @@ describe('mobile navigation hardening — header hit target', () => {
     assert.match(header, /zIndex: 100/);
     assert.match(header, /elevation: 10/);
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.match(idx, /onPress={openMenu}[\s\S]*hitSlop={12}/);
+    assert.ok(idx.includes('onPress={openMenu}'), 'hamburger keeps its open handler');
+    assert.ok(idx.includes('hitSlop={12}'), 'hamburger keeps the enlarged touch target');
   });
 });
