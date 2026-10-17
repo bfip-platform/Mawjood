@@ -6713,7 +6713,6 @@ export default function HomeScreen() {
             </ScrollView>
           </Animated.View>
         </View>
-      </View>
       ) : null}
 
       {/* first-run welcome: 3 steps, once per device */}
