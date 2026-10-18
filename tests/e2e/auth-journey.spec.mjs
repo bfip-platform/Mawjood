@@ -113,6 +113,11 @@ async function signInViaMagicLink(page, email) {
     if (!session?.access_token) await page.waitForTimeout(1000);
   }
   expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
+  // Keep the first-run welcome overlay out of this navigation assertion. The
+  // diagnostic needs to exercise the real tab hit target, not the onboarding modal.
+  await page.evaluate(() => localStorage.setItem('mawjood.welcomed.v1', '1'));
+  await page.reload();
+  await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 30000 });
   return { link, session };
 }
 
@@ -192,6 +197,8 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
   expect(session.user.email).toBe(email);
   // 🔞 first-run: the 18+ declaration gate comes BEFORE the chat home
   await completeAgeGateIfPresent(page);
+  // The app may start on Private; explicitly open Home before checking the chat composer.
+  await page.getByTestId('tab-home').click();
   // chat home renders (placeholder from i18n, English default in test env)
   await expect(
     page.getByPlaceholder(/Write a note or question|اكتب ملاحظة/),
