@@ -2918,7 +2918,7 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.ok(cm.includes('menuX.stopAnimation()'), 'closing stops any in-flight drawer animation');
     assert.ok(cm.includes('setMenuOpen(false)'), 'the drawer overlay is removed immediately');
     assert.ok(cm.includes('menuAfterDismissRef'), 'the action is retained until the overlay commit');
-    assert.ok(cm.includes('setTimeout(next, 0)'), 'queued actions dispatch after the commit');
+    assert.ok(idx.includes('setTimeout(next, 0)'), 'queued actions dispatch after the commit');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
