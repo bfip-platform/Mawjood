@@ -1449,6 +1449,9 @@ export default function HomeScreen() {
       // The overlay is unmounted from the same React tree. Keep a bounded
       // handoff so queued native surfaces never share a render pass.
       if (after) {
+        // Dispatch queued actions shortly after the overlay unmounts. Keep the
+        // longer timer as a safety net if iOS drops the animation lifecycle.
+        setTimeout(handleMenuDismiss, 80);
         menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
       }
     };
@@ -6502,7 +6505,7 @@ export default function HomeScreen() {
       {/* ── side drawer menu: in-tree overlay avoids iOS native presenter freezes on Home ── */}
       {menuOpen ? (
         <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
+          <Pressable style={styles.menuBackdrop} onPressIn={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
@@ -6535,7 +6538,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(() => setProfileOpen(true));
               }}
             >
@@ -6546,7 +6549,7 @@ export default function HomeScreen() {
             {drawerIsManager && (
               <Pressable
                 style={styles.menuItem}
-                onPress={() => closeMenu(() => openInviteFor(drawerFamSpace?.id ?? null))}
+                onPressIn={() => closeMenu(() => openInviteFor(drawerFamSpace?.id ?? null))}
               >
                 <Text style={styles.menuItemIcon}>✉️</Text>
                 <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuInvite')}</Text>
@@ -6556,7 +6559,7 @@ export default function HomeScreen() {
             {/* multi-family switcher lives here now (keeps the family page short) */}
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(() => {
                   setFamMsg(null);
                   setFamConfirm(null);
@@ -6579,7 +6582,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(() => setLanguage(lang === 'ar' ? 'en' : 'ar'));
               }}
             >
@@ -6590,7 +6593,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(cycleTheme);
               }}
             >
@@ -6601,7 +6604,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(() => setVoiceReply(!voiceReplyOn));
               }}
             >
@@ -6612,7 +6615,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
+              onPressIn={() => {
                 closeMenu(() => setAboutOpen(true));
               }}
             >
@@ -6623,7 +6626,7 @@ export default function HomeScreen() {
             {/* ── P2-4: privacy — export / delete ── */}
             <Pressable
               style={styles.menuItem}
-              onPress={() => closeMenu(() => void doExportData())}
+              onPressIn={() => closeMenu(() => void doExportData())}
               disabled={privacyBusy}
             >
               <Text style={styles.menuItemIcon}>📥</Text>
@@ -6634,7 +6637,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => closeMenu(() => void doDeleteAccount())}
+              onPressIn={() => closeMenu(() => void doDeleteAccount())}
             >
               <Text style={styles.menuItemIcon}>🗑️</Text>
               <Text style={[styles.menuItemText, { textAlign: ta(), color: '#d33' }]}>
