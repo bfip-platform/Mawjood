@@ -1474,10 +1474,10 @@ export default function HomeScreen() {
       clearTimeout(fallback);
       setMenuOpen(false);
       drawerTrace('menu-visible-false', { hasAfter: !!after });
-      // Native Modal.onDismiss is authoritative on iOS. Keep a bounded
-      // fallback for platforms/builds that do not emit it.
+      // The drawer is rendered in-tree (not as a native Modal), so this
+      // handoff is explicit and deterministic on iOS.
       if (after) {
-        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
+        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 80);
       }
     };
     fallback = setTimeout(finish, 320);
@@ -6533,9 +6533,9 @@ export default function HomeScreen() {
           )}
         </SafeAreaView>
       </Modal>
-      {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => { drawerTrace('modal-request-close'); closeMenu(); }} onShow={() => drawerTrace('modal-on-show')} onDismiss={handleMenuDismiss}>
-        <View style={styles.menuOverlay}>
+      {/* ── side drawer menu: in-tree overlay avoids native Modal handoff races ── */}
+      {menuOpen ? (
+        <View style={styles.menuOverlay} onLayout={() => drawerTrace('menu-overlay-mounted')}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
@@ -6751,7 +6751,7 @@ export default function HomeScreen() {
             </ScrollView>
           </Animated.View>
         </View>
-      </Modal>
+      ) : null}
 
       {/* first-run welcome: 3 steps, once per device */}
       <WelcomeScreen
