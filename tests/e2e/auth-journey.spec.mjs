@@ -113,6 +113,11 @@ async function signInViaMagicLink(page, email) {
     if (!session?.access_token) await page.waitForTimeout(1000);
   }
   expect(session?.access_token, 'browser holds a session after magic link').toBeTruthy();
+  // Keep the first-run welcome overlay out of this navigation assertion. The
+  // diagnostic needs to exercise the real tab hit target, not the onboarding modal.
+  await page.evaluate(() => localStorage.setItem('mawjood.welcomed.v1', '1'));
+  await page.reload();
+  await expect(page.getByPlaceholder('you@example.com')).toBeHidden({ timeout: 30000 });
   return { link, session };
 }
 
