@@ -2940,7 +2940,7 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
 describe('mobile home navigation regressions', () => {
   it('keeps the drawer above Home content in the render tree', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawer = idx.indexOf("side drawer menu: native modal");
+    const drawer = idx.indexOf("side drawer menu: in-tree overlay");
     const homeContent = idx.indexOf("      {view === 'chat' ? (");
     assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
   });
@@ -2959,12 +2959,12 @@ describe('mobile home navigation regressions', () => {
 
 
 describe('mobile navigation hardening — first paint and horizontal spaces', () => {
-  it('uses a native modal for the drawer and defers history refresh', () => {
+  it('uses an in-tree overlay for the drawer and defers history refresh', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawerStart = idx.indexOf("side drawer menu: native modal");
+    const drawerStart = idx.indexOf("side drawer menu: in-tree overlay");
     const welcomeStart = idx.lastIndexOf("      {/* first-run welcome: 3 steps, once per device */}");
     const drawer = idx.slice(drawerStart, welcomeStart);
-    assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
+    assert.match(drawer, /\{menuOpen \? \([\s\S]*styles\.menuOverlay/);
     assert.match(idx, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
