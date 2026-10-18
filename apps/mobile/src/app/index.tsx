@@ -1421,43 +1421,17 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // ── side menu open/close (slides from the left) ──
-  // Keep drawer actions queued until the in-tree overlay is fully removed.
-  // This avoids presenting Profile/About in the same render pass as the
-  // drawer, which can wedge iOS when Home is the first screen.
-  const menuAfterDismissRef = useRef<(() => void) | null>(null);
-  const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleMenuDismiss = useCallback(() => {
-    if (menuDismissFallbackRef.current) {
-      clearTimeout(menuDismissFallbackRef.current);
-      menuDismissFallbackRef.current = null;
-    }
-    const next = menuAfterDismissRef.current;
-    menuAfterDismissRef.current = null;
-    if (next) setTimeout(next, 80);
-  }, []);
+  // ── side menu open/close ──
+  // Drawer actions must not wait for the slide-out animation. On iOS, a
+  // native surface opened only from the animation callback can remain queued
+  // until the next interaction (the exact "works after swiping Home" symptom).
+  // Unmount first, then dispatch on the next event-loop turn.
   const closeMenu = useCallback((after?: () => void) => {
     setHistVisible(5); // collapse the history list back to 5 next open
-    menuAfterDismissRef.current = after ?? null;
-    let finished = false;
-    let fallback: ReturnType<typeof setTimeout>;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(fallback);
-      setMenuOpen(false);
-      // The overlay is unmounted from the same React tree. Keep a bounded
-      // handoff so queued native surfaces never share a render pass.
-      if (after) {
-        // Dispatch queued actions shortly after the overlay unmounts. Keep the
-        // longer timer as a safety net if iOS drops the animation lifecycle.
-        setTimeout(handleMenuDismiss, 80);
-        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
-      }
-    };
-    fallback = setTimeout(finish, 320);
-    Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
-  }, [menuX, handleMenuDismiss]);
+    menuX.stopAnimation();
+    setMenuOpen(false);
+    if (after) setTimeout(after, 0);
+  }, [menuX]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
