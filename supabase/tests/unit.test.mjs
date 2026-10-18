@@ -3010,7 +3010,8 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(close, /after\?: \(\) => void/);
     assert.match(close, /menuX\.stopAnimation\(\)/, 'closing stops the in-flight drawer animation');
     assert.match(close, /setMenuOpen\(false\)/, 'drawer is unmounted before navigation');
-    assert.match(close, /setTimeout\(after, 0\)/, 'queued actions dispatch on the next event-loop turn');
+    assert.match(close, /menuAfterDismissRef/, 'queued actions survive until the overlay commit');
+    assert.match(idx, /setTimeout\(next, 0\)/, 'queued actions dispatch after the commit');
     assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
   });
