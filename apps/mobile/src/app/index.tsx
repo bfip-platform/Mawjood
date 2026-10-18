@@ -1422,15 +1422,24 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close ──
-  // Drawer actions must not wait for the slide-out animation. On iOS, a
-  // native surface opened only from the animation callback can remain queued
-  // until the next interaction (the exact "works after swiping Home" symptom).
-  // Unmount first, then dispatch on the next event-loop turn.
+  // Drawer actions must wait for the state commit that removes the overlay,
+  // not merely for a zero-delay timer. On iOS, the timer can run before the
+  // native tree has committed the unmount, leaving a destination modal queued
+  // until the next interaction.
+  const menuAfterDismissRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (menuOpen || !menuAfterDismissRef.current) return;
+    const next = menuAfterDismissRef.current;
+    menuAfterDismissRef.current = null;
+    const handoff = setTimeout(next, 0);
+    return () => clearTimeout(handoff);
+  }, [menuOpen]);
+
   const closeMenu = useCallback((after?: () => void) => {
     setHistVisible(5); // collapse the history list back to 5 next open
+    menuAfterDismissRef.current = after ?? null;
     menuX.stopAnimation();
     setMenuOpen(false);
-    if (after) setTimeout(after, 0);
   }, [menuX]);
 
   // ── chat history (ChatGPT-style) ──
