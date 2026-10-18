@@ -1421,26 +1421,41 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // ── side menu open/close ──
-  // Drawer actions must wait for the state commit that removes the overlay,
-  // not merely for a zero-delay timer. On iOS, the timer can run before the
-  // native tree has committed the unmount, leaving a destination modal queued
-  // until the next interaction.
+  // ── side menu open/close (slides from the left) ──
+  // iOS can keep a native Modal presenter alive briefly after visible=false.
+  // Queue drawer actions behind onDismiss instead of guessing with a fixed
+  // delay; this prevents Profile from being presented over the Home drawer
+  // on the first open.
   const menuAfterDismissRef = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    if (menuOpen || !menuAfterDismissRef.current) return;
+  const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMenuDismiss = useCallback(() => {
+    if (menuDismissFallbackRef.current) {
+      clearTimeout(menuDismissFallbackRef.current);
+      menuDismissFallbackRef.current = null;
+    }
     const next = menuAfterDismissRef.current;
     menuAfterDismissRef.current = null;
-    const handoff = setTimeout(next, 0);
-    return () => clearTimeout(handoff);
-  }, [menuOpen]);
-
+    if (next) setTimeout(next, 80);
+  }, []);
   const closeMenu = useCallback((after?: () => void) => {
     setHistVisible(5); // collapse the history list back to 5 next open
     menuAfterDismissRef.current = after ?? null;
-    menuX.stopAnimation();
-    setMenuOpen(false);
-  }, [menuX]);
+    let finished = false;
+    let fallback: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(fallback);
+      setMenuOpen(false);
+      // Native Modal.onDismiss is authoritative on iOS. Keep a bounded
+      // fallback for platforms/builds that do not emit it.
+      if (after) {
+        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 450);
+      }
+    };
+    fallback = setTimeout(finish, 320);
+    Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
+  }, [menuX, handleMenuDismiss]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
@@ -6485,10 +6500,10 @@ export default function HomeScreen() {
           )}
         </SafeAreaView>
       </Modal>
-      {/* ── side drawer menu: in-tree overlay avoids iOS native presenter freezes on Home ── */}
-      {menuOpen ? (
+      {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()} onDismiss={handleMenuDismiss}>
         <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPressIn={() => closeMenu()} />
+          <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
@@ -6517,11 +6532,11 @@ export default function HomeScreen() {
             </View>
 
 
-            <View style={styles.menuActions}>
+            <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(() => setProfileOpen(true));
               }}
             >
@@ -6532,7 +6547,7 @@ export default function HomeScreen() {
             {drawerIsManager && (
               <Pressable
                 style={styles.menuItem}
-                onPressIn={() => closeMenu(() => openInviteFor(drawerFamSpace?.id ?? null))}
+                onPress={() => closeMenu(() => openInviteFor(drawerFamSpace?.id ?? null))}
               >
                 <Text style={styles.menuItemIcon}>✉️</Text>
                 <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuInvite')}</Text>
@@ -6542,7 +6557,7 @@ export default function HomeScreen() {
             {/* multi-family switcher lives here now (keeps the family page short) */}
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(() => {
                   setFamMsg(null);
                   setFamConfirm(null);
@@ -6565,7 +6580,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(() => setLanguage(lang === 'ar' ? 'en' : 'ar'));
               }}
             >
@@ -6576,7 +6591,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(cycleTheme);
               }}
             >
@@ -6587,7 +6602,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(() => setVoiceReply(!voiceReplyOn));
               }}
             >
@@ -6598,7 +6613,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => {
+              onPress={() => {
                 closeMenu(() => setAboutOpen(true));
               }}
             >
@@ -6609,7 +6624,7 @@ export default function HomeScreen() {
             {/* ── P2-4: privacy — export / delete ── */}
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => closeMenu(() => void doExportData())}
+              onPress={() => closeMenu(() => void doExportData())}
               disabled={privacyBusy}
             >
               <Text style={styles.menuItemIcon}>📥</Text>
@@ -6620,7 +6635,7 @@ export default function HomeScreen() {
 
             <Pressable
               style={styles.menuItem}
-              onPressIn={() => closeMenu(() => void doDeleteAccount())}
+              onPress={() => closeMenu(() => void doDeleteAccount())}
             >
               <Text style={styles.menuItemIcon}>🗑️</Text>
               <Text style={[styles.menuItemText, { textAlign: ta(), color: '#d33' }]}>
@@ -6628,13 +6643,6 @@ export default function HomeScreen() {
               </Text>
             </Pressable>
 
-            </View>
-
-            <ScrollView
-              style={styles.menuHistoryScroll}
-              contentContainerStyle={styles.menuHistoryContent}
-              showsVerticalScrollIndicator={false}
-            >
             {/* ── chat history (ChatGPT-style) — bottom of the drawer ── */}
             <View style={styles.histSection}>
               <Pressable style={styles.newChatBtn} onPress={startNewChat}>
@@ -6706,7 +6714,7 @@ export default function HomeScreen() {
             </ScrollView>
           </Animated.View>
         </View>
-      ) : null}
+      </Modal>
 
       {/* first-run welcome: 3 steps, once per device */}
       <WelcomeScreen
