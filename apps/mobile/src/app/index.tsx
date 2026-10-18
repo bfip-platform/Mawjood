@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Image,
   I18nManager,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -1540,6 +1541,10 @@ export default function HomeScreen() {
 
   /** open the side drawer; refreshes chat history (fresh delete-countdowns) */
   const openMenu = useCallback(() => {
+    // The Home composer can retain focus while the native drawer mounts.
+    // Dismiss it before routing drawer touches so iOS does not consume the
+    // first tap as keyboard dismissal.
+    Keyboard.dismiss();
     setMenuOpen(true);
     menuX.setValue(-320);
     Animated.timing(menuX, { toValue: 0, duration: 220, useNativeDriver: true }).start();
@@ -4933,9 +4938,8 @@ export default function HomeScreen() {
             data={messages}
             keyExtractor={(m) => m.id}
             contentContainerStyle={styles.chatList}
-            // Diagnostic isolation: message-driven auto-scroll remains active
-            // above; layout-driven scrolls are disabled to test whether the
-            // Home chat's initial layout is stealing drawer interaction.
+            onContentSizeChange={() => scrollChatToEnd(true)}
+            onLayout={() => scrollChatToEnd(false)}
             ListEmptyComponent={
               <View style={styles.emptyChat}>
                 <Text style={styles.emptyIcon}>💭</Text>
@@ -6533,7 +6537,7 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
