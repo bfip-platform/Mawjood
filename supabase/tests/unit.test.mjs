@@ -3009,7 +3009,8 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
     assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
     assert.match(close, /useNativeDriver: true/);
-    assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
+    assert.match(idx, /profile-action-dispatch/);
+    assert.match(idx, /setProfileOpen\(true\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
   });
 });
