@@ -192,6 +192,8 @@ test('magic-link sign-in lands in the app, signed in', async ({ page }) => {
   expect(session.user.email).toBe(email);
   // 🔞 first-run: the 18+ declaration gate comes BEFORE the chat home
   await completeAgeGateIfPresent(page);
+  // The app may start on Private; explicitly open Home before checking the chat composer.
+  await page.getByTestId('tab-home').click();
   // chat home renders (placeholder from i18n, English default in test env)
   await expect(
     page.getByPlaceholder(/Write a note or question|اكتب ملاحظة/),
