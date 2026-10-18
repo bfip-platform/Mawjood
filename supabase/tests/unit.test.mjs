@@ -2913,12 +2913,11 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.ok(!boot.includes('await persistSession('), 'stale-draft archive is background work now');
     assert.ok(boot.includes('void persistSession('), 'the archive still happens, off the critical path');
   });
-  it('drawer actions unmount the overlay before dispatching native surfaces', () => {
-    const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 700);
-    assert.ok(cm.includes('menuX.stopAnimation()'), 'closing stops any in-flight drawer animation');
-    assert.ok(cm.includes('setMenuOpen(false)'), 'the drawer overlay is removed immediately');
-    assert.ok(cm.includes('menuAfterDismissRef'), 'the action is retained until the overlay commit');
-    assert.ok(idx.includes('setTimeout(next, 0)'), 'queued actions dispatch after the commit');
+  it('drawer close always unmounts the full-screen backdrop (animation callback + timer guarantee)', () => {
+    const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
+    assert.ok(cm.includes('fallback = setTimeout(finish, 320)'), 'a lost animation callback can no longer strand the backdrop');
+    assert.ok(cm.includes('setMenuOpen(false)'), 'the fallback still unmounts the backdrop');
+    assert.ok(cm.includes('clearTimeout(fallback)'), 'the normal animation path disarms the fallback');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
@@ -2939,9 +2938,9 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
 
 
 describe('mobile home navigation regressions', () => {
-  it('keeps the drawer overlay above Home content in the render tree', () => {
+  it('keeps the drawer above Home content in the render tree', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawer = idx.indexOf("side drawer menu: in-tree overlay");
+    const drawer = idx.indexOf("side drawer menu: native modal");
     const homeContent = idx.indexOf("      {view === 'chat' ? (");
     assert.ok(drawer > homeContent, 'drawer must render after Home content so it receives taps');
   });
@@ -2960,13 +2959,12 @@ describe('mobile home navigation regressions', () => {
 
 
 describe('mobile navigation hardening — first paint and horizontal spaces', () => {
-  it('uses an in-tree overlay for the drawer and defers history refresh', () => {
+  it('uses a native modal for the drawer and defers history refresh', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    const drawerStart = idx.indexOf("side drawer menu: in-tree overlay");
+    const drawerStart = idx.indexOf("side drawer menu: native modal");
     const welcomeStart = idx.lastIndexOf("      {/* first-run welcome: 3 steps, once per device */}");
     const drawer = idx.slice(drawerStart, welcomeStart);
-    assert.match(drawer, /\{menuOpen \? \(/, 'drawer is rendered in the app tree');
-    assert.doesNotMatch(drawer, /<Modal visible=\{menuOpen\}/, 'drawer does not use a native Modal presenter');
+    assert.match(drawer, /<Modal visible={menuOpen} transparent animationType="none"/);
     assert.match(idx, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
@@ -3004,14 +3002,13 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(open, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
-  it('removes the in-tree drawer before presenting another native surface', () => {
+  it('closes the native drawer before presenting another native surface', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
-    assert.match(close, /menuX\.stopAnimation\(\)/, 'closing stops the in-flight drawer animation');
-    assert.match(close, /setMenuOpen\(false\)/, 'drawer is unmounted before navigation');
-    assert.match(close, /menuAfterDismissRef/, 'queued actions survive until the overlay commit');
-    assert.match(idx, /setTimeout\(next, 0\)/, 'queued actions dispatch after the commit');
+    assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
+    assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
+    assert.match(close, /useNativeDriver: true/);
     assert.match(idx, /closeMenu\(\(\) => setProfileOpen\(true\)\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
   });
@@ -3045,10 +3042,8 @@ describe('first-run welcome hardening', () => {
 describe('drawer native modal dismissal sequencing', () => {
   it('waits for drawer onDismiss before presenting a queued profile modal', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.match(idx, /\{menuOpen \? \(/, 'drawer is conditionally mounted');
-    assert.doesNotMatch(idx, /<Modal visible=\{menuOpen\}/, 'drawer has no native presenter');
-    assert.match(idx, /menuX\.stopAnimation\(\)/, 'drawer closes without waiting for animation callbacks');
-    assert.match(idx, /menuAfterDismissRef/, 'drawer actions survive until the overlay commit');
-    assert.match(idx, /setTimeout\(next, 0\)/, 'drawer actions dispatch after the commit');
+    assert.match(idx, /onDismiss=\{handleMenuDismiss\}/, 'drawer listens for native dismissal');
+    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
+    assert.match(idx, /setTimeout\(handleMenuDismiss, 450\)/, 'drawer has a bounded fallback');
   });
 });
