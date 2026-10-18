@@ -3002,12 +3002,12 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(open, /setTimeout\(\(\) => \{ void loadHistory\(\); \}, 0\)/);
   });
 
-  it('closes the native drawer before presenting another native surface', () => {
+  it('closes the in-tree drawer before presenting another surface', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
     assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
-    assert.match(close, /setTimeout\(handleMenuDismiss, 450\)/, 'bounded fallback remains for platforms without onDismiss');
+    assert.match(close, /setTimeout\(handleMenuDismiss, 80\)/, 'handoff waits for the overlay removal');
     assert.match(close, /useNativeDriver: true/);
     assert.match(idx, /profile-action-dispatch/);
     assert.match(idx, /setProfileOpen\(true\)/);
@@ -3040,11 +3040,11 @@ describe('first-run welcome hardening', () => {
 });
 
 
-describe('drawer native modal dismissal sequencing', () => {
-  it('waits for drawer onDismiss before presenting a queued profile modal', () => {
+describe('drawer overlay dismissal sequencing', () => {
+  it('waits for drawer overlay removal before presenting a queued profile modal', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.match(idx, /onDismiss=\{handleMenuDismiss\}/, 'drawer listens for native dismissal');
+    assert.match(idx, /\{menuOpen \? \([\s\S]*styles\.menuOverlay/, 'drawer renders as an in-tree overlay');
     assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
-    assert.match(idx, /setTimeout\(handleMenuDismiss, 450\)/, 'drawer has a bounded fallback');
+    assert.match(idx, /setTimeout\(handleMenuDismiss, 80\)/, 'drawer handoff is bounded');
   });
 });
