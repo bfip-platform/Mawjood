@@ -763,6 +763,29 @@ export default function HomeScreen() {
   const [inviteSpaceId, setInviteSpaceId] = useState<string | null>(null);
   const [menuX] = useState(() => new Animated.Value(-320));
 
+  // Temporary drawer tracing: records the exact iOS event boundary where the
+  // interaction stops. It contains no message/content data and is removable
+  // after the native presentation issue is identified.
+  const drawerTrace = useCallback((event: string, extra?: Record<string, unknown>) => {
+    const payload = {
+      event,
+      at: Date.now(),
+      view,
+      menuOpen,
+      profileOpen,
+      appState: AppState.currentState,
+      keyboardVisible: Keyboard.isVisible?.() ?? false,
+      ...extra,
+    };
+    console.warn('[drawer-trace]', payload);
+    void supabase.functions.invoke('report-error', {
+      body: {
+        message: `[drawer-trace] ${JSON.stringify(payload)}`.slice(0, 1000),
+        context: 'drawer-debug',
+      },
+    }).catch(() => {});
+  }, [view, menuOpen, profileOpen]);
+
   // ── Phase C: shopping domain (see screens/home/hooks/useShopping.ts) ──
   // (call placed after profile states: createManualList needs displayName/userEmail;
   //  toggleItem below consumes the destructured setters)
@@ -1430,6 +1453,7 @@ export default function HomeScreen() {
   const menuAfterDismissRef = useRef<(() => void) | null>(null);
   const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleMenuDismiss = useCallback(() => {
+    drawerTrace('modal-on-dismiss');
     if (menuDismissFallbackRef.current) {
       clearTimeout(menuDismissFallbackRef.current);
       menuDismissFallbackRef.current = null;
@@ -1437,8 +1461,9 @@ export default function HomeScreen() {
     const next = menuAfterDismissRef.current;
     menuAfterDismissRef.current = null;
     if (next) setTimeout(next, 80);
-  }, []);
+  }, [drawerTrace]);
   const closeMenu = useCallback((after?: () => void) => {
+    drawerTrace('close-menu-called', { hasAfter: !!after });
     setHistVisible(5); // collapse the history list back to 5 next open
     menuAfterDismissRef.current = after ?? null;
     let finished = false;
@@ -1448,6 +1473,7 @@ export default function HomeScreen() {
       finished = true;
       clearTimeout(fallback);
       setMenuOpen(false);
+      drawerTrace('menu-visible-false', { hasAfter: !!after });
       // Native Modal.onDismiss is authoritative on iOS. Keep a bounded
       // fallback for platforms/builds that do not emit it.
       if (after) {
@@ -1456,7 +1482,7 @@ export default function HomeScreen() {
     };
     fallback = setTimeout(finish, 320);
     Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
-  }, [menuX, handleMenuDismiss]);
+  }, [menuX, handleMenuDismiss, drawerTrace]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
@@ -1541,17 +1567,19 @@ export default function HomeScreen() {
 
   /** open the side drawer; refreshes chat history (fresh delete-countdowns) */
   const openMenu = useCallback(() => {
+    drawerTrace('hamburger-press');
     // The Home composer can retain focus while the native drawer mounts.
     // Dismiss it before routing drawer touches so iOS does not consume the
     // first tap as keyboard dismissal.
     Keyboard.dismiss();
     setMenuOpen(true);
+    drawerTrace('menu-open-requested');
     menuX.setValue(-320);
     Animated.timing(menuX, { toValue: 0, duration: 220, useNativeDriver: true }).start();
     // Let the native Modal mount and receive the first tap before doing any
     // Supabase work for chat history.
     setTimeout(() => { void loadHistory(); }, 0);
-  }, [menuX, loadHistory]);
+  }, [menuX, loadHistory, drawerTrace]);
 
   /** archive the current chat and start a fresh one */
   const startNewChat = useCallback(async () => {
@@ -6506,10 +6534,10 @@ export default function HomeScreen() {
         </SafeAreaView>
       </Modal>
       {/* ── side drawer menu: native modal prevents Home content from stealing the first tap ── */}
-      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => closeMenu()} onDismiss={handleMenuDismiss}>
+      <Modal visible={menuOpen} transparent animationType="none" onRequestClose={() => { drawerTrace('modal-request-close'); closeMenu(); }} onShow={() => drawerTrace('modal-on-show')} onDismiss={handleMenuDismiss}>
         <View style={styles.menuOverlay}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
-          <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
+          <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
                 <Text style={styles.menuAvatarText}>
@@ -6537,12 +6565,16 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
               onPress={() => {
-                closeMenu(() => setProfileOpen(true));
+                drawerTrace('profile-press');
+                closeMenu(() => {
+                  drawerTrace('profile-action-dispatch');
+                  setProfileOpen(true);
+                });
               }}
             >
               <Text style={styles.menuItemIcon}>👤</Text>
