@@ -49,6 +49,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: P.overlay,
+    zIndex: 0,
   },
   menuPanel: {
     width: 300,
@@ -63,6 +64,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 12,
     elevation: 12,
+    zIndex: 1,
   },
   menuProfile: {
     flexDirection: 'row',
