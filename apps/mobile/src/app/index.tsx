@@ -184,7 +184,8 @@ export default function HomeScreen() {
   const { isRecording, duration, start, stop } = useVoiceRecorder();
 
   // ── views: chat home vs space browsing ──
-  const [view, setView] = useState<AppView>('chat');
+  // Diagnostic: start on the Private space to isolate Home/chat initialization.
+  const [view, setView] = useState<AppView>('private');
   const [viewSpace, setViewSpace] = useState<Space | null>(null);
   // ── paginated tab lists (10/page, infinite scroll — one generic hook per list) ──
   // `notes`/`setNotes` etc. are aliases: every existing local mutation
@@ -3504,6 +3505,12 @@ export default function HomeScreen() {
       memberSearch,
     ],
   );
+
+  // The initial private view needs the real loaded space before its lists can render.
+  useEffect(() => {
+    if (view !== 'private' || viewSpace || spaces.length === 0) return;
+    openSpace('private');
+  }, [view, viewSpace, spaces.length, openSpace]);
 
   /**
    * CFP-01 item 7 navigation: open a CUSTOM space in the generic
