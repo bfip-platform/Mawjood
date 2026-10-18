@@ -86,7 +86,10 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     justifyContent: 'center',
   },
   menuAvatarText: { fontSize: 22, fontWeight: '800', color: P.paper },
-  menuScroll: { flex: 1 }, // the whole drawer scrolls — less clutter, less pressure
+  // Static actions stay outside the responder-owning history scroller.
+  menuActions: { flexShrink: 0 },
+  menuHistoryScroll: { flex: 1 },
+  menuHistoryContent: { paddingBottom: 8 },
   menuProfileInfo: { flex: 1 },  menuEmail: { fontSize: 17, fontWeight: '700', color: P.ink },
   menuEmailSub: { fontSize: 13, color: P.faint2, marginTop: 2 },
   menuBadge: { fontSize: 12, color: P.muted, marginTop: 3 },

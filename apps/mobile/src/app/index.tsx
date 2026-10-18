@@ -6534,7 +6534,7 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
+            <View style={styles.menuActions}>
 
             <Pressable
               style={styles.menuItem}
@@ -6645,6 +6645,13 @@ export default function HomeScreen() {
               </Text>
             </Pressable>
 
+            </View>
+
+            <ScrollView
+              style={styles.menuHistoryScroll}
+              contentContainerStyle={styles.menuHistoryContent}
+              showsVerticalScrollIndicator={false}
+            >
             {/* ── chat history (ChatGPT-style) — bottom of the drawer ── */}
             <View style={styles.histSection}>
               <Pressable style={styles.newChatBtn} onPress={startNewChat}>
