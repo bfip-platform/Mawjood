@@ -2917,7 +2917,8 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 700);
     assert.ok(cm.includes('menuX.stopAnimation()'), 'closing stops any in-flight drawer animation');
     assert.ok(cm.includes('setMenuOpen(false)'), 'the drawer overlay is removed immediately');
-    assert.ok(cm.includes('setTimeout(after, 0)'), 'queued actions dispatch on the next event-loop turn');
+    assert.ok(cm.includes('menuAfterDismissRef'), 'the action is retained until the overlay commit');
+    assert.ok(cm.includes('setTimeout(next, 0)'), 'queued actions dispatch after the commit');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
@@ -3046,6 +3047,7 @@ describe('drawer native modal dismissal sequencing', () => {
     assert.match(idx, /\{menuOpen \? \(/, 'drawer is conditionally mounted');
     assert.doesNotMatch(idx, /<Modal visible=\{menuOpen\}/, 'drawer has no native presenter');
     assert.match(idx, /menuX\.stopAnimation\(\)/, 'drawer closes without waiting for animation callbacks');
-    assert.match(idx, /setTimeout\(after, 0\)/, 'drawer actions dispatch after immediate removal');
+    assert.match(idx, /menuAfterDismissRef/, 'drawer actions survive until the overlay commit');
+    assert.match(idx, /setTimeout\(next, 0\)/, 'drawer actions dispatch after the commit');
   });
 });
