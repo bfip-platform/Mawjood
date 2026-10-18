@@ -3509,7 +3509,8 @@ export default function HomeScreen() {
   // The initial private view needs the real loaded space before its lists can render.
   useEffect(() => {
     if (view !== 'private' || viewSpace || spaces.length === 0) return;
-    openSpace('private');
+    const timer = setTimeout(() => openSpace('private'), 0);
+    return () => clearTimeout(timer);
   }, [view, viewSpace, spaces.length, openSpace]);
 
   /**
