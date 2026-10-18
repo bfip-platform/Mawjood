@@ -4933,8 +4933,9 @@ export default function HomeScreen() {
             data={messages}
             keyExtractor={(m) => m.id}
             contentContainerStyle={styles.chatList}
-            onContentSizeChange={() => scrollChatToEnd(true)}
-            onLayout={() => scrollChatToEnd(false)}
+            // Diagnostic isolation: message-driven auto-scroll remains active
+            // above; layout-driven scrolls are disabled to test whether the
+            // Home chat's initial layout is stealing drawer interaction.
             ListEmptyComponent={
               <View style={styles.emptyChat}>
                 <Text style={styles.emptyIcon}>💭</Text>
