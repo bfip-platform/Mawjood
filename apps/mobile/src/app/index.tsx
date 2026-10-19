@@ -1462,43 +1462,24 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close (slides from the left) ──
-  // iOS can keep a native Modal presenter alive briefly after visible=false.
-  // Queue drawer actions behind onDismiss instead of guessing with a fixed
-  // delay; this prevents Profile from being presented over the Home drawer
-  // on the first open.
-  const menuAfterDismissRef = useRef<(() => void) | null>(null);
-  const menuDismissFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleMenuDismiss = useCallback(() => {
-    drawerTrace('modal-on-dismiss');
-    if (menuDismissFallbackRef.current) {
-      clearTimeout(menuDismissFallbackRef.current);
-      menuDismissFallbackRef.current = null;
-    }
-    const next = menuAfterDismissRef.current;
-    menuAfterDismissRef.current = null;
-    if (next) setTimeout(next, 80);
-  }, [drawerTrace]);
+  // The drawer is rendered in-tree, so it does not need native-Modal
+  // dismissal handoff or overlapping animation timers. Close it
+  // synchronously, then dispatch the requested action on the next frame.
   const closeMenu = useCallback((after?: () => void) => {
-    drawerTrace('close-menu-called', { hasAfter: !!after });
-    setHistVisible(5); // collapse the history list back to 5 next open
-    menuAfterDismissRef.current = after ?? null;
-    let finished = false;
-    let fallback: ReturnType<typeof setTimeout>;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(fallback);
-      setMenuOpen(false);
-      drawerTrace('menu-visible-false', { hasAfter: !!after });
-      // The drawer is rendered in-tree (not as a native Modal), so this
-      // handoff is explicit and deterministic on iOS.
-      if (after) {
-        menuDismissFallbackRef.current = setTimeout(handleMenuDismiss, 80);
-      }
-    };
-    fallback = setTimeout(finish, 320);
-    Animated.timing(menuX, { toValue: -320, duration: 220, useNativeDriver: true }).start(finish);
-  }, [menuX, handleMenuDismiss, drawerTrace]);
+    const hasAfter = !!after;
+    drawerTrace('close-menu-called', { hasAfter });
+    setHistVisible(5);
+    menuX.stopAnimation();
+    menuX.setValue(-320);
+    setMenuOpen(false);
+    drawerTrace('menu-visible-false', { hasAfter });
+    if (after) {
+      requestAnimationFrame(() => {
+        drawerTrace('menu-action-dispatch');
+        after();
+      });
+    }
+  }, [menuX, drawerTrace]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
