@@ -3042,6 +3042,18 @@ describe('first-run welcome hardening', () => {
 });
 
 
+describe('drawer destination visibility verification', () => {
+  it('records visibility of the destination surface after a drawer action', () => {
+    const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
+    assert.match(idx, /destination-visible/, 'destination visibility is observable');
+    assert.match(idx, /\['profile', profileOpen\]/, 'profile visibility is traced');
+    assert.match(idx, /\['families', famsOpen\]/, 'families visibility is traced');
+    assert.match(idx, /\['invite', inviteOpen\]/, 'invite visibility is traced');
+    assert.match(idx, /\['about', aboutOpen\]/, 'about visibility is traced');
+    assert.match(idx, /\['trash', trashOpen\]/, 'trash visibility is traced');
+  });
+});
+
 describe('drawer overlay dismissal sequencing', () => {
   it('removes the in-tree overlay before dispatching a queued profile action', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');

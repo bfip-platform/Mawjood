@@ -802,6 +802,21 @@ export default function HomeScreen() {
     });
   }, [view, menuOpen, profileOpen]);
 
+  // Verification telemetry: confirm the destination surface actually became
+  // visible after a drawer action, not just that the tap and close were logged.
+  useEffect(() => {
+    const destinations: Array<[string, boolean]> = [
+      ['profile', profileOpen],
+      ['families', famsOpen],
+      ['invite', inviteOpen],
+      ['about', aboutOpen],
+      ['trash', trashOpen],
+    ];
+    for (const [destination, visible] of destinations) {
+      if (visible) drawerTrace('destination-visible', { destination });
+    }
+  }, [profileOpen, famsOpen, inviteOpen, aboutOpen, trashOpen, drawerTrace]);
+
   // ── Phase C: shopping domain (see screens/home/hooks/useShopping.ts) ──
   // (call placed after profile states: createManualList needs displayName/userEmail;
   //  toggleItem below consumes the destructured setters)
