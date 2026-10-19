@@ -762,11 +762,13 @@ export default function HomeScreen() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [inviteSpaceId, setInviteSpaceId] = useState<string | null>(null);
   const [menuX] = useState(() => new Animated.Value(-320));
+  const drawerTraceSendFailureRef = useRef<string | null>(null);
 
   // Temporary drawer tracing: records the exact iOS event boundary where the
   // interaction stops. It contains no message/content data and is removable
   // after the native presentation issue is identified.
   const drawerTrace = useCallback((event: string, extra?: Record<string, unknown>) => {
+    const previousSendFailure = drawerTraceSendFailureRef.current;
     const payload = {
       event,
       at: Date.now(),
@@ -775,15 +777,29 @@ export default function HomeScreen() {
       profileOpen,
       appState: AppState.currentState,
       keyboardVisible: Keyboard.isVisible?.() ?? false,
+      ...(previousSendFailure ? { previousSendFailure } : {}),
       ...extra,
     };
     console.warn('[drawer-trace]', payload);
-    void supabase.functions.invoke('report-error', {
-      body: {
-        message: `[drawer-trace] ${JSON.stringify(payload)}`.slice(0, 1000),
-        context: 'drawer-debug',
-      },
-    }).catch(() => {});
+    void (async () => {
+      const { error } = await supabase.functions.invoke('report-error', {
+        body: {
+          message: ('[drawer-trace] ' + JSON.stringify(payload)).slice(0, 1000),
+          context: 'drawer-debug',
+        },
+      });
+      if (error) {
+        const failure = String(error).slice(0, 240);
+        drawerTraceSendFailureRef.current = failure;
+        console.warn('[drawer-trace-send-failed]', { event, failure });
+      } else {
+        drawerTraceSendFailureRef.current = null;
+      }
+    })().catch((error) => {
+      const failure = String(error).slice(0, 240);
+      drawerTraceSendFailureRef.current = failure;
+      console.warn('[drawer-trace-send-failed]', { event, failure });
+    });
   }, [view, menuOpen, profileOpen]);
 
   // ── Phase C: shopping domain (see screens/home/hooks/useShopping.ts) ──
@@ -6565,7 +6581,7 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} onStartShouldSetResponder={() => true} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
