@@ -1428,7 +1428,6 @@ export default function HomeScreen() {
   // dismissal handoff or overlapping animation timers. Close it
   // synchronously, then dispatch the requested action on the next frame.
   const closeMenu = useCallback((after?: () => void) => {
-    const hasAfter = !!after;
     setHistVisible(5); // collapse the history list back to 5 next open
     menuX.stopAnimation();
     menuX.setValue(-320);
