@@ -2912,6 +2912,8 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     const boot = idx.slice(idx.indexOf('const boot = useCallback'), idx.indexOf('const handleAuthEvent'));
     assert.ok(!boot.includes('await persistSession('), 'stale-draft archive is background work now');
     assert.ok(boot.includes('void persistSession('), 'the archive still happens, off the critical path');
+    assert.ok(idx.includes('withTimeout(engine.getMyProfile(), 12000)'), 'profile loading is bounded');
+    assert.ok(idx.includes("setAgeStatus('checking')"), 'sign-out resets the age gate');
   });
   it('drawer close synchronously unmounts the in-tree backdrop and dispatches safely', () => {
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
