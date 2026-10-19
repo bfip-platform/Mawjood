@@ -64,7 +64,6 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 12,
-    elevation: 12,
     zIndex: 1,
     elevation: 1001,
   },
