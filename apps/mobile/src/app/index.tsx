@@ -1475,10 +1475,11 @@ export default function HomeScreen() {
     setMenuOpen(false);
     drawerTrace('menu-visible-false', { hasAfter });
     if (after) {
-      requestAnimationFrame(() => {
-        drawerTrace('menu-action-dispatch');
-        after();
-      });
+      // Dispatch the destination in the same interaction batch as the close.
+      // A deferred RAF can be skipped on iOS when the overlay is removed,
+      // leaving the drawer closed while the requested page never opens.
+      drawerTrace('menu-action-dispatch');
+      after();
     }
   }, [menuX, drawerTrace]);
 
