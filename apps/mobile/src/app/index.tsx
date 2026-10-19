@@ -2028,8 +2028,7 @@ export default function HomeScreen() {
       setIsAnonymous(!!user.is_anonymous);
       setUserEmail(user.email ?? null);
       setMemberSince(user.created_at ?? null);
-      engine
-        .getMyProfile()
+      withTimeout(engine.getMyProfile(), 12000)
         .then((p) => {
           setDisplayName(p?.display_name ?? null);
           setNameDraft(p?.display_name ?? '');
@@ -2166,6 +2165,10 @@ export default function HomeScreen() {
         setViewSpace(null);
         setView('chat');
         setIsAnonymous(false);
+        setAgeStatus('checking');
+        setDobDraft('');
+        setDobError(null);
+        setDobSaving(false);
         setAuthState('signed-out');
         // D6 review N1: clear the maintenance scan so a second user in
         // the same session never sees the first user's counts (and gets
