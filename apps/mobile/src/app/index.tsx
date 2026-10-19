@@ -1908,11 +1908,1256 @@ export default function HomeScreen() {
       if (!q.trim()) return;
       setAsking(true);
       const thinkId = pushMsg('app', '…', { pending: true });
-    // Do not block the first chat request on a cold memory read. Use the
-    // already-cached facts now and warm the cache in the background.
-    const mems = memoriesRef.current ?? [];
-    void getMemories();
-    const chatResult = await withTimeoutResult(
+      const done = (text: string, sources: ChatMsg['sources'], item: Item | null, demo: boolean) => {
+        updateMsg(thinkId, { text: demo ? `🧪 ${text}` : text, pending: false, sources });
+        setLastAnswer(item);
+        setAsking(false);
+        speak(text); // voice in → voice out; text in → silent (speak no-ops)
+      };
+      try {
+        const r = await engine.ask(q, spaceId, chatHistory());
+        done(r.answer, r.sources, null, false);
+      } catch (e) {
+        console.warn('ask fn failed, using local fallback', e);
+        try {
+          const allNotes: Note[] = [];
+          const allItems: Item[] = [];
+          const targets = spaceId
+            ? [{ id: spaceId }]
+            : spaces.map((s) => ({ id: s.id }));
+          for (const target of targets) {
+            const [n, i] = await Promise.all([
+              engine.listNotes(target.id, 30),
+              engine.listItems(target.id, 60),
+            ]);
+            allNotes.push(...n);
+            allItems.push(...i);
+          }
+          const local = answerLocally(q, allNotes, allItems, getLang());
+          if (local) done(local.answer, local.sources, local.item ?? null, true);
+          else done(t('noAnswer'), [], null, true);
+        } catch {
+          done(t('askFail'), [], null, true);
+        }
+      }
+    },
+    [spaces, pushMsg, updateMsg, setLastAnswer, chatHistory, speak],
+  );
+
+  /** Conversational correction: t('exampleCorrection') → update the item. */
+  const doCorrect = useCallback(
+    async (text: string) => {
+      const item = lastAnswerItemRef.current;
+      const place = item ? extractCorrectionPlace(text) : null;
+      if (!item || !place) return;
+      try {
+        await engine.updateItemDetails(item.id, place);
+        setLastAnswer({ ...item, details: place });
+        const msg = tx('updatedPlace', { title: item.title, place });
+        pushMsg('app', msg);
+        speak(msg);
+      } catch (e) {
+        console.warn('correction failed', e);
+      }
+    },
+    [pushMsg, setLastAnswer, speak],
+  );
+
+  // ── AI input router (with conversation memory) ──
+  // What ChatGPT does natively: every input is understood in context.
+  // (chatHistory is defined above, before doAsk)
+
+  const routeInput = useCallback(
+    async (
+      text: string,
+    ): Promise<{ action: 'question' | 'correction' | 'note'; space_type: SpaceType }> => {
+      const r = await engine.route(text, chatHistory());
+      // correction only makes sense right after an answer about an item
+      if (r.action === 'correction' && !lastAnswerItemRef.current)
+        return { action: 'note', space_type: r.space_type };
+      return r;
+    },
+    [chatHistory],
+  );
+
+  // Load (or create) the user's default spaces. P1-2: a failure here must
+  // never strand sign-in — callers fall back to an empty list plus the
+  // retryable boot-error banner instead of a half-booted screen.
+  const loadSpaces = useCallback(async (uid: string): Promise<boolean> => {
+    try {
+      setSpaces(await engine.ensureDefaultSpaces(uid));
+      setBootError(false);
+      return true;
+    } catch (e) {
+      console.warn('spaces load failed', e);
+      setSpaces([]);
+      setBootError(true);
+      return false;
+    }
+  }, []);
+
+  // ── boot / auth gate ──
+  // No session → AuthScreen (email magic link). Anonymous sessions from the
+  // trial keep working and can be upgraded to permanent (same user id).
+  const boot = useCallback(async () => {
+    setLoading(true);
+    // AsyncStorage can stall during an iOS bridge hiccup; language preference
+    // is cosmetic and must never block first paint.
+    await withTimeout(initLanguage(), 2000);
+    try {
+      const v = await AsyncStorage.getItem(VOICE_REPLY_KEY);
+      const on = v !== '0';
+      setVoiceReplyOn(on);
+      voiceReplyRef.current = on;
+    } catch {
+      /* keep default (on) */
+    }
+    try {
+      // Bounded: getSession() may need a network token refresh, and a
+      // stalled connection must never hold the loading screen forever
+      // ("freezes on startup, sometimes"). On timeout we fall through to
+      // the signed-out screen; the stored session is untouched and a
+      // later SIGNED_IN event re-runs boot.
+      const sessRes = await withTimeout(supabase.auth.getSession(), 12000);
+      const session = sessRes?.data.session ?? null;
+      if (!session) {
+        setAuthState('signed-out');
+        return;
+      }
+      const user = session.user;
+      setUserId(user.id);
+      userIdRef.current = user.id;
+      setIsAnonymous(!!user.is_anonymous);
+      setUserEmail(user.email ?? null);
+      setMemberSince(user.created_at ?? null);
+      withTimeout(engine.getMyProfile(), 12000)
+        .then((p) => {
+          setDisplayName(p?.display_name ?? null);
+          setNameDraft(p?.display_name ?? '');
+          const bd = p?.birth_date ?? null;
+          setAgeStatus(bd ? (isAdult(bd) ? 'adult' : 'blocked') : 'needed');
+        })
+        .catch(() => {
+          // 🔞 fail CLOSED to the declaration screen, never to a stuck
+          // 'checking' spinner: a failed profile fetch must not
+          // deadlock sign-in (the declaration save retries the write).
+          setAgeStatus('needed');
+        });
+      // P1-2: transition to signed-in BEFORE the spaces load so a spaces
+      // failure can never strand authState at 'loading' (the old ordering
+      // left a half-booted UI: loading cleared by the finally below while
+      // authState never advanced). loadSpaces never throws — it reports
+      // failure via the retryable boot-error banner.
+      setAuthState('signed-in');
+      // Bounded for the same reason: a stalled spaces fetch must not
+      // hold first paint. On timeout we land on the retryable boot-error
+      // state; if the abandoned load later completes it self-heals.
+      const spacesOk = await withTimeout(loadSpaces(user.id), 12000);
+      if (spacesOk === null) {
+        setSpaces([]);
+        setBootError(true);
+      }
+      // 📥 replay queued offline creates from a previous session
+      void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
+      // custom-tab free-tier cap (future paid plans raise it)
+      engine
+        .getCustomTabLimit(user.id)
+        .then(setTabLimit)
+        .catch(() => {});
+      // CFP-01 item 7: custom-spaces base limit (server also honors plans/grants)
+      engine
+        .getCustomSpacesLimit(user.id)
+        .then(setCustomSpacesLimit)
+        .catch(() => {});
+      // trash retention tier: 0 = free (permanent delete), 30 = Plus (30-day trash)
+      engine
+        .getTrashRetention(user.id)
+        .then(setTrashRetention)
+        .catch(() => {});
+      // secret vault tab (paid feature; owner-only settings)
+      engine
+        .getSecretVault(user.id)
+        .then(setSecretVault)
+        .catch(() => {});
+      // 👻 ghost key: master + decoy-master hashes live in memory only (never persisted);
+      // state drives the profile setup forms
+      engine
+        .getMasterHashes(user.id)
+        .then((h) => { masterHashRef.current = h.master; decoyMasterHashRef.current = h.decoy; setDecoyMasterSet(!!h.decoy); })
+        .catch(() => {});
+      engine
+        .getVaultMasterState(user.id)
+        .then((st) => { setMasterState(st); setRecoveryInfo(recoveryWaitInfo(st.recoveryRequestedAt)); })
+        .catch(() => {});
+      // family slots (paid hook): 1 = free tier, first family free
+      engine
+        .getFamilySlots(user.id)
+        .then(setFamilySlots)
+        .catch(() => {});
+      // remote config: feature flags (kill switches) + broadcasts + plans
+      fetchRemoteConfig()
+        .then((cfg) => {
+          if (cfg) setRemoteCfg(cfg);
+        })
+        .catch(() => {});
+      // restore last-viewed family (multi-family switcher)
+      AsyncStorage.getItem(ACTIVE_FAMILY_KEY)
+        .then((v) => { if (v) setActiveFamilyId(v); })
+        .catch(() => {});
+      // chat history: retention tier (future paid plans), draft restore, history list
+      // Fire-and-forget: the retention value only feeds a ref used later;
+      // it must not sit on the first-paint path.
+      void (async () => {
+        try {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('chat_retention_days')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (prof?.chat_retention_days) retentionDaysRef.current = prof.chat_retention_days;
+        } catch {
+          /* keep default 7 */
+        }
+      })();
+      // Phase E P2-3: sync device timezone → profiles.timezone (fire-and-forget)
+      engine.syncDeviceTimezone().catch(() => {});
+      try {
+        const raw = await AsyncStorage.getItem(ACTIVE_CHAT_KEY);
+        if (raw) {
+          const d = JSON.parse(raw) as {
+            sessionId: string;
+            messages: ChatMsg[];
+            updatedAt: number;
+          };
+          if (Date.now() - d.updatedAt > HISTORY_IDLE_MS) {
+            // stale draft (app was killed long ago) → archive it silently
+            // (background: a network write must not gate first paint)
+            if (d.messages?.length > 0) void persistSession(d.sessionId, d.messages, user.id);
+            await clearDraft();
+          } else if (d.messages?.length > 0) {
+            sessionIdRef.current = d.sessionId;
+            setMessages(d.messages);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      loadHistory();
+      // Phase 3: register this device for family push notifications (no-op on web)
+      registerForPushNotifications().then((token) => {
+        if (token) engine.registerPushToken(user.id, token, Platform.OS).catch(() => {});
+      });
+    } catch (e) {
+      console.warn('boot failed', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [persistSession, clearDraft, loadHistory, loadSpaces, decoyMasterHashRef, masterHashRef, setDecoyMasterSet, setMasterState, setRecoveryInfo, setSecretVault]);
+
+  const handleAuthEvent = useCallback(
+    (event: string, session: { user: { id: string; is_anonymous?: boolean } } | null) => {
+      if (event === 'SIGNED_OUT') {
+        setUserId(null);
+        setUserEmail(null);
+        setMemberSince(null);
+        setDisplayName(null);
+        setNameDraft('');
+        setSpaces([]);
+        setBootError(false);
+        setViewSpace(null);
+        setView('chat');
+        setIsAnonymous(false);
+        setAgeStatus('checking');
+        setDobDraft('');
+        setDobError(null);
+        setDobSaving(false);
+        setAuthState('signed-out');
+        // D6 review N1: clear the maintenance scan so a second user in
+        // the same session never sees the first user's counts (and gets
+        // their own scan). The setters are declared later in this
+        // component; this handler only runs after render completes.
+        setMaintScan(null);
+        setMaintDismissed(false);
+        maintScanDoneRef.current = false;
+      } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
+        // magic-link return, or anonymous → permanent upgrade
+        boot();
+      }
+    },
+    [boot],
+  );
+
+  useEffect(() => {
+    // async boundary: boot() sets state, keep it out of the sync effect body
+    (async () => {
+      await boot();
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange(handleAuthEvent);
+    return () => {
+      sub.subscription.unsubscribe();
+      Object.values(pollers.current).forEach(clearInterval);
+      itemsSub.current?.();
+    };
+  }, [boot, handleAuthEvent]);
+
+  const doUpgrade = useCallback(async () => {
+    const clean = upgradeEmail.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) {
+      setUpgradeError(t('invalidEmail'));
+      return;
+    }
+    setUpgradeBusy(true);
+    setUpgradeError(null);
+    try {
+      await linkEmailToAnonymous(clean);
+      setUpgradeSent(true);
+    } catch (e) {
+      setUpgradeError(e instanceof Error ? e.message : t('genericFail'));
+    } finally {
+      setUpgradeBusy(false);
+    }
+  }, [upgradeEmail]);
+
+  const doSignOut = useCallback(async () => {
+    try {
+      await signOut();
+    } catch (e) {
+      console.warn('sign out failed', e);
+    }
+  }, []);
+
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+
+  // ── P2-1: crash/error telemetry — the global handler reports to the
+  // server (error class only, never user content), then chains to the
+  // previous handler so the red screen / crash behavior is unchanged.
+  useEffect(() => {
+    const report = (message: string, stack?: string) => {
+      try {
+        supabase.functions
+          .invoke('report-error', {
+            body: {
+              message: String(message).slice(0, 300),
+              stack: stack ? String(stack).slice(0, 1000) : undefined,
+              context: 'global',
+            },
+          })
+          .catch(() => {});
+      } catch {
+        /* telemetry never breaks the app */
+      }
+    };
+    const prev = (ErrorUtils as { getGlobalHandler?: () => ((e: unknown, fatal?: boolean) => void) | undefined }).getGlobalHandler?.();
+    (ErrorUtils as { setGlobalHandler: (h: (e: unknown, fatal?: boolean) => void) => void }).setGlobalHandler(
+      (error, isFatal) => {
+        const err = error as { message?: string; stack?: string } | null;
+        report(`${isFatal ? 'fatal: ' : ''}${err?.message ?? String(error)}`, err?.stack);
+        if (prev) prev(error, isFatal);
+      },
+    );
+    return () => {
+      if (prev) {
+        (ErrorUtils as { setGlobalHandler: (h: (e: unknown, fatal?: boolean) => void) => void }).setGlobalHandler(prev);
+      }
+    };
+  }, []);
+
+  // ── P2-4: data portability — export my data ──────────────────────────
+  const doExportData = useCallback(async () => {
+    if (privacyBusy) return;
+    setPrivacyBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('account-export', { body: {} });
+      if (error) throw error;
+      const d = data as { ok?: boolean; export?: unknown; error?: string } | null;
+      if (!d?.ok || !d.export) throw new Error(d?.error || t('genericFail'));
+      const json = JSON.stringify(d.export, null, 2);
+      closeMenu();
+      if (Platform.OS === 'web') {
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mawjood-export.json';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } else {
+        await Share.share({ message: json, title: t('exportDataTitle') });
+      }
+    } catch (e) {
+      Alert.alert(t('genericFail'), e instanceof Error ? e.message : t('genericFail'));
+    } finally {
+      setPrivacyBusy(false);
+    }
+  }, [privacyBusy, closeMenu]);
+
+  // ── P2-4: right to be forgotten — double confirm, then server wipes all ──
+  const doDeleteAccount = useCallback(async () => {
+    closeMenu();
+    const first = Platform.OS === 'web'
+      ? window.confirm(`${t('deleteAccountTitle')}\n\n${t('deleteAccountWarn1')}`)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert(t('deleteAccountTitle'), t('deleteAccountWarn1'), [
+            { text: t('cancel'), style: 'cancel', onPress: () => resolve(false) },
+            { text: t('yesDeleteAccount'), style: 'destructive', onPress: () => resolve(true) },
+          ]);
+        });
+    if (!first) return;
+    const second = Platform.OS === 'web'
+      ? window.confirm(`${t('deleteAccountTitle')}\n\n${t('deleteAccountWarn2')}`)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert(t('deleteAccountTitle'), t('deleteAccountWarn2'), [
+            { text: t('cancel'), style: 'cancel', onPress: () => resolve(false) },
+            { text: t('yesDeleteAccount'), style: 'destructive', onPress: () => resolve(true) },
+          ]);
+        });
+    if (!second) return;
+    try {
+      const { data, error } = await supabase.functions.invoke('account-delete', {
+        body: { confirm: true },
+      });
+      if (error) throw error;
+      const d = data as { ok?: boolean; error?: string } | null;
+      if (!d?.ok) throw new Error(d?.error || t('genericFail'));
+      await signOut();
+    } catch (e) {
+      Alert.alert(t('genericFail'), e instanceof Error ? e.message : t('genericFail'));
+    }
+  }, [closeMenu]);
+
+  // chat lifecycle: the current chat stays open 2 min after backgrounding
+  // (grace period); past that it's archived into history and a fresh chat
+  // starts. Tapping "new chat" archives immediately — same as ChatGPT.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        // 📥 back online/foreground: replay anything the outbox queued
+        void engine.flushOutbox().then(() => refreshPendingSync()).catch(() => {});
+      }
+      if (s === 'background') {
+        backgroundedAtRef.current = Date.now();
+        saveDraft(messagesRef.current, sessionIdRef.current);
+        // (6.3) an open vault or management screen must never survive the
+        // background — the next foreground starts clean, as if it was closed
+        setSecretVaultId(null);
+        closeMgmt();
+        try {
+          Speech.stop();
+        } catch {
+          /* ignore */
+        }
+      } else if (s === 'active') {
+        refreshTheme(); // auto dark/light follows the time of day
+        const away = Date.now() - backgroundedAtRef.current;
+        backgroundedAtRef.current = 0;
+        if (away > HISTORY_IDLE_MS) {
+          startNewChat();
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [saveDraft, startNewChat, refreshTheme, closeMgmt, setSecretVaultId]);
+
+  /** t('exampleTask') in the family space → creates an assigned task item. */
+  const maybeAssignTask = useCallback(
+    async (spaceType: SpaceType, text: string, spaceId: string, uid: string) => {
+      if (spaceType !== 'family') return;
+      const asg = parseAssignment(text);
+      if (!asg) return;
+      try {
+        const { item: it } = await engine.createItemOfflineFirst({
+          spaceId,
+          kind: 'task',
+          title: asg.task,
+          assignedTo: asg.name,
+          userId: uid,
+        });
+        void refreshPendingSync();
+        setTasks((prev) => [it, ...prev]);
+        pushMsg('app', tx('taskAssigned', { name: asg.name, task: asg.task }));
+        engine
+          .notifySpace(spaceId, t('familyTask'), `${asg.name}: ${asg.task}`, uid)
+          .catch(() => {});
+      } catch (e) {
+        console.warn('assign-task failed', e);
+      }
+    },
+    [pushMsg, setTasks],
+  );
+
+  /**
+   * "يا جون جيب تفاح خيار بندورة" → creates a shopping list for جون,
+   * notifies ONLY him (targeted push), everyone sees the list in the
+   * family space. Returns true when handled (caller skips the agent).
+   * Falls through to the normal flow when the name doesn't resolve —
+   * never notify the wrong person.
+   */
+  // ── 🔍 detective + 👨‍👩‍👧 family broadcast ─────────────────────────────
+  // "ضيّعت الريموت" → ranked search plan + an interactive check-off
+  // session ("شطبت الصالون" / "لقيته!" / "بث للعيلة").
+  // "اسأل العيلة …" → the question pushed to every family member.
+  // Runs FIRST in the interception chain: an active search conversation
+  // must win over every other parser.
+  const activeSearchRef = useRef<SearchSession | null>(null);
+  // 🛒 smart shopping: the last suggestions ("شو ناقصنا؟") so "ضيفهم" can add them
+  const smartSuggestionsRef = useRef<string[] | null>(null);
+  // 🧠 user memory: cached facts ("ناديني أبو كريم") injected into the agent prompt
+  const memoriesRef = useRef<MemoryFact[] | null>(null);
+  // 👍👎 feedback: last user question (paired with the next agent answer) + voted message ids
+  const lastQuestionRef = useRef<string>('');
+  const [voted, setVoted] = useState<Record<string, 'up' | 'down'>>({});
+
+  const looksLikeOtherCommand = useCallback((text: string): boolean => {
+    return (
+      !!parseDirectedShopping(text) ||
+      !!parseExpenseRecord(text) ||
+      !!parseExpenseQuery(text) ||
+      isDigestRequest(text) ||
+      !!parseBroadcast(text) ||
+      !!parseTakeTo(text) ||
+      !!parseWatchReply(text) ||
+      !!parseHabitQuery(text) ||
+      !!parseTimelineQuery(text) ||
+      !!parseSmartQuery(text) ||
+      !!parseSmartAdd(text) ||
+      !!parseMemoryStatement(text) ||
+      detectOutOfScope(text).out
+    );
+  }, []);
+
+  const doBroadcast = useCallback(
+    async (question: string, noteId?: string): Promise<boolean> => {
+      const famId = spaceIdByType('family');
+      if (!famId || !userId) return false;
+      try {
+        const { recipients } = await sendFamilyBroadcast(engine, {
+          spaceId: famId,
+          question,
+          senderName: displayName ?? userEmail ?? '',
+          senderUserId: userId,
+        });
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        const msg = formatBroadcastSent(question, recipients);
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        if (e instanceof NoFamilyMembersError) {
+          if (noteId) {
+            try {
+              await engine.deleteNote(noteId);
+            } catch {
+              /* best effort */
+            }
+          }
+          const msg = formatNoMembers();
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        }
+        console.warn('family broadcast failed', e);
+        return false;
+      }
+    },
+    [userId, spaceIdByType, displayName, userEmail, pushMsg, speak],
+  );
+
+  const maybeDetective = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      const dropNote = async () => {
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+      };
+      const session = activeSearchRef.current;
+
+      // ── an active search: follow-ups ──
+      if (session) {
+        // "لقيته!" → celebrate, ask where, save the answer as place memory
+        if (parseFoundIt(text)) {
+          session.awaitingPlace = true;
+          await dropNote();
+          const msg = formatFoundAsk();
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        }
+        // "شطبت الصالون" → mark checked, suggest the next spot
+        const checked = parseCheckedPlace(text);
+        if (checked) {
+          const hit = checkPlace(session, checked);
+          await dropNote();
+          const msg = hit ? formatChecked(session, hit) : tx('detectivePlaceUnknown', { place: checked });
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        }
+        // "بث للعيلة" → family broadcast about the lost item
+        const bq = parseBroadcast(text, session.item);
+        if (bq) return doBroadcast(bq, noteId);
+        // the "وين لقيته؟" answer → save it (unless it's another command)
+        if (session.awaitingPlace && !looksLikeOtherCommand(text)) {
+          try {
+            const famId = spaceIdByType('family') ?? spaceIdByType('private');
+            if (!famId) return false;
+            await engine.createItemOfflineFirst({
+              spaceId: famId,
+              kind: 'place',
+              title: session.item,
+              details: text,
+              userId,
+            });
+            void refreshPendingSync();
+            await dropNote();
+            activeSearchRef.current = null;
+            const msg = formatPlaceSaved(session.item, text);
+            pushMsg('app', msg);
+            speak(msg);
+            return true;
+          } catch (e) {
+            console.warn('detective place save failed', e);
+            return false;
+          }
+        }
+        return false; // session stays alive; other parsers / the agent handle it
+      }
+
+      // ── no active search: new lost reports + standalone broadcasts ──
+      const lost = parseLostReport(text);
+      if (lost) {
+        try {
+          const plan = await buildSearchPlan(engine, lost);
+          activeSearchRef.current = startSession(plan);
+          await dropNote();
+          const msg = formatSearchPlan(plan);
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        } catch (e) {
+          console.warn('detective plan failed', e);
+          return false;
+        }
+      }
+      const bq = parseBroadcast(text);
+      if (bq) return doBroadcast(bq, noteId);
+      return false;
+    },
+    [userId, spaceIdByType, pushMsg, speak, doBroadcast, looksLikeOtherCommand],
+  );
+
+  const maybeWatch = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      const dropNote = async () => {
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+      };
+
+      // "أخذت المفك على الكراج" → watch item + a 4h "رجّعته لمكانه؟" nudge
+      const take = parseTakeTo(text);
+      if (take) {
+        try {
+          const famId = spaceIdByType('family') ?? spaceIdByType('private');
+          if (!famId) return false;
+          const { homePlace } = await createWatch(engine, {
+            spaceId: famId,
+            userId,
+            item: take.item,
+            place: take.place,
+          });
+          await dropNote();
+          const msg = formatWatchCreated(take.item, homePlace);
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        } catch (e) {
+          console.warn('watch create failed', e);
+          return false; // falls through to the agent
+        }
+      }
+
+      // "وين بلاقي الريموت عادة؟" → habit answer ("9 من 10 مرات")
+      const hq = parseHabitQuery(text);
+      if (hq) {
+        try {
+          const habits = await getPlaceHabits(engine, hq);
+          await dropNote();
+          const msg = formatHabit(hq, habits);
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        } catch (e) {
+          console.warn('habit query failed', e);
+          return false;
+        }
+      }
+
+      // "رجعته" / "لسا" → resolve / snooze an open watch
+      const reply = parseWatchReply(text);
+      if (reply) {
+        try {
+          const watches = await listOpenWatches(engine);
+          const target = resolveWatchReply(watches, reply);
+          if (target === null) return false; // no open watches → the agent handles it
+          await dropNote();
+          if (target === 'ambiguous') {
+            const msg = formatWatchWhich(watches);
+            pushMsg('app', msg);
+            speak(msg);
+            return true;
+          }
+          if (reply.action === 'done') {
+            await engine.resolveWatch(target.id);
+            const msg = formatWatchDone(target.title);
+            pushMsg('app', msg);
+            speak(msg);
+          } else {
+            await engine.setItemDueAt(target.id, snoozeDueAt());
+            const msg = formatWatchSnoozed(target.title);
+            pushMsg('app', msg);
+            speak(msg);
+          }
+          return true;
+        } catch (e) {
+          console.warn('watch reply failed', e);
+          return false;
+        }
+      }
+      return false;
+    },
+    [userId, spaceIdByType, pushMsg, speak],
+  );
+
+  // 🕰️ "وين كان المفك؟" → the item's timeline (places + borrows + watches)
+  const maybeTimeline = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      const item = parseTimelineQuery(text);
+      if (!item) return false;
+      try {
+        const events = await getItemTimeline(engine, item);
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        const msg = formatTimeline(item, events);
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('timeline failed', e);
+        return false; // falls through to the agent
+      }
+    },
+    [userId, pushMsg, speak],
+  );
+
+  // 🛒 "شو ناقصنا؟" → rhythm-based suggestions; "ضيفهم" → new list
+  const maybeSmartShopping = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      const dropNote = async () => {
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+      };
+
+      // follow-up: add the last suggestions to a new list
+      if (parseSmartAdd(text) && smartSuggestionsRef.current?.length) {
+        try {
+          const famId = spaceIdByType('family') ?? spaceIdByType('private');
+          if (!famId) return false;
+          const items = smartSuggestionsRef.current;
+          smartSuggestionsRef.current = null;
+          const title = t('smartListTitle');
+          await engine.createShoppingList({
+            spaceId: famId,
+            title,
+            assignedTo: null,
+            assignedName: null,
+            items,
+            userId,
+          });
+          await dropNote();
+          const msg = formatSmartAdded(title, items);
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        } catch (e) {
+          console.warn('smart add failed', e);
+          return false;
+        }
+      }
+
+      if (!parseSmartQuery(text)) return false;
+      try {
+        const famId = spaceIdByType('family') ?? spaceIdByType('private');
+        if (!famId) return false;
+        const history = await getBuyHistory(engine, famId);
+        const rhythms = getSuggestions(computeRhythms(history));
+        smartSuggestionsRef.current = rhythms.length > 0 ? rhythms.map((s) => s.item) : null;
+        await dropNote();
+        const msg = formatSuggestions(rhythms);
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('smart shopping failed', e);
+        return false;
+      }
+    },
+    [userId, spaceIdByType, pushMsg, speak],
+  );
+
+  const maybeDirectedShopping = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      const parsed = parseDirectedShopping(text);
+      if (!parsed || !userId) return false;
+      const famId = spaceIdByType('family');
+      if (!famId) return false;
+      let members: FamilyMember[] | null = null;
+      try {
+        members = await engine.getFamilyMembers(famId);
+      } catch {
+        return false;
+      }
+      const match = resolveFamilyMember(parsed.name, members ?? []);
+      // Unresolved name → still create the list, but unassigned (visible to
+      // the whole family, no push). Never fail silently: the chat message
+      // says exactly what happened.
+      const items = splitShoppingItems(parsed.itemsRaw);
+      if (items.length === 0) return false;
+      const assigneeName = match?.display_name ?? parsed.name;
+      try {
+        const list = await engine.createShoppingList({
+          spaceId: famId,
+          title: tx('shopListTitle', { name: assigneeName }),
+          assignedTo: match?.user_id ?? null,
+          assignedName: match?.display_name ?? null,
+          items,
+          userId,
+        });
+        // the list IS the record — drop the raw voice note now (only after
+        // the list exists) so extraction can't duplicate its items
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        setShopLists((prev) => [list, ...prev]);
+        let msg: string;
+        if (match?.user_id) {
+          // targeted push: only the assignee, never the whole family
+          const speaker = displayName ?? userEmail ?? '';
+          engine
+            .notifyUser(
+              match.user_id,
+              t('shopListPushTitle'),
+              tx('shopListPushBody', {
+                by: speaker,
+                items: items.join('، '),
+              }),
+            )
+            .catch(() => {});
+          msg = tx('shopListCreated', {
+            name: assigneeName,
+            items: items.join('، '),
+          });
+        } else {
+          msg = tx('shopListUnassigned', {
+            name: parsed.name,
+            items: items.join('، '),
+          });
+        }
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('directed-shopping failed', e);
+        return false;
+      }
+    },
+    [userId, spaceIdByType, displayName, userEmail, pushMsg, speak, setShopLists],
+  );
+
+  /**
+   * ☀️ Morning digest — "شو عندي اليوم؟" → today's appointments +
+   * due/overdue tasks + open shopping lists + open borrows, formatted by
+   * the digest engine (src/lib/morningDigest.ts). Returns true when handled
+   * (caller skips the agent). A question is not a note — the raw voice
+   * note is dropped, like other questions. On failure returns false so
+   * the agent still gets a chance to answer.
+   */
+  const maybeMorningDigest = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!isDigestRequest(text) || !userId) return false;
+      try {
+        const data = await fetchDigestData(engine);
+        const msg = formatDigest(data);
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('morning-digest failed', e);
+        return false;
+      }
+    },
+    [userId, pushMsg, speak],
+  );
+
+  /**
+   * 💰 Household-expenses interception ("صرفت 40 على الخضرة" → record;
+   * "قديش صرفنا هالشهر؟" → summary). Deterministic front-door for the
+   * expenses engine (src/lib/expenses.ts). Returns true when handled.
+   * Records go to the family space (fallback: private); the raw note is
+   * dropped after handling, like other commands. On failure returns false
+   * so the agent gets its turn.
+   */
+  const maybeExpense = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      // ── record: "صرفت 40 على الخضرة" ──
+      const rec = parseExpenseRecord(text);
+      if (rec) {
+        try {
+          const famId = spaceIdByType('family') ?? spaceIdByType('private');
+          if (!famId) return false;
+          await recordExpense(engine, {
+            spaceId: famId,
+            userId,
+            title: rec.title,
+            amount: rec.amount,
+            paidBy: displayName ?? userEmail ?? null,
+          });
+          if (noteId) {
+            try {
+              await engine.deleteNote(noteId);
+            } catch {
+              /* best effort */
+            }
+          }
+          const msg = formatExpenseRecorded(rec);
+          pushMsg('app', msg);
+          speak(msg);
+          return true;
+        } catch (e) {
+          console.warn('expense record failed', e);
+          return false;
+        }
+      }
+      // ── query: "قديش صرفنا هالشهر؟" (across all spaces) ──
+      const q = parseExpenseQuery(text);
+      if (!q) return false;
+      try {
+        const spaces = await engine.listSpaces();
+        const items = await fetchAllExpenses(engine, spaces);
+        const summary = summarizeExpenses(items, q);
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        const msg = formatExpenseSummary(summary);
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('expense query failed', e);
+        return false;
+      }
+    },
+    [userId, spaceIdByType, displayName, userEmail, pushMsg, speak],
+  );
+
+  /**
+   * 🧠 User-memory interception ("ناديني أبو كريم" / "الخضرة عندي يعني بندورة").
+   * Deterministic front-door for the userMemory engine (src/lib/userMemory.ts):
+   * explicit "remember this about me" statements are stored as items with
+   * kind='memory' (upsert by key — no duplicates) instead of becoming junk
+   * notes. The facts are injected into the agent prompt on every turn
+   * (getMemories → engine.chat). Returns true when handled.
+   */
+  const memoryClient = useMemo<MemoryClient>(
+    () => ({
+      listMemoryItems: async (sid: string) =>
+        (await engine.listItems(sid)).filter((i) => i.kind === 'memory' && i.status === 'open'),
+      deleteMemoryItem: async (id: string) => {
+        // D2 (spec §1 contract): a saved memory is NEVER hard-deleted
+        // from the client — replacing a restated fact sends the old row
+        // to trash (recoverable for the retention window; only the
+        // engine's trash purge may ever delete it). listMemoryItems
+        // filters status='open', so the flow is unchanged.
+        const { data: row } = await supabase.from('items').select('meta').eq('id', id).maybeSingle();
+        const { error } = await supabase.from('items').update({
+          status: 'trashed',
+          meta: {
+            ...((row as any)?.meta ?? {}),
+            trashed_at: new Date().toISOString(),
+            trash_reason: 'replaced_by_restatement',
+          },
+        }).eq('id', id);
+        if (error) throw error;
+      },
+      createMemoryItem: async (input) => {
+        await engine.createItemOfflineFirst({
+          spaceId: input.spaceId,
+          kind: 'memory',
+          title: input.title,
+          details: input.details,
+          meta: input.meta,
+          userId: input.userId,
+        });
+      },
+    }),
+    [],
+  );
+
+  /** cached facts; invalidated whenever a fact is saved */
+  const getMemories = useCallback(async (): Promise<MemoryFact[]> => {
+    if (memoriesRef.current) return memoriesRef.current;
+    const pid = spaceIdByType('private');
+    if (!pid) return [];
+    try {
+      const facts = await loadMemoryFacts(memoryClient, pid);
+      memoriesRef.current = facts;
+      return facts;
+    } catch {
+      return [];
+    }
+  }, [spaceIdByType, memoryClient]);
+
+  // ── D6 T-D6-1: memory-maintenance surfacing. A read-only scan of the
+  // private space (once per session) feeds a dismissible banner; acting
+  // on it happens in chat through the confirmation rails — this surface
+  // never writes or deletes anything.
+  const [maintScan, setMaintScan] = useState<MemoryMaintenanceScan | null>(null);
+  const [maintDismissed, setMaintDismissed] = useState(false);
+  const maintScanDoneRef = useRef(false);
+  useEffect(() => {
+    if (authState !== 'signed-in' || maintScanDoneRef.current) return;
+    (async () => {
+      try {
+        const pid = spaceIdByType('private');
+        if (!pid) return;
+        const rows = await memoryClient.listMemoryItems(pid);
+        setMaintScan(scanMemoryMaintenance(rows));
+        // Mark done only AFTER a successful scan (review N2) — a
+        // transient failure must not suppress the banner all session.
+        maintScanDoneRef.current = true;
+      } catch {
+        /* surfacing is best-effort — silence is the failure mode */
+      }
+    })();
+  }, [authState, spaceIdByType, memoryClient]);
+
+  const maybeMemory = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!userId) return false;
+      const fact = parseMemoryStatement(text, getLang());
+      if (!fact) return false;
+      try {
+        const pid = spaceIdByType('private');
+        if (!pid) return false;
+        await upsertMemoryFact(memoryClient, pid, userId, fact);
+        memoriesRef.current = null; // refresh the prompt-injection cache
+        if (noteId) {
+          try {
+            await engine.deleteNote(noteId);
+          } catch {
+            /* best effort */
+          }
+        }
+        const msg = formatMemorySaved(fact, getLang());
+        pushMsg('app', msg);
+        speak(msg);
+        return true;
+      } catch (e) {
+        console.warn('memory save failed', e);
+        return false;
+      }
+    },
+    [userId, spaceIdByType, memoryClient, pushMsg, speak],
+  );
+
+  /**
+   * 🛡️ Scope-guard interception ("شو عاصمة فرنسا؟" → polite decline).
+   * Runs AFTER every feature engine and BEFORE the agent: clearly
+   * out-of-scope inputs (general knowledge, weather, news/sports, jokes,
+   * translation) never reach the model. Conservative by design — anything
+   * ambiguous passes through to the agent.
+   */
+  const maybeScopeGuard = useCallback(
+    async (text: string, noteId?: string): Promise<boolean> => {
+      if (!detectOutOfScope(text).out) return false;
+      if (noteId) {
+        try {
+          await engine.deleteNote(noteId);
+        } catch {
+          /* best effort */
+        }
+      }
+      const msg = formatScopeRedirect(getLang());
+      pushMsg('app', msg);
+      speak(msg);
+      return true;
+    },
+    [pushMsg, speak],
+  );
+
+  /**
+   * 👍👎 Answer feedback: records a vote as an items row with kind='feedback'
+   * (meta = { rating, question, answer }) — the learning signal the app
+   * accumulates for future few-shot / fine-tuning. Silent best-effort.
+   */
+  const voteAnswer = useCallback(
+    async (msgId: string, rating: 'up' | 'down', answer: string) => {
+      if (!userId || voted[msgId]) return;
+      setVoted((p) => ({ ...p, [msgId]: rating }));
+      try {
+        tap();
+      } catch {
+        /* haptics best effort */
+      }
+      try {
+        const pid = spaceIdByType('private') ?? spaceIdByType('family');
+        if (!pid) return;
+        await engine.createItemOfflineFirst({
+          spaceId: pid,
+          kind: 'feedback',
+          title: rating === 'up' ? '👍 جواب عجبني' : '👎 جواب ما عجبني',
+          details: lastQuestionRef.current.slice(0, 200),
+          meta: {
+            rating,
+            question: lastQuestionRef.current.slice(0, 300),
+            answer: answer.slice(0, 300),
+          },
+          userId,
+        });
+      } catch (e) {
+        console.warn('feedback save failed', e);
+      }
+    },
+    [userId, voted, spaceIdByType],
+  );
+
+  // ── chat: voice note polling ──
+  // ── legacy pipeline (route → ask/correct/save): fallback when the agent is unreachable ──
+  const legacyVoice = useCallback(
+    async (transcript: string, n: { id: string }, msgId: string) => {
+      updateMsg(msgId, { text: transcript, pending: false });
+      // AI router (with conversation memory) decides: answer it,
+      // save it, or treat it as a correction — like ChatGPT would.
+      const { action: route, space_type } = await routeInput(transcript);
+      if (route === 'question') {
+        try {
+          await engine.deleteNote(n.id);
+        } catch { /* best effort */ }
+        doAsk(transcript, null);
+        return;
+      }
+      if (route === 'correction') {
+        try {
+          await engine.deleteNote(n.id);
+        } catch { /* best effort */ }
+        doCorrect(transcript);
+        return;
+      }
+      // ── THE AI CHOSE THE SPACE (inside route). The app never asks. ──
+      // Notes land in private first (safest default); the router
+      // moves them to family/work when the content says so.
+      const finalType = space_type;
+      const targetId = spaceIdByType(finalType);
+      if (targetId) {
+        try {
+          await engine.moveNote(n.id, targetId);
+        } catch (e) {
+          console.warn('auto space move failed', e);
+        }
+        const msg = tx('savedInSpace', { space: spaceLabel(finalType) });
+        pushMsg('app', msg);
+        speak(msg);
+        if (userId) await maybeAssignTask(finalType, transcript, targetId, userId);
+      } else {
+        const msg = t('saved');
+        pushMsg('app', msg);
+        speak(msg);
+      }
+    },
+    [routeInput, doAsk, doCorrect, pushMsg, updateMsg, maybeAssignTask, userId, spaceIdByType, speak],
+  );
+
+  // ── THE AGENT BRAIN: one call understands + acts (with legacy fallback) ──
+  const doChatVoice = useCallback(
+    async (t: string, n: { id: string }, msgId: string) => {
+      voiceModeRef.current = true; // this whole exchange is voice → reply with voice
+      // 🔒👻🪞 (6.1) ghost intercept FIRST: a spoken vault/master/decoy word
+      // must never reach the agent, never be saved, never be shown. The voice
+      // note (already transcribed server-side) is hard-deleted and its chat
+      // bubble removed — as if it never happened.
+      if (await tryGhostIntercept(t)) {
+        removeMsg(msgId);
+        void engine.deleteNote(n.id).catch((e) => console.warn('ghost voice cleanup failed', e));
+        return;
+      }
+      updateMsg(msgId, { text: t, pending: false });
+      // "ضيّعت الريموت" (voice) → detective search plan; active-search
+      // follow-ups ("شطبت"، "لقيته"، "بث للعيلة") win over every parser
+      if (await maybeDetective(t, n.id)) return;
+      // "أخذت المفك على الكراج" (voice) → prevention watch; "رجعته"/"لسا"
+      // resolve it; "وين بلاقي الريموت عادة؟" → habit answer
+      if (await maybeWatch(t, n.id)) return;
+      // "وين كان المفك؟" (voice) → item timeline (no agent round-trip)
+      if (await maybeTimeline(t, n.id)) return;
+      // "شو ناقصنا؟" (voice) → smart shopping suggestions; "ضيفهم" → new list
+      if (await maybeSmartShopping(t, n.id)) return;
+      // "يا جون جيب تفاح…" (voice) → shopping list; the note is dropped, the list is the record
+      if (await maybeDirectedShopping(t, n.id)) return;
+      // "شو عندي اليوم؟" (voice) → morning digest; the question is not saved as a note
+      if (await maybeMorningDigest(t, n.id)) return;
+      // "صرفت 40 على الخضرة" / "قديش صرفنا هالشهر؟" (voice) → expenses engine
+      if (await maybeExpense(t, n.id)) return;
+      // "ناديني أبو كريم" (voice) → user-memory fact, not a junk note
+      if (await maybeMemory(t, n.id)) return;
+      // out-of-scope ("شو عاصمة فرنسا؟") → polite decline, never reaches the model
+      if (await maybeScopeGuard(t, n.id)) return;
+      lastQuestionRef.current = t;
+      const thinkId = pushMsg('app', '…', { pending: true });
+      const mems = await getMemories();
+      const chatResult = await withTimeoutResult(
         engine.chat(t, chatHistory(), n.id, null, getLang(), mems.map((m) => m.label)),
         30_000,
       ).catch(() => null);
@@ -2093,7 +3338,10 @@ export default function HomeScreen() {
       pushMsg('app', t('photoFailNote'));
     }
     const thinkId = pushMsg('app', '…', { pending: true });
-    const mems = (await withTimeout(getMemories(), 3_000).catch(() => null)) ?? [];
+    // Do not block the first chat request on a cold memory read. Use the
+    // already-cached facts now and warm the cache in the background.
+    const mems = memoriesRef.current ?? [];
+    void getMemories();
     const chatResult = await withTimeoutResult(
       engine.chat(clean, chatHistory(), undefined, photoUrl, getLang(), mems.map((m) => m.label)),
       30_000,
