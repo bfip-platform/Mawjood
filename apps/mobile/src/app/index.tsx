@@ -265,6 +265,8 @@ export default function HomeScreen() {
     setView('chat');
   }, []);
   const [savingText, setSavingText] = useState(false);
+  const [sendingText, setSendingText] = useState(false);
+  const textSendInFlightRef = useRef(false);
   const [asking, setAsking] = useState(false);
   // voice replies: a voice note gets a SPOKEN answer (like a live chat);
   // text stays text. voiceModeRef = last user input was voice.
@@ -3288,7 +3290,10 @@ export default function HomeScreen() {
    */
   const onSendText = useCallback(async (override?: string) => {
     const clean = (override ?? textNote).trim();
-    if (!clean || !userId) return;
+    if (!clean || !userId || textSendInFlightRef.current) return;
+    textSendInFlightRef.current = true;
+    setSendingText(true);
+    try {
     // 🔒👻🪞 ghost intercept: a saved code / master / decoy-master opens its
     // target — never saved as a note, never sent anywhere (see tryGhostIntercept)
     if (await tryGhostIntercept(clean)) {
@@ -3346,6 +3351,10 @@ export default function HomeScreen() {
     } else {
       removeMsg(thinkId);
       await legacyText(clean, photoUrl);
+    }
+    } finally {
+      textSendInFlightRef.current = false;
+      setSendingText(false);
     }
   }, [textNote, userId, pushMsg, updateMsg, removeMsg, chatHistory, legacyText, chatPhotoUri, maybeDetective, maybeWatch, maybeTimeline, maybeSmartShopping, maybeDirectedShopping, maybeMorningDigest, maybeExpense, maybeMemory, maybeScopeGuard, getMemories, tryGhostIntercept]);
 
@@ -5012,9 +5021,9 @@ export default function HomeScreen() {
               </View>
               <Pressable
                 onPress={textNote.trim() && !isRecording ? () => onSendText() : onRecordPress}
-                disabled={saving || savingText || asking}
+                disabled={saving || savingText || sendingText || asking}
                 accessibilityRole="button"
-                accessibilityState={{ disabled: saving || savingText || asking }}
+                accessibilityState={{ disabled: saving || savingText || sendingText || asking }}
                 accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
@@ -5023,7 +5032,7 @@ export default function HomeScreen() {
                   (saving || savingText || asking) && styles.micBtnDisabled,
                 ]}
               >
-                {saving || savingText ? (
+                {saving || savingText || sendingText ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={[styles.micBtnText, !isRecording && !!textNote.trim() && styles.micBtnTextSend]}>
