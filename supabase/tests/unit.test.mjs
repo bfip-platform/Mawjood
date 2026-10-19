@@ -3006,9 +3006,9 @@ describe('mobile drawer modal sequencing', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /after\?: \(\) => void/);
-    assert.match(close, /menuAfterDismissRef/, 'queued actions survive native modal dismissal');
-    assert.match(close, /setTimeout\(handleMenuDismiss, 80\)/, 'handoff waits for the overlay removal');
-    assert.match(close, /useNativeDriver: true/);
+    assert.match(close, /menuX\.stopAnimation\(\)/, 'stale animation cannot strand the overlay');
+    assert.match(close, /setMenuOpen\(false\)/, 'overlay is removed immediately');
+    assert.match(close, /requestAnimationFrame/, 'queued action waits one frame after removal');
     assert.match(idx, /profile-action-dispatch/);
     assert.match(idx, /setProfileOpen\(true\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
@@ -3041,10 +3041,11 @@ describe('first-run welcome hardening', () => {
 
 
 describe('drawer overlay dismissal sequencing', () => {
-  it('waits for drawer overlay removal before presenting a queued profile modal', () => {
+  it('removes the in-tree overlay before dispatching a queued profile action', () => {
     const idx = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     assert.match(idx, /\{menuOpen \? \([\s\S]*styles\.menuOverlay/, 'drawer renders as an in-tree overlay');
-    assert.match(idx, /menuAfterDismissRef/, 'drawer action is queued across dismissal');
-    assert.match(idx, /setTimeout\(handleMenuDismiss, 80\)/, 'drawer handoff is bounded');
+    const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
+    assert.match(close, /setMenuOpen\(false\)/, 'drawer is removed');
+    assert.match(close, /requestAnimationFrame/, 'action dispatch is deferred until after removal');
   });
 });
