@@ -3160,7 +3160,7 @@ export default function HomeScreen() {
         30_000,
       ).catch(() => null);
       if (!chatResult || chatResult.timedOut) {
-        updateMsg(thinkId, { text: t('genericFail'), pending: false });
+        updateMsg(thinkId, { text: tx('genericFail'), pending: false });
         return;
       }
       const r = chatResult.value;
