@@ -2905,6 +2905,11 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.equal(await withTimeout(Promise.resolve(42), 1000), 42);
     assert.equal(await withTimeout(new Promise((r) => setTimeout(() => r('late'), 200)), 30), null);
     await assert.rejects(withTimeout(Promise.reject(new Error('boom')), 1000), /boom/);
+    const { withTimeoutResult } = await import('../../apps/mobile/src/lib/withTimeout.ts');
+    const fast = await withTimeoutResult(Promise.resolve('ok'), 1000);
+    assert.deepEqual(fast, { timedOut: false, value: 'ok' });
+    const slow = await withTimeoutResult(new Promise((r) => setTimeout(() => r('late'), 200)), 30);
+    assert.deepEqual(slow, { timedOut: true });
   });
   it('boot-critical network awaits are bounded; the draft archive no longer gates first paint', () => {
     assert.ok(idx.includes('withTimeout(supabase.auth.getSession(), 12000)'), 'session establishment is bounded');
@@ -2919,6 +2924,11 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
     assert.ok(cm.includes('menuX.stopAnimation()'), 'a stale animation cannot strand the backdrop');
     assert.ok(cm.includes('setMenuOpen(false)'), 'close unmounts the backdrop synchronously');
+  });
+  it('chat requests are bounded and surface failures instead of leaving pending bubbles', () => {
+    assert.ok(idx.includes('withTimeoutResult('), 'chat uses a deadline-aware timeout');
+    assert.ok(idx.includes('30_000'), 'chat timeout is 30 seconds');
+    assert.ok(idx.includes("text: t('genericFail'), pending: false"), 'chat timeout clears the pending bubble');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
