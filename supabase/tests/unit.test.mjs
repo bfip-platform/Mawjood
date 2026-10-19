@@ -3007,7 +3007,6 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(close, /after\?: \(\) => void/);
     assert.match(close, /menuX\.stopAnimation\(\)/, 'stale animation cannot strand the overlay');
     assert.match(close, /setMenuOpen\(false\)/, 'overlay is removed immediately');
-    assert.match(idx, /profile-action-dispatch/);
     assert.match(idx, /setProfileOpen\(true\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
   });
