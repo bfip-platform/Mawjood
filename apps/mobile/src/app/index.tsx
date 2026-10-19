@@ -1462,6 +1462,7 @@ export default function HomeScreen() {
   }, []);
 
   // ── side menu open/close (slides from the left) ──
+  // Legacy menuAfterDismissRef handoff is intentionally removed: this drawer is in-tree.
   // The drawer is rendered in-tree, so it does not need native-Modal
   // dismissal handoff or overlapping animation timers. Close it
   // synchronously, then dispatch the requested action on the next frame.
