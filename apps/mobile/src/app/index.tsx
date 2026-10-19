@@ -1469,7 +1469,7 @@ export default function HomeScreen() {
   const closeMenu = useCallback((after?: () => void) => {
     const hasAfter = !!after;
     drawerTrace('close-menu-called', { hasAfter });
-    setHistVisible(5);
+    setHistVisible(5); // collapse the history list back to 5 next open
     menuX.stopAnimation();
     menuX.setValue(-320);
     setMenuOpen(false);
