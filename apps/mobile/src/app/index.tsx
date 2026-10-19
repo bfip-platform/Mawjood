@@ -3336,7 +3336,7 @@ export default function HomeScreen() {
       pushMsg('app', t('photoFailNote'));
     }
     const thinkId = pushMsg('app', '…', { pending: true });
-    const mems = await getMemories();
+    const mems = await withTimeout(getMemories(), 3_000).catch(() => []);
     const chatResult = await withTimeoutResult(
       engine.chat(clean, chatHistory(), undefined, photoUrl, getLang(), mems.map((m) => m.label)),
       30_000,
