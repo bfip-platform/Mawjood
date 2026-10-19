@@ -2917,7 +2917,8 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
     assert.ok(cm.includes('menuX.stopAnimation()'), 'a stale animation cannot strand the backdrop');
     assert.ok(cm.includes('setMenuOpen(false)'), 'close unmounts the backdrop synchronously');
-    assert.ok(cm.includes('requestAnimationFrame'), 'queued actions dispatch after the drawer is removed');
+    assert.ok(cm.includes("drawerTrace('menu-action-dispatch')"), 'queued actions dispatch after the drawer close is requested');
+    assert.ok(cm.indexOf('setMenuOpen(false)') < cm.indexOf("drawerTrace('menu-action-dispatch')"), 'close state is set before dispatch');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
@@ -3008,7 +3009,8 @@ describe('mobile drawer modal sequencing', () => {
     assert.match(close, /after\?: \(\) => void/);
     assert.match(close, /menuX\.stopAnimation\(\)/, 'stale animation cannot strand the overlay');
     assert.match(close, /setMenuOpen\(false\)/, 'overlay is removed immediately');
-    assert.match(close, /requestAnimationFrame/, 'queued action waits one frame after removal');
+    assert.match(close, /drawerTrace\('menu-action-dispatch'\)/, 'queued action dispatches in the same interaction after close state is set');
+    assert.ok(close.indexOf('setMenuOpen(false)') < close.indexOf("drawerTrace('menu-action-dispatch')"), 'close state precedes action dispatch');
     assert.match(idx, /profile-action-dispatch/);
     assert.match(idx, /setProfileOpen\(true\)/);
     assert.match(idx, /closeMenu\(\(\) => setAboutOpen\(true\)\)/);
@@ -3046,6 +3048,7 @@ describe('drawer overlay dismissal sequencing', () => {
     assert.match(idx, /\{menuOpen \? \([\s\S]*styles\.menuOverlay/, 'drawer renders as an in-tree overlay');
     const close = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1300);
     assert.match(close, /setMenuOpen\(false\)/, 'drawer is removed');
-    assert.match(close, /requestAnimationFrame/, 'action dispatch is deferred until after removal');
+    assert.match(close, /drawerTrace\('menu-action-dispatch'\)/, 'action dispatch is explicit after the close state update');
+    assert.ok(close.indexOf('setMenuOpen(false)') < close.indexOf("drawerTrace('menu-action-dispatch')"), 'drawer close precedes action dispatch');
   });
 });
