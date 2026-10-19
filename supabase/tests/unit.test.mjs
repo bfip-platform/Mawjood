@@ -2913,11 +2913,11 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
     assert.ok(!boot.includes('await persistSession('), 'stale-draft archive is background work now');
     assert.ok(boot.includes('void persistSession('), 'the archive still happens, off the critical path');
   });
-  it('drawer close always unmounts the full-screen backdrop (animation callback + timer guarantee)', () => {
+  it('drawer close synchronously unmounts the in-tree backdrop and dispatches safely', () => {
     const cm = idx.slice(idx.indexOf('const closeMenu'), idx.indexOf('const closeMenu') + 1200);
-    assert.ok(cm.includes('fallback = setTimeout(finish, 320)'), 'a lost animation callback can no longer strand the backdrop');
-    assert.ok(cm.includes('setMenuOpen(false)'), 'the fallback still unmounts the backdrop');
-    assert.ok(cm.includes('clearTimeout(fallback)'), 'the normal animation path disarms the fallback');
+    assert.ok(cm.includes('menuX.stopAnimation()'), 'a stale animation cannot strand the backdrop');
+    assert.ok(cm.includes('setMenuOpen(false)'), 'close unmounts the backdrop synchronously');
+    assert.ok(cm.includes('requestAnimationFrame'), 'queued actions dispatch after the drawer is removed');
   });
   it('recording configures a recordable audio session BEFORE preparing, and never fails silently', () => {
     assert.ok(hook.includes('setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })'), 'recordable session is requested');
