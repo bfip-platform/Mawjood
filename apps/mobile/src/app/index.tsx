@@ -762,60 +762,6 @@ export default function HomeScreen() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [inviteSpaceId, setInviteSpaceId] = useState<string | null>(null);
   const [menuX] = useState(() => new Animated.Value(-320));
-  const drawerTraceSendFailureRef = useRef<string | null>(null);
-
-  // Temporary drawer tracing: records the exact iOS event boundary where the
-  // interaction stops. It contains no message/content data and is removable
-  // after the native presentation issue is identified.
-  const drawerTrace = useCallback((event: string, extra?: Record<string, unknown>) => {
-    const previousSendFailure = drawerTraceSendFailureRef.current;
-    const payload = {
-      event,
-      at: Date.now(),
-      view,
-      menuOpen,
-      profileOpen,
-      appState: AppState.currentState,
-      keyboardVisible: Keyboard.isVisible?.() ?? false,
-      ...(previousSendFailure ? { previousSendFailure } : {}),
-      ...extra,
-    };
-    console.warn('[drawer-trace]', payload);
-    void (async () => {
-      const { error } = await supabase.functions.invoke('report-error', {
-        body: {
-          message: ('[drawer-trace] ' + JSON.stringify(payload)).slice(0, 1000),
-          context: 'drawer-debug',
-        },
-      });
-      if (error) {
-        const failure = String(error).slice(0, 240);
-        drawerTraceSendFailureRef.current = failure;
-        console.warn('[drawer-trace-send-failed]', { event, failure });
-      } else {
-        drawerTraceSendFailureRef.current = null;
-      }
-    })().catch((error) => {
-      const failure = String(error).slice(0, 240);
-      drawerTraceSendFailureRef.current = failure;
-      console.warn('[drawer-trace-send-failed]', { event, failure });
-    });
-  }, [view, menuOpen, profileOpen]);
-
-  // Verification telemetry: confirm the destination surface actually became
-  // visible after a drawer action, not just that the tap and close were logged.
-  useEffect(() => {
-    const destinations: Array<[string, boolean]> = [
-      ['profile', profileOpen],
-      ['families', famsOpen],
-      ['invite', inviteOpen],
-      ['about', aboutOpen],
-      ['trash', trashOpen],
-    ];
-    for (const [destination, visible] of destinations) {
-      if (visible) drawerTrace('destination-visible', { destination });
-    }
-  }, [profileOpen, famsOpen, inviteOpen, aboutOpen, trashOpen, drawerTrace]);
 
   // ── Phase C: shopping domain (see screens/home/hooks/useShopping.ts) ──
   // (call placed after profile states: createManualList needs displayName/userEmail;
@@ -1483,20 +1429,17 @@ export default function HomeScreen() {
   // synchronously, then dispatch the requested action on the next frame.
   const closeMenu = useCallback((after?: () => void) => {
     const hasAfter = !!after;
-    drawerTrace('close-menu-called', { hasAfter });
     setHistVisible(5); // collapse the history list back to 5 next open
     menuX.stopAnimation();
     menuX.setValue(-320);
     setMenuOpen(false);
-    drawerTrace('menu-visible-false', { hasAfter });
     if (after) {
       // Dispatch the destination in the same interaction batch as the close.
       // A deferred RAF can be skipped on iOS when the overlay is removed,
       // leaving the drawer closed while the requested page never opens.
-      drawerTrace('menu-action-dispatch');
       after();
     }
-  }, [menuX, drawerTrace]);
+  }, [menuX]);
 
   // ── chat history (ChatGPT-style) ──
   // Sessions live in the side menu with a per-chat delete countdown.
@@ -1581,19 +1524,17 @@ export default function HomeScreen() {
 
   /** open the side drawer; refreshes chat history (fresh delete-countdowns) */
   const openMenu = useCallback(() => {
-    drawerTrace('hamburger-press');
     // The Home composer can retain focus while the native drawer mounts.
     // Dismiss it before routing drawer touches so iOS does not consume the
     // first tap as keyboard dismissal.
     Keyboard.dismiss();
     setMenuOpen(true);
-    drawerTrace('menu-open-requested');
     menuX.setValue(-320);
     Animated.timing(menuX, { toValue: 0, duration: 220, useNativeDriver: true }).start();
     // Let the native Modal mount and receive the first tap before doing any
     // Supabase work for chat history.
     setTimeout(() => { void loadHistory(); }, 0);
-  }, [menuX, loadHistory, drawerTrace]);
+  }, [menuX, loadHistory]);
 
   /** archive the current chat and start a fresh one */
   const startNewChat = useCallback(async () => {
@@ -6549,9 +6490,9 @@ export default function HomeScreen() {
       </Modal>
       {/* ── side drawer menu: in-tree overlay avoids native Modal handoff races ── */}
       {menuOpen ? (
-        <View pointerEvents="box-none" style={styles.menuOverlay} onLayout={() => drawerTrace('menu-overlay-mounted')}>
+        <View pointerEvents="box-none" style={styles.menuOverlay}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
-          <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
+          <Animated.View style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
                 <Text style={styles.menuAvatarText}>
@@ -6579,17 +6520,11 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
-              onPress={() => {
-                drawerTrace('profile-press');
-                closeMenu(() => {
-                  drawerTrace('profile-action-dispatch');
-                  setProfileOpen(true);
-                });
-              }}
+              onPress={() => closeMenu(() => setProfileOpen(true))}
             >
               <Text style={styles.menuItemIcon}>👤</Text>
               <Text style={[styles.menuItemText, { textAlign: ta() }]}>{t('menuProfile')}</Text>
