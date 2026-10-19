@@ -39,7 +39,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    zIndex: 50,
+    zIndex: 1000,
+    elevation: 1000,
     flexDirection: 'row',
   },
   menuBackdrop: {
@@ -63,8 +64,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 12,
-    elevation: 12,
     zIndex: 1,
+    elevation: 1001,
   },
   menuProfile: {
     flexDirection: 'row',

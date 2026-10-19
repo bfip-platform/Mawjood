@@ -6535,7 +6535,7 @@ export default function HomeScreen() {
       </Modal>
       {/* ── side drawer menu: in-tree overlay avoids native Modal handoff races ── */}
       {menuOpen ? (
-        <View style={styles.menuOverlay} onLayout={() => drawerTrace('menu-overlay-mounted')}>
+        <View pointerEvents="box-none" style={styles.menuOverlay} onLayout={() => drawerTrace('menu-overlay-mounted')}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
           <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
@@ -6565,7 +6565,7 @@ export default function HomeScreen() {
             </View>
 
 
-            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView onTouchStart={() => drawerTrace('scroll-touch-start')} onStartShouldSetResponder={() => true} style={styles.menuScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
             <Pressable
               style={styles.menuItem}
