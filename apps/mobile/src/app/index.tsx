@@ -6537,7 +6537,7 @@ export default function HomeScreen() {
       {menuOpen ? (
         <View pointerEvents="box-none" style={styles.menuOverlay} onLayout={() => drawerTrace('menu-overlay-mounted')}>
           <Pressable style={styles.menuBackdrop} onPress={() => closeMenu()} />
-          <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} onStartShouldSetResponder={() => true} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
+          <Animated.View onTouchStart={() => drawerTrace('panel-touch-start')} style={[styles.menuPanel, { transform: [{ translateX: menuX }] }]}>
             <View style={styles.menuProfile}>
               <View style={styles.menuAvatar}>
                 <Text style={styles.menuAvatarText}>
