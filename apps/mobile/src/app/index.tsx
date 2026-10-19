@@ -43,7 +43,7 @@ import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
 import { parseDeepLink } from '../lib/deeplinks';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
-import { withTimeout } from '../lib/withTimeout';
+import { withTimeout, withTimeoutResult } from '../lib/withTimeout';
 import { useTheme } from '../lib/theme';
 import { SearchBar } from '../lib/SearchBar';
 import { SwipeRow } from '../lib/SwipeRow';
@@ -3155,7 +3155,15 @@ export default function HomeScreen() {
       lastQuestionRef.current = t;
       const thinkId = pushMsg('app', '…', { pending: true });
       const mems = await getMemories();
-      const r = await engine.chat(t, chatHistory(), n.id, null, getLang(), mems.map((m) => m.label));
+      const chatResult = await withTimeoutResult(
+        engine.chat(t, chatHistory(), n.id, null, getLang(), mems.map((m) => m.label)),
+        30_000,
+      ).catch(() => null);
+      if (!chatResult || chatResult.timedOut) {
+        updateMsg(thinkId, { text: t('genericFail'), pending: false });
+        return;
+      }
+      const r = chatResult.value;
       if (r) {
         updateMsg(thinkId, { text: r.answer, pending: false, proposal: r.proposal ?? null });
         speak(r.answer);
@@ -3324,7 +3332,15 @@ export default function HomeScreen() {
     }
     const thinkId = pushMsg('app', '…', { pending: true });
     const mems = await getMemories();
-    const r = await engine.chat(clean, chatHistory(), undefined, photoUrl, getLang(), mems.map((m) => m.label));
+    const chatResult = await withTimeoutResult(
+      engine.chat(clean, chatHistory(), undefined, photoUrl, getLang(), mems.map((m) => m.label)),
+      30_000,
+    ).catch(() => null);
+    if (!chatResult || chatResult.timedOut) {
+      updateMsg(thinkId, { text: t('genericFail'), pending: false });
+      return;
+    }
+    const r = chatResult.value;
     if (r) {
       updateMsg(thinkId, { text: r.answer, pending: false, proposal: r.proposal ?? null });
     } else {
