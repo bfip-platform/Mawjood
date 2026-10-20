@@ -476,6 +476,103 @@ export class VoiceEngine {
     }
   }
 
+
+  /**
+   * True progressive chat response. The edge function emits SSE deltas for
+   * the final answer; JSON responses remain supported as a safe fallback for
+   * deterministic paths and older deployments.
+   */
+  async chatStream(
+    text: string,
+    history: HistoryMsg[],
+    noteId?: string,
+    photoUrl?: string | null,
+    uiLang?: string,
+    memories?: string[],
+    vaultCtx?: { vault_id: string; vault_mode: 'secret' | 'decoy' } | null,
+    signal?: AbortSignal,
+    onDelta?: (text: string) => void,
+  ): Promise<{ answer: string; actions: string[]; proposal?: TabProposal } | null> {
+    try {
+      const today = new Date().toLocaleDateString('en-CA');
+      const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const inVault = !!vaultCtx?.vault_id;
+      const client = this.supabase as unknown as {
+        supabaseUrl?: string;
+        supabaseKey?: string;
+        auth: { getSession: () => Promise<{ data: { session: { access_token: string } | null } }> };
+      };
+      if (!client.supabaseUrl || !client.supabaseKey) throw new Error('missing supabase config');
+      const { data: { session } } = await client.auth.getSession();
+      const response = await fetch(`${client.supabaseUrl}/functions/v1/chat`, {
+        method: 'POST',
+        signal,
+        headers: {
+          Authorization: `Bearer ${session?.access_token ?? ''}`,
+          apikey: client.supabaseKey,
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream, application/json',
+        },
+        body: JSON.stringify({
+          stream: true,
+          text: text.slice(0, 1000),
+          history: history.slice(-6).map((m) => ({ role: m.role, text: m.text.slice(0, 300) })),
+          note_id: noteId ?? null,
+          photo_url: photoUrl ?? null,
+          today,
+          tz: deviceTz,
+          ui_lang: uiLang ?? 'ar',
+          memories: Array.isArray(memories) ? memories.slice(0, 20) : [],
+          vault_id: vaultCtx?.vault_id ?? null,
+        }),
+      });
+      if (!response.ok) throw new Error(`chat stream ${response.status}`);
+      const type = response.headers.get('content-type') ?? '';
+      if (!type.includes('text/event-stream') || !response.body) {
+        const d = await response.json() as { answer?: string; actions?: string[]; proposal?: TabProposal; error?: string } | null;
+        if (!d?.answer) throw new Error(d?.error ?? 'bad chat response');
+        return { answer: d.answer, actions: Array.isArray(d.actions) ? d.actions : [], ...(d.proposal ? { proposal: d.proposal } : {}) };
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let answer = '';
+      let actions: string[] = [];
+      let proposal: TabProposal | undefined;
+      let done = false;
+      const consume = (packet: string) => {
+        const data = packet.split('\n').find((line) => line.startsWith('data: '))?.slice(6);
+        if (!data) return;
+        const event = JSON.parse(data) as { type?: string; text?: string; answer?: string; actions?: string[]; proposal?: TabProposal };
+        if (event.type === 'delta' && event.text) {
+          answer += event.text;
+          onDelta?.(event.text);
+        } else if (event.type === 'done') {
+          if (typeof event.answer === 'string') answer = event.answer;
+          actions = Array.isArray(event.actions) ? event.actions : [];
+          proposal = event.proposal;
+          done = true;
+        } else if (event.type === 'error') {
+          throw new Error(event.answer ?? 'stream failed');
+        }
+      };
+      while (!done) {
+        const part = await reader.read();
+        if (part.done) break;
+        buffer += decoder.decode(part.value, { stream: true });
+        const packets = buffer.split('\n\n');
+        buffer = packets.pop() ?? '';
+        for (const packet of packets) consume(packet);
+      }
+      if (!answer) throw new Error('empty chat stream');
+      return { answer, actions, ...(proposal ? { proposal } : {}) };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      console.warn('chat stream failed, caller should use legacy pipeline', e);
+      return null;
+    }
+  }
+
   /**
    * AI input router: question | note | correction (+ space for notes).
   ): Promise<{ answer: string; actions: string[] } | null> {
