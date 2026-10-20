@@ -1016,6 +1016,83 @@ function salvageStep(raw: string): { tool?: string; args?: unknown; answer?: str
   return null;
 }
 
+
+/**
+ * Stream only the final natural-language answer after the existing agent/tool
+ * loop has completed. Tool execution stays authoritative and deterministic;
+ * the user receives real provider deltas instead of a fake delayed animation.
+ */
+async function streamFinalAnswer(
+  ai: any,
+  originalAnswer: string,
+  actions: string[],
+  proposal: any,
+  gate: { supa: any; userId: string } | null,
+  uiAr: boolean,
+): Promise<Response | null> {
+  if (gate) {
+    const charged = await chargeModelCall(gate.supa, gate.userId, {
+      inputBytes: payloadBytes([{ role: 'user', content: originalAnswer }]),
+      maxOutTokens: 1200,
+    });
+    if (!charged.allowed) throw new Error('__SPEND_CAP__');
+  }
+  const instruction = uiAr
+    ? 'أعد صياغة الجواب التالي كنص طبيعي واضح ومختصر بالعربية فقط. أخرج النص النهائي فقط، بدون JSON أو مقدمات إضافية.'
+    : 'Rewrite the following answer as concise natural English. Output only the final text, with no JSON or preamble.';
+  const aiRes = await fetch(`${ai.base}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(chatBody(ai, {
+      max_tokens: 1200,
+      stream: true,
+      messages: [{ role: 'user', content: `${instruction}\n\n${originalAnswer.slice(0, 1500)}` }],
+    })),
+  });
+  if (!aiRes.ok || !aiRes.body) return null;
+  const reader = aiRes.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const responseStream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: unknown) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\\n\\n`));
+      let text = '';
+      let buffer = '';
+      send({ type: 'status', phase: 'generating' });
+      try {
+        for (;;) {
+          const part = await reader.read();
+          if (part.done) break;
+          buffer += decoder.decode(part.value, { stream: true });
+          const lines = buffer.split('\\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === '[DONE]') continue;
+            try {
+              const delta = JSON.parse(raw)?.choices?.[0]?.delta?.content;
+              if (typeof delta === 'string' && delta) {
+                text += delta;
+                send({ type: 'delta', text: delta });
+              }
+            } catch { /* ignore incomplete provider packets */ }
+          }
+        }
+        const finalText = text.trim() || originalAnswer;
+        send({ type: 'done', answer: finalText, actions, ...(proposal ? { proposal } : {}) });
+      } catch (e) {
+        send({ type: 'error', answer: e instanceof Error ? e.message : 'stream failed' });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(responseStream, {
+    headers: { ...cors, 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   let uiAr = true; // default Arabic; refined from the request body below
@@ -1026,7 +1103,8 @@ Deno.serve(async (req) => {
   let userId: string | null = null;
   let requestId = '';
   try {
-    const { text, history, note_id, photo_url, today, ui_lang, memories, tz, vault_id, eval_mode, as_user_id } = await req.json();
+    const { text, history, note_id, photo_url, today, ui_lang, memories, tz, vault_id, eval_mode, as_user_id, stream: streamRequested } = await req.json();
+    const streamMode = streamRequested === true;
     if (!text?.trim()) throw new Error('text is required');
     const t = text.slice(0, 1000);
     // 🧠 user memory: computed after auth below (server-side recall) — see memLines.
@@ -1669,6 +1747,17 @@ Deno.serve(async (req) => {
       break;
     }
 
+    if (streamMode) {
+      const streamed = await streamFinalAnswer(
+        ai,
+        answer,
+        actions,
+        turnProposal,
+        admin && userId ? { supa: admin, userId } : null,
+        uiAr,
+      );
+      if (streamed) return streamed;
+    }
     return new Response(JSON.stringify({ answer, actions, ...(turnProposal ? { proposal: turnProposal } : {}) }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
