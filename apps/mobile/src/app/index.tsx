@@ -3350,8 +3350,22 @@ export default function HomeScreen() {
     // already-cached facts now and warm the cache in the background.
     const mems = memoriesRef.current ?? [];
     void getMemories();
+    let streamedText = '';
     const chatResult = await withTimeoutResult(
-      engine.chat(clean, chatHistory(), undefined, photoUrl, getLang(), mems.map((m) => m.label)),
+      engine.chatStream(
+        clean,
+        chatHistory(),
+        undefined,
+        photoUrl,
+        getLang(),
+        mems.map((m) => m.label),
+        null,
+        abortController.signal,
+        (delta) => {
+          streamedText += delta;
+          updateMsg(thinkId, { text: streamedText, pending: true });
+        },
+      ),
       30_000,
     ).catch(() => null);
     if (!chatResult || chatResult.timedOut) {
