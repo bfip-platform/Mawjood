@@ -1018,36 +1018,35 @@ function salvageStep(raw: string): { tool?: string; args?: unknown; answer?: str
 
 
 /**
- * Stream only the final natural-language answer after the existing agent/tool
- * loop has completed. Tool execution stays authoritative and deterministic;
- * the user receives real provider deltas instead of a fake delayed animation.
+ * Fast conversational path: stream the provider response from the first
+ * token for questions that do not require Mawjood data or tools.
  */
-async function streamFinalAnswer(
+async function streamQuickAnswer(
   ai: any,
-  originalAnswer: string,
-  actions: string[],
-  proposal: any,
-  gate: { supa: any; userId: string } | null,
+  text: string,
+  history: HistMsg[],
   uiAr: boolean,
+  gate: { supa: any; userId: string } | null,
 ): Promise<Response | null> {
   if (gate) {
     const charged = await chargeModelCall(gate.supa, gate.userId, {
-      inputBytes: payloadBytes([{ role: 'user', content: originalAnswer }]),
+      inputBytes: payloadBytes([{ role: 'user', content: text }]),
       maxOutTokens: 1200,
     });
     if (!charged.allowed) throw new Error('__SPEND_CAP__');
   }
-  const instruction = uiAr
-    ? 'أعد صياغة الجواب التالي كنص طبيعي واضح ومختصر بالعربية فقط. أخرج النص النهائي فقط، بدون JSON أو مقدمات إضافية.'
-    : 'Rewrite the following answer as concise natural English. Output only the final text, with no JSON or preamble.';
+  const system = uiAr
+    ? 'أنت مساعد موجـود. أجب بالعربية الشامية باختصار ووضوح. لا تدّعي معرفة بيانات المستخدم أو تنفيذ إجراء لم يتم تنفيذه. أخرج جواباً طبيعياً فقط.'
+    : 'You are Mawjood, a concise helpful assistant. Answer naturally in English. Never claim to know private app data or have taken an action unless it was actually performed. Output plain text only.';
+  const messages = [
+    { role: 'system', content: system },
+    ...history.slice(-6).map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text.slice(0, 300) })),
+    { role: 'user', content: text.slice(0, 1000) },
+  ];
   const aiRes = await fetch(`${ai.base}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(chatBody(ai, {
-      max_tokens: 1200,
-      stream: true,
-      messages: [{ role: 'user', content: `${instruction}\n\n${originalAnswer.slice(0, 1500)}` }],
-    })),
+    body: JSON.stringify(chatBody(ai, { max_tokens: 1200, messages, stream: true })),
   });
   if (!aiRes.ok || !aiRes.body) return null;
   const reader = aiRes.body.getReader();
@@ -1056,8 +1055,8 @@ async function streamFinalAnswer(
   const responseStream = new ReadableStream({
     async start(controller) {
       const send = (payload: unknown) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\\n\\n`));
-      let text = '';
       let buffer = '';
+      let answer = '';
       send({ type: 'status', phase: 'generating' });
       try {
         for (;;) {
@@ -1073,14 +1072,13 @@ async function streamFinalAnswer(
             try {
               const delta = JSON.parse(raw)?.choices?.[0]?.delta?.content;
               if (typeof delta === 'string' && delta) {
-                text += delta;
+                answer += delta;
                 send({ type: 'delta', text: delta });
               }
-            } catch { /* ignore incomplete provider packets */ }
+            } catch { /* ignore malformed provider packets */ }
           }
         }
-        const finalText = text.trim() || originalAnswer;
-        send({ type: 'done', answer: finalText, actions, ...(proposal ? { proposal } : {}) });
+        send({ type: 'done', answer: answer.trim(), actions: [] });
       } catch (e) {
         send({ type: 'error', answer: e instanceof Error ? e.message : 'stream failed' });
       } finally {
@@ -1403,6 +1401,20 @@ Deno.serve(async (req) => {
       QUESTION_MARK.test(t) || QUESTION_RE.test(tTrim) || EN_QUESTION_RE.test(tTrim);
     const looksCorrection =
       CORRECTION_START.test(tTrim) || EN_CORRECTION_START.test(tTrim) || REASK_RE.test(t);
+
+    // Stream ordinary conversation immediately. Data/tool questions stay on
+    // the authoritative agent path below.
+    const needsAppData = /(وين|اين|إين|شو عندي|شو ناقص|اعرض|ذكرني|فكرني|قديش|كم|متى|امتى|مين|حطيت|حفظت|ضايع|ناقصنا|search|where|when|what do i have|remind|find|saved|shopping|task|appointment)/i.test(t);
+    if (streamMode && looksQuestion && !needsAppData && !photoUrl && !note_id && !inVault) {
+      const quick = await streamQuickAnswer(
+        ai,
+        t,
+        hist,
+        uiAr,
+        admin && userId ? { supa: admin, userId } : null,
+      );
+      if (quick) return quick;
+    }
     if (photoUrl && (looksQuestion || /^(اوصف|صف)\b/.test(tTrim)) && VISUAL_Q_RE.test(t)) {
       if (!note_id) {
         // text path: persist the photo+question as a note (voice path already did)
@@ -1747,17 +1759,6 @@ Deno.serve(async (req) => {
       break;
     }
 
-    if (streamMode) {
-      const streamed = await streamFinalAnswer(
-        ai,
-        answer,
-        actions,
-        turnProposal,
-        admin && userId ? { supa: admin, userId } : null,
-        uiAr,
-      );
-      if (streamed) return streamed;
-    }
     return new Response(JSON.stringify({ answer, actions, ...(turnProposal ? { proposal: turnProposal } : {}) }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
