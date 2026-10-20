@@ -2114,7 +2114,7 @@ describe('D5 PR-3 — a11y pass on primary surfaces + in-app support (T-D5-3/4)'
     const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
     assert.ok(app.includes("accessibilityLabel={t('a11yMenu')}"), 'menu button labeled');
     assert.ok(app.includes('accessibilityRole="tab"'), 'tabs expose the tab role');
-    assert.ok(app.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'composer action announces its current mode');
+    assert.ok(app.includes("accessibilityLabel={sendingText ? t('a11yStopGeneration') : isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'composer action announces its current mode');
     assert.ok(app.includes("context: 'support'"), 'support messages ride the report-error channel with the support context');
     assert.ok(app.includes("invoke('report-error'"), 'support uses the existing function — no new endpoint');
     // Decision #12: support must NOT add a drawer destination.
@@ -2123,7 +2123,7 @@ describe('D5 PR-3 — a11y pass on primary surfaces + in-app support (T-D5-3/4)'
   });
   it('GUARD: i18n carries the new keys in BOTH languages', () => {
     const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
-    for (const k of ['a11yMenu', 'a11yAttachPhoto', 'a11ySend', 'a11yRecord', 'a11yStopRecording', 'supportSection', 'supportHint', 'supportSend', 'supportSent', 'supportFailed']) {
+    for (const k of ['a11yMenu', 'a11yAttachPhoto', 'a11ySend', 'a11yRecord', 'a11yStopRecording', 'a11yStopGeneration', 'supportSection', 'supportHint', 'supportSend', 'supportSent', 'supportFailed']) {
       const hits = i18n.split(`${k}:`).length - 1;
       assert.ok(hits >= 2, `${k} must exist in AR and EN (found ${hits})`);
     }
@@ -2890,9 +2890,9 @@ describe('UI polish — New Space button, composer growth, send contrast', () =>
     assert.ok(styles.includes('micBtnTextSend: { color: P.paper }'), 'send arrow is explicitly paper-white');
     assert.equal((idx.match(/styles\.micBtnSend/g) ?? []).length, 2, 'main + vault buttons both wired');
     assert.equal((idx.match(/styles\.micBtnTextSend/g) ?? []).length, 2, 'both arrows tinted');
-    assert.ok(idx.includes("textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main handler logic untouched');
+    assert.ok(idx.includes("sendingText ? cancelChat : textNote.trim() && !isRecording ? () => onSendText() : onRecordPress"), 'main handler supports cancellation while generating');
     assert.ok(idx.includes("secretDraft.trim() && !isRecording ? () => void saveSecretNoteLocal() : onSecretRecordPress"), 'vault handler logic untouched');
-    assert.ok(idx.includes("accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'a11y labels untouched');
+    assert.ok(idx.includes("accessibilityLabel={sendingText ? t('a11yStopGeneration') : isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}"), 'a11y labels cover send, recording, and cancellation modes');
   });
 });
 
@@ -2927,6 +2927,7 @@ describe('Critical regression hotfix — startup bounds, drawer guarantee, recor
   });
   it('chat requests are bounded and surface failures instead of leaving pending bubbles', () => {
     assert.ok(idx.includes('withTimeoutResult('), 'chat uses a deadline-aware timeout');
+    assert.ok(idx.includes('new AbortController()') && idx.includes('chatAbortRef.current?.abort()'), 'chat generation can be cancelled');
     assert.ok(idx.includes('30_000'), 'chat timeout is 30 seconds');
     assert.ok(idx.includes("text: t('genericFail'), pending: false"), 'chat timeout clears the pending bubble');
   });

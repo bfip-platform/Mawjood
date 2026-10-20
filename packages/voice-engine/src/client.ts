@@ -416,6 +416,7 @@ export class VoiceEngine {
     uiLang?: string,
     memories?: string[],
     vaultCtx?: { vault_id: string; vault_mode: 'secret' | 'decoy' } | null,
+    signal?: AbortSignal,
   ): Promise<{ answer: string; actions: string[]; proposal?: TabProposal } | null> {
     try {
       const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in device TZ
@@ -424,6 +425,7 @@ export class VoiceEngine {
       // nothing from vault sessions is ever learned (governance invariant).
       const inVault = !!vaultCtx?.vault_id;
       const { data, error } = await this.supabase.functions.invoke('chat', {
+        signal,
         body: {
           text: text.slice(0, 1000),
           history: history.slice(-6).map((m) => ({
