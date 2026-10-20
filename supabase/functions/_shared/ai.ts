@@ -54,7 +54,7 @@ export function aiConfig(): AiConfig {
 /** Build a chat-completions body: the right token-cap param and temperature per model. */
 export function chatBody(
   ai: AiConfig,
-  opts: { max_tokens: number; messages: unknown[] },
+  opts: { max_tokens: number; messages: unknown[]; stream?: boolean },
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: ai.chatModel,
@@ -63,5 +63,6 @@ export function chatBody(
   if (ai.supportsMaxTokens) body.max_tokens = opts.max_tokens;
   else body.max_completion_tokens = opts.max_tokens;
   if (ai.supportsTemperature) body.temperature = 0.2;
+  if (opts.stream) body.stream = true;
   return body;
 }
