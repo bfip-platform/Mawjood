@@ -267,6 +267,7 @@ export default function HomeScreen() {
   const [savingText, setSavingText] = useState(false);
   const [sendingText, setSendingText] = useState(false);
   const textSendInFlightRef = useRef(false);
+  const chatAbortRef = useRef<AbortController | null>(null);
   const [asking, setAsking] = useState(false);
   // voice replies: a voice note gets a SPOKEN answer (like a live chat);
   // text stays text. voiceModeRef = last user input was voice.
@@ -838,6 +839,10 @@ export default function HomeScreen() {
 
   const removeMsg = useCallback((id: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  const cancelChat = useCallback(() => {
+    chatAbortRef.current?.abort();
   }, []);
 
 
@@ -3293,6 +3298,9 @@ export default function HomeScreen() {
     if (!clean || !userId || textSendInFlightRef.current) return;
     textSendInFlightRef.current = true;
     setSendingText(true);
+    const abortController = new AbortController();
+    chatAbortRef.current = abortController;
+    const sendStartedAt = Date.now();
     try {
     voiceModeRef.current = false; // text in → text out (no voice reply)
     // Render the user's bubble immediately. Secret-key verification is local
@@ -3358,8 +3366,12 @@ export default function HomeScreen() {
       await legacyText(clean, photoUrl);
     }
     } finally {
+      if (chatAbortRef.current === abortController) chatAbortRef.current = null;
       textSendInFlightRef.current = false;
       setSendingText(false);
+      if (Date.now() - sendStartedAt > 1500) {
+        console.info('[chat-latency]', { totalMs: Date.now() - sendStartedAt });
+      }
     }
   }, [textNote, userId, pushMsg, updateMsg, removeMsg, chatHistory, legacyText, chatPhotoUri, maybeDetective, maybeWatch, maybeTimeline, maybeSmartShopping, maybeDirectedShopping, maybeMorningDigest, maybeExpense, maybeMemory, maybeScopeGuard, getMemories, tryGhostIntercept]);
 
@@ -5025,11 +5037,11 @@ export default function HomeScreen() {
                 />
               </View>
               <Pressable
-                onPress={textNote.trim() && !isRecording ? () => onSendText() : onRecordPress}
-                disabled={saving || savingText || sendingText || asking}
+                onPress={sendingText ? cancelChat : textNote.trim() && !isRecording ? () => onSendText() : onRecordPress}
+                disabled={saving || savingText || asking}
                 accessibilityRole="button"
-                accessibilityState={{ disabled: saving || savingText || sendingText || asking }}
-                accessibilityLabel={isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}
+                accessibilityState={{ disabled: saving || savingText || asking }}
+                accessibilityLabel={sendingText ? t('a11yStopGeneration') : isRecording ? t('a11yStopRecording') : textNote.trim() ? t('a11ySend') : t('a11yRecord')}
                 style={[
                   styles.micBtn,
                   isRecording && styles.micBtnRecording,
@@ -5037,8 +5049,10 @@ export default function HomeScreen() {
                   (saving || savingText || asking) && styles.micBtnDisabled,
                 ]}
               >
-                {saving || savingText || sendingText ? (
+                {saving || savingText ? (
                   <ActivityIndicator color="#fff" />
+                ) : sendingText ? (
+                  <Text style={styles.micBtnText}>■</Text>
                 ) : (
                   <Text style={[styles.micBtnText, !isRecording && !!textNote.trim() && styles.micBtnTextSend]}>
                     {isRecording ? '⏹' : textNote.trim() ? '➤' : '🎙️'}
