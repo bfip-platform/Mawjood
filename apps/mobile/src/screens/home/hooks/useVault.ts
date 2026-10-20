@@ -575,8 +575,10 @@ export function useVault({ userId, spaceIdByType, trashRetention, isRecording, s
         } catch { /* malformed hash: skip */ }
       }
     }
-    // 👻 ghost key: the master word opens vault MANAGEMENT
-    if (masterHashRef.current) {
+    // 👻 ghost key: the master word opens vault MANAGEMENT.
+    // Vault codes are single words; skip bcrypt for normal multi-word chat.
+    const looksLikeVaultCode = !/\s/.test(clean) && clean.length <= 60;
+    if (looksLikeVaultCode && masterHashRef.current) {
       try {
         if (await bcrypt.compare(clean, masterHashRef.current)) {
           // P0-5: the session also needs the SERVER-issued mgmt capability —
@@ -593,7 +595,7 @@ export function useVault({ userId, spaceIdByType, trashRetention, isRecording, s
       } catch (e) { console.warn('master compare failed', e); }
     }
     // 🪞 decoy master: opens FAKE management (decoy vault only, same look)
-    if (decoyMasterHashRef.current) {
+    if (looksLikeVaultCode && decoyMasterHashRef.current) {
       try {
         if (await bcrypt.compare(clean, decoyMasterHashRef.current)) {
           void openVaultManagement(true);
