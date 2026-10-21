@@ -3155,6 +3155,15 @@ describe('Product Foundation wave — bounded loads, error states, telemetry', (
     assert.ok(fam.includes('if (spaceActionBusy) return;'), 'family leave guarded');
   });
 
+  it('boot rejection cannot fall through to a user-less home; stalled-refresh recovers', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    const gate = idx.slice(idx.indexOf("if (authState === 'loading')"), idx.indexOf("if (authState === 'loading')") + 700);
+    assert.ok(gate.includes('ListLoadError'), 'a rejected session read shows a retryable error gate');
+    assert.ok(gate.includes('void boot()'), 'the gate retries boot');
+    assert.ok(idx.includes("event === 'TOKEN_REFRESHED' && session && authStateRef.current === 'signed-out'"), 'a later silent refresh re-boots only from the signed-out screen');
+    assert.ok(idx.includes('const authStateRef = useRef(authState)'), 'auth state is mirrored for the stable-deps handler');
+  });
+
   it('telemetry: render crashes and unhandled rejections are reported, content-free', () => {
     const boundary = read('../../apps/mobile/src/components/ErrorBoundary.tsx');
     assert.ok(boundary.includes("reportFatalLike(error, false, 'render-boundary')"), 'boundary reports recovered render crashes');

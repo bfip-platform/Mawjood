@@ -668,6 +668,12 @@ export default function HomeScreen() {
 
   // ── Auth: real accounts + family invites ──
   const [authState, setAuthState] = useState<'loading' | 'signed-out' | 'signed-in'>('loading');
+  // Mirror for the auth-event handler (stable deps): lets TOKEN_REFRESHED
+  // recovery check where the UI currently sits without a stale closure.
+  const authStateRef = useRef(authState);
+  useEffect(() => {
+    authStateRef.current = authState;
+  }, [authState]);
   // 🔞 18+ gate (Decision #5): 'checking' until the profile's declared
   // birth date is known; 'needed' = not declared; 'blocked' = under 18.
   const [ageStatus, setAgeStatus] = useState<'checking' | 'needed' | 'adult' | 'blocked'>('checking');
@@ -2252,6 +2258,14 @@ export default function HomeScreen() {
         setUpcoming([]);
         setShopping([]);
         setShopLists([]);
+      } else if (event === 'TOKEN_REFRESHED' && session && authStateRef.current === 'signed-out') {
+        // Product Foundation: boot treats a 12s-stalled session read as
+        // signed-out even when the stored session is valid; the client's
+        // later silent refresh emits TOKEN_REFRESHED (previously ignored),
+        // which stranded the user on the sign-in screen until relaunch.
+        // Recover in-process — but ONLY from the signed-out screen, never
+        // as a mid-session re-boot on routine refreshes.
+        boot();
       } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
         // magic-link return, or anonymous → permanent upgrade
         boot();
@@ -4105,6 +4119,25 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.center}>
         <ActivityIndicator size="large" color={P.accent} />
         <Text style={styles.muted}>loading Mawjood…</Text>
+      </SafeAreaView>
+    );
+  }
+
+  // Product Foundation: boot's session read REJECTED (a timeout resolves
+  // null and lands on the sign-in gate, but a rejection propagates and the
+  // boot catch only logs). Without this gate the render fell through to the
+  // main tree with no user and no spaces — a broken half-home. Show a
+  // retryable error instead.
+  if (authState === 'loading') {
+    return (
+      <SafeAreaView style={styles.center}>
+        <ListLoadError
+          kind="error"
+          onRetry={() => {
+            setLoading(true);
+            void boot();
+          }}
+        />
       </SafeAreaView>
     );
   }
