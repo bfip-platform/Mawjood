@@ -2963,7 +2963,10 @@ describe('mobile home navigation regressions', () => {
       idx.indexOf("      {/* view tabs: chat home + spaces for browsing */}"),
       idx.indexOf("      {/* anonymous trial account"),
     );
-    assert.match(tabs, /customSpaces\.map/);
+    // Spaces & Family UX wave: customs render through the unified ordered
+    // strip (orderedStrip.map + customSpaces.find), not a separate map.
+    assert.match(tabs, /orderedStrip\.map/);
+    assert.match(tabs, /customSpaces\.find/);
     assert.match(tabs, /openCustomSpace\(sp\)/);
     assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
   });
@@ -2988,7 +2991,7 @@ describe('mobile navigation hardening — first paint and horizontal spaces', ()
     );
     assert.match(tabs, /<ScrollView[\s\S]*horizontal/);
     assert.match(tabs, /showsHorizontalScrollIndicator={false}/);
-    assert.match(tabs, /customSpaces\.map/);
+    assert.match(tabs, /orderedStrip\.map/);
   });
 });
 
@@ -3172,5 +3175,95 @@ describe('Product Foundation wave — bounded loads, error states, telemetry', (
     assert.ok(guard.includes("'unhandled-rejection'"), 'rejections get their own context');
     assert.ok(guard.includes('export function reportTelemetry'), 'classified telemetry helper exported');
     assert.ok(!guard.includes('note') || !guard.includes('transcript'), 'no content fields are read by the guard');
+  });
+});
+
+
+describe('Spaces & Family UX wave — strip order, icons, invite link, realtime guard', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const entries = [
+    { kind: 'builtin', type: 'private' },
+    { kind: 'builtin', type: 'family' },
+    { kind: 'builtin', type: 'work' },
+    { kind: 'custom', id: 'aaa' },
+    { kind: 'custom', id: 'bbb' },
+  ];
+
+  it('applySpaceOrder: saved order wins, new entries append, stale keys drop', async () => {
+    const { applySpaceOrder, entryKey } = await import('../../apps/mobile/src/lib/spaceOrder.ts');
+    const keys = (list) => list.map(entryKey);
+    assert.deepEqual(keys(applySpaceOrder(entries, null)), ['type:private', 'type:family', 'type:work', 'space:aaa', 'space:bbb'], 'null order = natural order');
+    assert.deepEqual(
+      keys(applySpaceOrder(entries, ['space:bbb', 'type:work', 'type:private'])),
+      ['space:bbb', 'type:work', 'type:private', 'type:family', 'space:aaa'],
+      'saved sequence first, remainder in natural order',
+    );
+    assert.deepEqual(
+      keys(applySpaceOrder(entries, ['space:gone', 'space:aaa', 'space:aaa'])),
+      ['space:aaa', 'type:private', 'type:family', 'type:work', 'space:bbb'],
+      'stale + duplicate keys are dropped, result stays a permutation',
+    );
+    assert.equal(applySpaceOrder(entries, ['space:bbb']).length, entries.length, 'no entry is ever lost');
+  });
+
+  it('moveInOrder: swaps one step, no-ops at the edges and for unknown keys', async () => {
+    const { moveInOrder } = await import('../../apps/mobile/src/lib/spaceOrder.ts');
+    const base = ['a', 'b', 'c'];
+    assert.deepEqual(moveInOrder(base, 'b', -1), ['b', 'a', 'c']);
+    assert.deepEqual(moveInOrder(base, 'b', 1), ['a', 'c', 'b']);
+    assert.deepEqual(moveInOrder(base, 'a', -1), ['a', 'b', 'c'], 'already first');
+    assert.deepEqual(moveInOrder(base, 'c', 1), ['a', 'b', 'c'], 'already last');
+    assert.deepEqual(moveInOrder(base, 'zzz', 1), ['a', 'b', 'c'], 'unknown key');
+    assert.deepEqual(base, ['a', 'b', 'c'], 'input is never mutated');
+  });
+
+  it('sanitizeOrderKeys: only well-formed unique keys survive', async () => {
+    const { sanitizeOrderKeys } = await import('../../apps/mobile/src/lib/spaceOrder.ts');
+    assert.deepEqual(sanitizeOrderKeys(['type:work', 'space:x', 'nope', 42, 'type:work', null]), ['type:work', 'space:x']);
+    assert.equal(sanitizeOrderKeys('nope'), null);
+    assert.equal(sanitizeOrderKeys([]), null);
+    assert.equal(sanitizeOrderKeys(['junk']), null);
+  });
+
+  it('strip wiring: ordered render, long-press edit mode, 44pt move targets, rollback', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('applySpaceOrder(stripEntries, stripOrder)'), 'strip renders through the saved order');
+    assert.ok(idx.includes('onLongPress={stripEdit ? undefined : enterStripEdit}'), 'long-press enters reorder mode');
+    assert.ok(idx.includes("saveSpaceOrder(uid, next).then((ok) => {"), 'moves persist');
+    assert.ok(idx.includes('setStripOrder(prev);'), 'a failed save rolls the order back');
+    assert.ok(idx.includes("showToast(t('spacePrefsFail'))"), 'rollback is surfaced to the user');
+    const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+    const btn = styles.slice(styles.indexOf('stripMoveBtn:'), styles.indexOf('stripMoveBtn:') + 220);
+    assert.ok(btn.includes('width: 44') && btn.includes('height: 44'), 'move targets are 44x44');
+    assert.ok(idx.includes("getLang() === 'ar' ? '›' : '‹'"), 'move glyphs follow the logical start in RTL and LTR');
+  });
+
+  it('custom-space icons: picker in the name modal, persisted per user, rendered in the strip', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('spaceIconDraft'), 'the name modal carries an icon draft');
+    assert.ok(idx.includes("['🗂️', ...TAB_ICON_CHOICES]"), 'the picker reuses the app icon set + the default');
+    assert.ok(idx.includes('saveSpaceIcons(uid, nextIcons)'), 'the icon persists with the rename/create');
+    assert.ok(idx.includes("spaceIcons[sp.id] ?? '🗂️'"), 'the strip renders the saved icon');
+    const prefs = read('../../apps/mobile/src/lib/spacePrefs.ts');
+    assert.ok(prefs.includes('mawjood.space-order.') && prefs.includes('mawjood.space-icons.'), 'prefs are per-user AsyncStorage keys');
+    assert.ok(prefs.includes('catch'), 'prefs IO is total (never throws into the UI)');
+  });
+
+  it('invite sharing carries the deep link; the parser contract is unchanged', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('mawjood://family/join?code=${inviteCode}'), 'share text includes the join link');
+    assert.ok(idx.includes("tx('joinWithLink'"), 'link share text is localized');
+    const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+    assert.ok(i18n.includes('joinWithLink:'), 'joinWithLink exists in the dictionaries');
+  });
+
+  it('realtime refresh of note items is sequence-guarded; sign-out drops strip prefs', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('const seq = ++itemsSeqRef.current;'), 'refreshItems captures a sequence');
+    assert.ok(idx.includes('if (seq !== itemsSeqRef.current) return;'), 'stale realtime responses are dropped');
+    const signOut = idx.slice(idx.indexOf("if (event === 'SIGNED_OUT')"), idx.indexOf("} else if (event === 'TOKEN_REFRESHED'"));
+    assert.ok(signOut.includes('setStripOrder(null)'), 'strip order resets on sign-out');
+    assert.ok(signOut.includes('setSpaceIcons({})'), 'space icons reset on sign-out');
+    assert.ok(signOut.includes('setStripEdit(false)'), 'reorder mode exits on sign-out');
   });
 });
