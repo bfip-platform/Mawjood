@@ -124,6 +124,7 @@ import {
 import { UndoBar } from '../lib/UndoBar';
 import { usePaginatedList } from '../lib/usePaginatedList';
 import { ListLoadError } from '../lib/ListLoadError';
+import { dueState } from '../lib/due';
 import { applySpaceOrder, entryKey, moveInOrder, type SpaceStripEntry } from '../lib/spaceOrder';
 import { loadSpaceIcons, loadSpaceOrder, saveSpaceIcons, saveSpaceOrder } from '../lib/spacePrefs';
 import { useTabSearch } from '../lib/useTabSearch';
@@ -316,6 +317,28 @@ export default function HomeScreen() {
 
   // ── Phase 3: family pillar ──
   const [familyTab, setFamilyTab] = useState<string>('members'); // built-in key or custom tab id
+  // Daily Utility wave: task status filter (family tasks tab) + borrowed-
+  // only filter (things). Display/query prefs only — never data changes.
+  // Both are KEYED to the viewed space: another space has no stored filter
+  // yet, so it reads as the default — switching spaces resets them by
+  // construction, with no effect (the loaders re-run unfiltered on open,
+  // so a chip can never lie about what's on screen).
+  const [taskFilterStore, setTaskFilterStore] = useState<{
+    id: string | null;
+    f: 'all' | 'open' | 'done';
+  }>({ id: null, f: 'all' });
+  const [borrowedStore, setBorrowedStore] = useState<{ id: string | null; on: boolean }>({
+    id: null,
+    on: false,
+  });
+  const taskFilter: 'all' | 'open' | 'done' =
+    taskFilterStore.id === (viewSpace?.id ?? null) ? taskFilterStore.f : 'all';
+  const setTaskFilter = (f: 'all' | 'open' | 'done') =>
+    setTaskFilterStore({ id: viewSpace?.id ?? null, f });
+  const thingsBorrowedOnly =
+    borrowedStore.id === (viewSpace?.id ?? null) ? borrowedStore.on : false;
+  const setThingsBorrowedOnly = (on: boolean) =>
+    setBorrowedStore({ id: viewSpace?.id ?? null, on });
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[] | null>(null);
   const familyMembersRef = useRef<FamilyMember[] | null>(null);
   const [membersError, setMembersError] = useState<LoadFailure | null>(null);
@@ -1867,6 +1890,7 @@ export default function HomeScreen() {
   useEffect(() => {
     stripKeysRef.current = orderedStrip.map(entryKey);
   }, [orderedStrip]);
+
   /** Optimistic strip reorder: apply instantly, persist, roll back on failure. */
   const onMoveEntry = useCallback(
     (key: string, dir: -1 | 1) => {
@@ -4336,6 +4360,17 @@ export default function HomeScreen() {
 
   // notes browser (shared by all spaces; family shows it under the 📝 tab)
   // ── Phase 4: 📦 أشيائي list (shared by all space views) ──
+  // Privacy indicators (Privacy & Daily Utility wave): search runs across
+  // spaces, so a result row must say WHERE the item lives — private stays
+  // visibly private (🔒), family-shared is marked 👥, work 💼, custom 🗂️.
+  const spaceChipFor = (spaceId: string): { icon: string; label: string } | null => {
+    const s = spaces.find((x) => x.id === spaceId);
+    if (!s) return null;
+    const icon =
+      s.type === 'private' ? '🔒' : s.type === 'family' ? '👥' : s.type === 'work' ? '💼' : '🗂️';
+    return { icon, label: spaceLabel(s.type, s.name) };
+  };
+
   const thingsList = (
     <>
       <SearchBar
@@ -4344,9 +4379,41 @@ export default function HomeScreen() {
         placeholder={t('searchThings')}
         searching={thingsSearch.searching}
       />
+      {/* Daily Utility: borrowed-only filter (client-side over loaded
+          pages; the borrow state itself comes from borrowFor). */}
+      {!thingsSearch.inSearch ? (
+        <View style={styles.filterRow}>
+          <Pressable
+            onPress={() => setThingsBorrowedOnly(false)}
+            style={[styles.filterChip, !thingsBorrowedOnly && styles.filterChipActive]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: !thingsBorrowedOnly }}
+          >
+            <Text style={[styles.filterChipText, !thingsBorrowedOnly && styles.filterChipTextActive]}>
+              {t('filterAll')}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setThingsBorrowedOnly(true)}
+            style={[styles.filterChip, thingsBorrowedOnly && styles.filterChipActive]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: thingsBorrowedOnly }}
+          >
+            <Text style={[styles.filterChipText, thingsBorrowedOnly && styles.filterChipTextActive]}>
+              🤝 {t('filterBorrowed')}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
       <FlatList
         style={styles.fill}
-        data={thingsSearch.inSearch ? (thingsSearch.results ?? []) : things}
+        data={
+          thingsSearch.inSearch
+            ? (thingsSearch.results ?? [])
+            : thingsBorrowedOnly
+              ? things.filter((i) => !!borrowFor(i.title))
+              : things
+        }
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.list}
         onEndReached={thingsSearch.inSearch ? undefined : thingsPage.loadMore}
@@ -4366,6 +4433,8 @@ export default function HomeScreen() {
           <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
         ) : thingsPage.error && things.length === 0 ? (
           <ListLoadError kind={thingsPage.error} onRetry={thingsPage.retry} />
+        ) : thingsBorrowedOnly && things.length > 0 ? (
+          <EmptyState icon="🤝" message={t('borrowedEmpty')} />
         ) : (
           <EmptyState icon="📦" message={t('thingsEmpty')} example={t('exThings')} onTryExample={tryExample} />
         )
@@ -4373,6 +4442,7 @@ export default function HomeScreen() {
       renderItem={({ item }) => {
         const photoUrl = item.meta?.photo_url ?? null;
         const br = borrowFor(item.title);
+        const chip = thingsSearch.inSearch ? spaceChipFor(item.space_id) : null;
         return (
           <>
             <SwipeRow onSwipeLeft={() => void askDeleteItem(item)}>
@@ -4399,6 +4469,11 @@ export default function HomeScreen() {
                 ) : null}
                 {item.meta?.price ? (
                   <Text style={styles.itemDue}>💰 {item.meta.price}</Text>
+                ) : null}
+                {chip ? (
+                  <Text style={styles.spaceChip}>
+                    {chip.icon} {chip.label}
+                  </Text>
                 ) : null}
                 {br ? (
                   <Text style={styles.borrowBadge}>
@@ -4514,15 +4589,27 @@ export default function HomeScreen() {
               <Text style={styles.searchItemsLabel}>
                 {tx('searchItems', { count: String(notesSearch.results.items.length) })}
               </Text>
-              {notesSearch.results.items.map((it) => (
-                <Pressable key={it.id} onPress={() => toggleItem(it)} style={styles.searchItemRow}>
-                  <Text style={styles.itemIcon}>{KIND_ICON[it.kind] ?? '•'}</Text>
-                  <Text style={[styles.itemTitle, it.status === 'done' && styles.itemDone]}>
-                    {it.title}
-                    {it.details ? ` — ${it.details}` : ''}
-                  </Text>
-                </Pressable>
-              ))}
+              {notesSearch.results.items.map((it) => {
+                // Privacy indicator: a cross-space search hit names its home
+                // space (private/family/work/custom) right on the row.
+                const chip = spaceChipFor(it.space_id);
+                return (
+                  <Pressable key={it.id} onPress={() => toggleItem(it)} style={styles.searchItemRow}>
+                    <Text style={styles.itemIcon}>{KIND_ICON[it.kind] ?? '•'}</Text>
+                    <View style={styles.itemBody}>
+                      <Text style={[styles.itemTitle, it.status === 'done' && styles.itemDone]}>
+                        {it.title}
+                        {it.details ? ` — ${it.details}` : ''}
+                      </Text>
+                      {chip ? (
+                        <Text style={styles.spaceChip}>
+                          {chip.icon} {chip.label}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           ) : null
         }
@@ -5658,6 +5745,42 @@ export default function HomeScreen() {
                 placeholder={t('searchTasks')}
                 searching={tasksSearch.searching}
               />
+              {/* Daily Utility: server-side status filter (listTasks honors
+                  opts.status, so pagination stays truthful under a filter). */}
+              {!tasksSearch.inSearch ? (
+                <View style={styles.filterRow}>
+                  {(['all', 'open', 'done'] as const).map((f) => (
+                    <Pressable
+                      key={f}
+                      onPress={() => {
+                        setTaskFilter(f);
+                        const sid = famSpace?.id ?? viewSpace?.id;
+                        if (sid) {
+                          tasksPage.refresh((o, l) =>
+                            engine.listTasks(sid, {
+                              offset: o,
+                              limit: l,
+                              status: f === 'all' ? undefined : f,
+                            }),
+                          );
+                        }
+                      }}
+                      style={[styles.filterChip, taskFilter === f && styles.filterChipActive]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: taskFilter === f }}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipText,
+                          taskFilter === f && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {f === 'all' ? t('filterAll') : f === 'open' ? t('filterOpen') : t('filterDone')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
               <FlatList
               style={styles.fill}
               data={tasksSearch.inSearch ? (tasksSearch.results ?? []) : tasks}
@@ -5825,7 +5948,11 @@ export default function HomeScreen() {
                   <EmptyState icon="📅" message={t('agendaEmpty')} example={t('exAgenda')} onTryExample={tryExample} />
                 )
               }
-              renderItem={({ item }) => (
+              renderItem={({ item }) => {
+                // Daily Utility: overdue/today emphasis on the due line
+                // (device-local day boundaries — lib/due).
+                const ds = dueState(item);
+                return (
                 <SwipeRow onSwipeLeft={() => void askDeleteItem(item)}>
                 <View style={styles.famRow}>
                   <Text style={styles.itemIcon}>📅</Text>
@@ -5835,13 +5962,15 @@ export default function HomeScreen() {
                     ) : (
                       <Text style={styles.itemTitle}>{item.title}</Text>
                     )}
-                    <Text style={styles.itemDue}>
+                    <Text style={[styles.itemDue, ds === 'overdue' && styles.itemDueOverdue]}>
                       {item.due_at ? new Date(item.due_at).toLocaleString() : ''}
+                      {ds === 'overdue' ? ` · ⚠️ ${t('overdueTag')}` : ds === 'today' ? ` · ${t('dueTodayTag')}` : ''}
                     </Text>
                   </View>
                 </View>
                 </SwipeRow>
-              )}
+                );
+              }}
               />
             </>
           )}

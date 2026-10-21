@@ -46,6 +46,8 @@ export interface PageOpts {
   limit?: number;
   /** rows to skip (page * limit) */
   offset?: number;
+  /** status filter — honored by listTasks only (Daily Utility wave) */
+  status?: 'open' | 'done';
 }
 
 /** Apply limit/offset to a Supabase query builder (offset>0 uses range()). */
@@ -2289,15 +2291,16 @@ export class VoiceEngine {
 
   /** Family tasks: open first, newest first. */
   async listTasks(spaceId: string, opts?: number | PageOpts): Promise<Item[]> {
+    const po = pageOptsOf(opts);
+    let query = this.supabase
+      .from('items')
+      .select('*')
+      .eq('space_id', spaceId)
+      .eq('kind', 'task');
+    if (po?.status) query = query.eq('status', po.status);
     const { data, error } = await applyPage(
-      this.supabase
-        .from('items')
-        .select('*')
-        .eq('space_id', spaceId)
-        .eq('kind', 'task')
-        .order('status', { ascending: false })
-        .order('created_at', { ascending: false }),
-      pageOptsOf(opts),
+      query.order('status', { ascending: false }).order('created_at', { ascending: false }),
+      po,
       100,
     );
     if (error) throw error;
