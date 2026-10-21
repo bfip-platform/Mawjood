@@ -3267,3 +3267,69 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     assert.ok(signOut.includes('setStripEdit(false)'), 'reorder mode exits on sign-out');
   });
 });
+
+
+describe('Privacy, Localization and Daily Utility wave — due states, filters, privacy chips', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  // Fixed "now": Oct 21 2026, noon LOCAL time — day boundaries are local.
+  const now = new Date(2026, 9, 21, 12, 0, 0);
+  const iso = (d) => d.toISOString();
+
+  it('dueState: overdue/today/upcoming by LOCAL day; done and dateless items are null', async () => {
+    const { dueState, isOverdue } = await import('../../apps/mobile/src/lib/due.ts');
+    assert.equal(dueState({ due_at: iso(new Date(2026, 9, 20, 23, 59)), status: 'open' }, now), 'overdue', 'yesterday 23:59 local is overdue at noon today');
+    assert.equal(dueState({ due_at: iso(new Date(2026, 9, 21, 0, 0)), status: 'open' }, now), 'today', 'midnight today is today, not overdue');
+    assert.equal(dueState({ due_at: iso(new Date(2026, 9, 21, 23, 59)), status: 'open' }, now), 'today');
+    assert.equal(dueState({ due_at: iso(new Date(2026, 9, 22, 0, 0)), status: 'open' }, now), 'upcoming', 'midnight tomorrow is upcoming');
+    assert.equal(dueState({ due_at: iso(new Date(2026, 9, 1)), status: 'done' }, now), null, 'a done item is never overdue');
+    assert.equal(dueState({ due_at: null, status: 'open' }, now), null, 'no due date');
+    assert.equal(dueState({ due_at: 'not-a-date', status: 'open' }, now), null, 'invalid date');
+    assert.equal(dueState({}, now), null);
+    assert.ok(isOverdue({ due_at: iso(new Date(2026, 9, 20)), status: 'open' }, now));
+    assert.ok(!isOverdue({ due_at: iso(new Date(2026, 9, 21, 18, 0)), status: 'open' }, now));
+  });
+
+  it('agenda render emphasizes overdue/today via dueState', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('const ds = dueState(item);'), 'agenda rows classify their due state');
+    assert.ok(idx.includes("ds === 'overdue' && styles.itemDueOverdue"), 'overdue gets the danger style');
+    assert.ok(idx.includes("t('overdueTag')") && idx.includes("t('dueTodayTag')"), 'overdue/today tags are localized');
+    const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+    assert.ok(styles.includes('itemDueOverdue: { color: P.danger'), 'the overdue style uses the danger token');
+  });
+
+  it('tasks filter is server-side: listTasks honors opts.status end-to-end', () => {
+    const client = read('../../packages/voice-engine/src/client.ts');
+    assert.ok(client.includes("status?: 'open' | 'done';"), 'PageOpts carries the status filter');
+    assert.ok(client.includes("if (po?.status) query = query.eq('status', po.status);"), 'listTasks applies it to the query');
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes("status: f === 'all' ? undefined : f"), 'the chips refresh with the chosen status');
+    assert.ok(idx.includes("(['all', 'open', 'done'] as const)"), 'all/open/done chips exist');
+    assert.ok(idx.includes("taskFilterStore.id === (viewSpace?.id ?? null)"), 'the filter is keyed to the viewed space — switching resets it by construction');
+  });
+
+  it('things borrowed-only filter + empty state', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('things.filter((i) => !!borrowFor(i.title))'), 'borrowed filter keeps only borrowed things');
+    assert.ok(idx.includes("thingsBorrowedOnly && things.length > 0"), 'borrowed empty state only when things exist');
+    assert.ok(idx.includes("t('borrowedEmpty')"), 'borrowed empty copy is localized');
+    assert.ok(idx.includes("borrowedStore.id === (viewSpace?.id ?? null)"), 'the borrowed filter is space-keyed too');
+  });
+
+  it('privacy indicators: search rows name their home space with a type icon', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('const spaceChipFor ='), 'a single chip helper exists');
+    assert.ok(idx.includes("s.type === 'private' ? '🔒'"), 'private spaces show the lock');
+    assert.ok(idx.includes("s.type === 'family' ? '👥'"), 'family spaces show people');
+    assert.ok(idx.includes('const chip = thingsSearch.inSearch ? spaceChipFor(item.space_id) : null;'), 'things search rows carry the chip');
+    assert.ok(idx.includes('const chip = spaceChipFor(it.space_id);'), 'notes search rows carry the chip');
+    assert.ok(idx.includes('styles.spaceChip'), 'rows render the chip style');
+  });
+
+  it('no biometric or plaintext-secret shortcuts were introduced (Face ID stays a documented native-build item)', () => {
+    const pkg = read('../../apps/mobile/package.json');
+    assert.ok(!pkg.includes('expo-local-authentication'), 'no native auth dependency sneaked in via JS-only changes');
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(!idx.includes('local-authentication'), 'the app never imports a biometric API it cannot ship via OTA');
+  });
+});
