@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { boundedLoad } from './withTimeout';
+import { boundedLoad, type LoadFailure } from './withTimeout';
 import { reportTelemetry } from './crash-guard';
 
-/** Why a load failed: the deadline won, or the loader rejected. */
-export type LoadFailure = 'timeout' | 'error';
+export type { LoadFailure };
 
 export interface PaginatedList<T> {
   /** rows loaded so far (page 1 + appended pages) */

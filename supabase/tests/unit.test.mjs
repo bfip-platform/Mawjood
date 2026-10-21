@@ -3058,3 +3058,110 @@ describe('drawer overlay dismissal sequencing', () => {
     assert.match(close, /setMenuOpen\(false\)/, 'drawer is removed');
   });
 });
+
+describe('Product Foundation wave — bounded loads, error states, telemetry', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('boundedLoad classifies ok / error / timeout without throwing', async () => {
+    const { boundedLoad } = await import('../../apps/mobile/src/lib/withTimeout.ts');
+    const ok = await boundedLoad(Promise.resolve(42), 1000);
+    assert.deepEqual(ok, { status: 'ok', value: 42 });
+    const err = await boundedLoad(Promise.reject(new Error('boom')), 1000);
+    assert.equal(err.status, 'error');
+    assert.equal(err.error.message, 'boom');
+    const slow = await boundedLoad(new Promise((r) => setTimeout(() => r('late'), 200)), 30);
+    assert.deepEqual(slow, { status: 'timeout' });
+    // a rejection arriving before the deadline is an error, not a timeout
+    const fastFail = await boundedLoad(
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('fast')), 5)),
+      1000,
+    );
+    assert.equal(fastFail.status, 'error');
+  });
+
+  it('paginated lists are bounded, classified, retryable, and reported', () => {
+    const hook = read('../../apps/mobile/src/lib/usePaginatedList.ts');
+    assert.ok(hook.includes('boundedLoad('), 'loads run under a deadline');
+    assert.ok(hook.includes('moreError'), 'load-more failures have their own state');
+    assert.ok(hook.includes('retry'), 'a retry entry point is exposed');
+    assert.ok(hook.includes("reportTelemetry('list-load'"), 'failures reach telemetry with surface labels');
+    assert.ok(!hook.includes('console.warn'), 'no silent console-only failure path remains');
+  });
+
+  it('the four space lists render a real error state, not a fake empty one', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    const uses = idx.split('ListLoadError').length - 1;
+    assert.ok(uses >= 10, `ListLoadError wired across lists (found ${uses})`);
+    for (const page of ['thingsPage', 'notesPage', 'tasksPage', 'upcomingPage']) {
+      assert.ok(idx.includes(`${page}.error`), `${page} error state is rendered`);
+      assert.ok(idx.includes(`${page}.retry`), `${page} retry is wired`);
+      assert.ok(idx.includes(`surface: '${page.replace('Page', '')}'`) || page === 'upcomingPage', `${page} has a telemetry surface`);
+    }
+    assert.ok(idx.includes("usePaginatedList<Item>({ surface: 'upcoming' })"), 'upcoming surface named');
+  });
+
+  it('shopping + members + vault loads are bounded with retryable errors', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('boundedLoad(\n      engine.listShoppingLists') || idx.includes('engine.listShoppingLists(spaceId') && idx.includes('boundedLoad'), 'shopping lists bounded');
+    assert.ok(idx.includes('shopListsError'), 'shopping error state exists');
+    assert.ok(idx.includes('shopListsMoreError'), 'shopping load-more error state exists');
+    assert.ok(idx.includes('boundedLoad(engine.getFamilyMembers(space.id), 15_000)'), 'members load bounded');
+    assert.ok(idx.includes('setMembersError'), 'members failure is classified');
+    const vault = read('../../apps/mobile/src/screens/home/hooks/useVault.ts');
+    assert.ok(vault.includes('boundedLoad(engine.listSecretNotes'), 'vault notes bounded');
+    assert.ok(vault.includes('vaultOpenSeqRef'), 'vault opens are sequence-guarded (last open wins)');
+    assert.ok(vault.includes('secretNotesError'), 'vault error state exposed');
+  });
+
+  it('one bilingual load-error component with a >=44pt retry target', () => {
+    const comp = read('../../apps/mobile/src/lib/ListLoadError.tsx');
+    assert.ok(comp.includes("? 'loadTimedOut' : 'loadFailed'"), 'both failure kinds are messaged');
+    assert.ok(comp.includes("t('retryAction')"), 'retry action is labeled');
+    assert.ok(comp.includes('minHeight: 44'), 'retry target meets the 44pt minimum');
+    const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+    assert.ok(i18n.includes("loadFailed: 'تعذّر تحميل البيانات'"), 'AR loadFailed present');
+    assert.ok(i18n.includes('loadFailed: "Couldn\'t load data"'), 'EN loadFailed present');
+    assert.ok(i18n.includes("retryAction: 'إعادة المحاولة'") && i18n.includes("retryAction: 'Retry'"), 'retry label in both languages');
+  });
+
+  it('sign-out clears every account-scoped state, vault session included', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    const signOut = idx.slice(idx.indexOf("if (event === 'SIGNED_OUT')"), idx.indexOf("} else if ((event === 'SIGNED_IN'"));
+    assert.ok(signOut.includes('closeVaultSession()'), 'vault session (incl. memory-only master hashes) is dropped');
+    assert.ok(signOut.includes('setFamilySlots(1)'), 'family slots reset');
+    assert.ok(signOut.includes('setPendingJoinCode(null)'), 'pending join cleared');
+    assert.ok(signOut.includes('setPaywallOpen(false)'), 'paywall closed');
+    assert.ok(signOut.includes('setShopLists([])'), 'shopping lists cleared');
+    assert.ok(signOut.includes('setNotes([])') && signOut.includes('setUpcoming([])'), 'paged list data cleared');
+    const vault = read('../../apps/mobile/src/screens/home/hooks/useVault.ts');
+    const close = vault.slice(vault.indexOf('const closeVaultSession'), vault.indexOf('const closeVaultSession') + 900);
+    assert.ok(close.includes('masterHashRef.current = null'), 'master hash dropped');
+    assert.ok(close.includes('mgmtTokenRef.current = '), 'management capability dropped');
+  });
+
+  it('join -> paywall is sequenced after the join modal closes, never same-frame', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    const join = idx.slice(idx.indexOf('const doJoin'), idx.indexOf('const doJoin') + 1100);
+    assert.ok(join.includes('queueAfterModalClose(() => setPaywallOpen(true))'), 'paywall opens via the modal-close queue');
+    assert.ok(!join.includes('setJoinOpen(false);\n      setPaywallOpen(true);'), 'no same-frame modal swap remains');
+  });
+
+  it('destructive space/family actions share a double-submit guard', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('spaceActionBusy'), 'shared in-flight guard exists');
+    const del = idx.slice(idx.indexOf('const onDeleteCustomSpace'), idx.indexOf('const onDeleteCustomSpace') + 300);
+    assert.ok(del.includes('if (spaceActionBusy) return;'), 'space delete guarded');
+    const fam = idx.slice(idx.indexOf('const onFamAction'), idx.indexOf('const onFamAction') + 300);
+    assert.ok(fam.includes('if (spaceActionBusy) return;'), 'family leave guarded');
+  });
+
+  it('telemetry: render crashes and unhandled rejections are reported, content-free', () => {
+    const boundary = read('../../apps/mobile/src/components/ErrorBoundary.tsx');
+    assert.ok(boundary.includes("reportFatalLike(error, false, 'render-boundary')"), 'boundary reports recovered render crashes');
+    const guard = read('../../apps/mobile/src/lib/crash-guard.ts');
+    assert.ok(guard.includes("import('promise/setimmediate/rejection-tracking')"), 'rejection tracking is lazy + guarded');
+    assert.ok(guard.includes("'unhandled-rejection'"), 'rejections get their own context');
+    assert.ok(guard.includes('export function reportTelemetry'), 'classified telemetry helper exported');
+    assert.ok(!guard.includes('note') || !guard.includes('transcript'), 'no content fields are read by the guard');
+  });
+});

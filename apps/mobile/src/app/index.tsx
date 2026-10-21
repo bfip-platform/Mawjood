@@ -43,7 +43,8 @@ import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
 import { parseDeepLink } from '../lib/deeplinks';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
-import { withTimeout, withTimeoutResult } from '../lib/withTimeout';
+import { withTimeout, withTimeoutResult, boundedLoad, type LoadFailure } from '../lib/withTimeout';
+import { reportTelemetry } from '../lib/crash-guard';
 import { useTheme } from '../lib/theme';
 import { SearchBar } from '../lib/SearchBar';
 import { SwipeRow } from '../lib/SwipeRow';
@@ -122,6 +123,7 @@ import {
 } from '../lib/smartShopping';
 import { UndoBar } from '../lib/UndoBar';
 import { usePaginatedList } from '../lib/usePaginatedList';
+import { ListLoadError } from '../lib/ListLoadError';
 import { useTabSearch } from '../lib/useTabSearch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { engine } from '../lib/engine';
@@ -189,10 +191,10 @@ export default function HomeScreen() {
   // ── paginated tab lists (10/page, infinite scroll — one generic hook per list) ──
   // `notes`/`setNotes` etc. are aliases: every existing local mutation
   // (toggle/delete/prepend/…) keeps working unchanged.
-  const notesPage = usePaginatedList<Note>();
-  const thingsPage = usePaginatedList<Item>();
-  const tasksPage = usePaginatedList<Item>();
-  const upcomingPage = usePaginatedList<Item>();
+  const notesPage = usePaginatedList<Note>({ surface: 'notes' });
+  const thingsPage = usePaginatedList<Item>({ surface: 'things' });
+  const tasksPage = usePaginatedList<Item>({ surface: 'tasks' });
+  const upcomingPage = usePaginatedList<Item>({ surface: 'upcoming' });
   const notes = notesPage.data;
   const setNotes = notesPage.setData;
   const things = thingsPage.data;
@@ -313,6 +315,8 @@ export default function HomeScreen() {
   // ── Phase 3: family pillar ──
   const [familyTab, setFamilyTab] = useState<string>('members'); // built-in key or custom tab id
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[] | null>(null);
+  const familyMembersRef = useRef<FamilyMember[] | null>(null);
+  const [membersError, setMembersError] = useState<LoadFailure | null>(null);
   const [membersBusy, setMembersBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -501,6 +505,8 @@ export default function HomeScreen() {
     setSecretCodeMsg,
     secretCodeMsgOk,
     refreshSecretNotes,
+    secretNotesError,
+    closeVaultSession,
     saveSecretNoteLocal,
     onSecretRecordPress,
     askSecretPhotoSource,
@@ -933,25 +939,35 @@ export default function HomeScreen() {
   // (previously one unbounded fetch of every list with all of its items).
   const SHOP_LISTS_PAGE = 10;
   const [shopListsHasMore, setShopListsHasMore] = useState(false);
+  // Product Foundation: shopping loads are bounded + classified — a failure
+  // surfaces a retryable error instead of silently emptying the tab.
+  const [shopListsError, setShopListsError] = useState<LoadFailure | null>(null);
+  const [shopListsMoreError, setShopListsMoreError] = useState<LoadFailure | null>(null);
   const shopListsLoadedRef = useRef(0);
   const shopListsMoreBusyRef = useRef(false);
   const refreshFamily = useCallback(async (spaceId: string) => {
-    try {
-      const s = await engine.listShopping(spaceId, { limit: 100 });
-      setShopping(s.filter((i) => !i.list_id)); // loose items only — list items live under their list
-    } catch (e) {
-      console.warn('refreshFamily failed', e);
+    // loose items only — list items live under their list. Bounded: a
+    // stalled fetch must not wedge the tab's pull-to-refresh forever.
+    const loose = await boundedLoad(engine.listShopping(spaceId, { limit: 100 }), 15_000);
+    if (loose.status === 'ok') {
+      setShopping(loose.value.filter((i) => !i.list_id));
+    } else {
+      reportTelemetry('list-load', `shopping-loose-${loose.status}`);
     }
     // directed shopping lists (graceful until migration 0014 is run)
-    try {
-      const lists = await engine.listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE });
-      shopListsLoadedRef.current = lists.length;
-      setShopListsHasMore(lists.length === SHOP_LISTS_PAGE);
-      setShopLists(lists);
-    } catch {
-      shopListsLoadedRef.current = 0;
-      setShopListsHasMore(false);
-      setShopLists([]);
+    const res = await boundedLoad(
+      engine.listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE }),
+      15_000,
+    );
+    if (res.status === 'ok') {
+      shopListsLoadedRef.current = res.value.length;
+      setShopListsHasMore(res.value.length === SHOP_LISTS_PAGE);
+      setShopLists(res.value);
+      setShopListsError(null);
+    } else {
+      // keep any lists already on screen; the tab shows a retryable error
+      setShopListsError(res.status);
+      reportTelemetry('list-load', `shopping-refresh-${res.status}`);
     }
   }, [setShopping, setShopLists]);
 
@@ -959,11 +975,16 @@ export default function HomeScreen() {
   const loadMoreShopLists = useCallback(async () => {
     if (!viewSpace || shopListsMoreBusyRef.current || !shopListsHasMore) return;
     shopListsMoreBusyRef.current = true;
-    try {
-      const next = await engine.listShoppingLists(viewSpace.id, {
+    setShopListsMoreError(null);
+    const res = await boundedLoad(
+      engine.listShoppingLists(viewSpace.id, {
         offset: shopListsLoadedRef.current,
         limit: SHOP_LISTS_PAGE,
-      });
+      }),
+      15_000,
+    );
+    if (res.status === 'ok') {
+      const next = res.value;
       shopListsLoadedRef.current += next.length;
       setShopListsHasMore(next.length === SHOP_LISTS_PAGE);
       if (next.length > 0) {
@@ -972,11 +993,11 @@ export default function HomeScreen() {
           return [...prev, ...next.filter((l) => !seen.has(l.id))];
         });
       }
-    } catch (e) {
-      console.warn('loadMoreShopLists failed', e);
-    } finally {
-      shopListsMoreBusyRef.current = false;
+    } else {
+      setShopListsMoreError(res.status);
+      reportTelemetry('list-load', `shopping-more-${res.status}`);
     }
+    shopListsMoreBusyRef.current = false;
   }, [viewSpace, shopListsHasMore, setShopLists]);
 
   const onRefreshShopping = useCallback(async () => {
@@ -1417,16 +1438,25 @@ export default function HomeScreen() {
   // detailed family roster (manager + members); also drives the member count
   const refreshFamilyMembers = useCallback(async (space: Space) => {
     setMembersBusy(true);
-    try {
-      const members = await engine.getFamilyMembers(space.id);
-      setFamilyMembers(members);
-      setMemberCount(members.length);
-    } catch {
-      setFamilyMembers(null);
-      setMemberCount(1);
-    } finally {
-      setMembersBusy(false);
+    // Bounded (Product Foundation): a stalled fetch used to leave the tab
+    // blank — spinner off, no rows, no empty state, no error. Now it lands
+    // as a classified, retryable error; a failed first load still nulls the
+    // roster (member count falls back to 1), a failed refresh keeps rows.
+    const res = await boundedLoad(engine.getFamilyMembers(space.id), 15_000);
+    if (res.status === 'ok') {
+      familyMembersRef.current = res.value;
+      setFamilyMembers(res.value);
+      setMemberCount(res.value.length);
+      setMembersError(null);
+    } else {
+      setMembersError(res.status);
+      reportTelemetry('list-load', `members-refresh-${res.status}`);
+      if (familyMembersRef.current === null) {
+        setFamilyMembers(null);
+        setMemberCount(1);
+      }
     }
+    setMembersBusy(false);
   }, []);
 
   // ── side menu open/close (slides from the left) ──
@@ -1724,10 +1754,16 @@ export default function HomeScreen() {
       }
       setPendingJoinCode(code);
       setJoinOpen(false);
-      setPaywallOpen(true);
+      // Product Foundation: never present a second modal in the same frame
+      // as another modal's close (the PR #74 freeze class) — the paywall
+      // opens only after the join modal's close has committed.
+      queueAfterModalClose(() => setPaywallOpen(true));
       return;
     }
     void runJoin(code);
+    // queueAfterModalClose is intentionally not a dep: it is a stable
+    // empty-deps callback declared below (timer ref only), and listing it
+    // here would evaluate it before its declaration on the first render.
   }, [joinCode, joinBusy, spaces, familySlots, runJoin, remoteCfg, showToast]);
 
   /** Leave an invited family from the switcher; frees a slot and resumes a
@@ -1827,8 +1863,14 @@ export default function HomeScreen() {
       setSpaceNameBusy(false);
     }
   }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText, closeSpaceName]);
+  // Product Foundation: one shared in-flight guard for space/family
+  // destructive actions — a double-tap during the network call must never
+  // execute the operation twice.
+  const [spaceActionBusy, setSpaceActionBusy] = useState(false);
   const onDeleteCustomSpace = useCallback(async (sp: Space) => {
+    if (spaceActionBusy) return;
     if (spaceDelArm !== sp.id) { setSpaceDelArm(sp.id); setSpaceErr(null); return; }
+    setSpaceActionBusy(true);
     try {
       await engine.deleteCustomSpace(sp.id);
       setSpaces(await engine.listSpaces());
@@ -1836,8 +1878,11 @@ export default function HomeScreen() {
     } catch (e) {
       setSpaceErr(spaceErrText(e));
       setSpaceDelArm(null);
+    } finally {
+      setSpaceActionBusy(false);
     }
-  }, [spaceDelArm, spaceErrText]);  const onFamAction = useCallback(async (s: Space) => {
+  }, [spaceDelArm, spaceErrText, spaceActionBusy]);  const onFamAction = useCallback(async (s: Space) => {
+    if (spaceActionBusy) return;
     if (!!userId && s.owner_id === userId) return; // own family: locked
     if (famConfirm !== s.id) {
       setFamConfirm(s.id);
@@ -1845,6 +1890,7 @@ export default function HomeScreen() {
       return;
     }
     setFamConfirm(null);
+    setSpaceActionBusy(true);
     try {
       await engine.leaveSpace(s.id);
       const fresh = await engine.listSpaces();
@@ -1864,8 +1910,10 @@ export default function HomeScreen() {
       }
     } catch (e) {
       setFamMsg(e instanceof Error ? e.message : t('joinFail'));
+    } finally {
+      setSpaceActionBusy(false);
     }
-  }, [userId, famConfirm, activeFamilyId, view, pendingJoinCode, familySlots, activateFamilySpace, rememberActiveFamily, runJoin]);
+  }, [userId, famConfirm, activeFamilyId, view, pendingJoinCode, familySlots, activateFamilySpace, rememberActiveFamily, runJoin, spaceActionBusy]);
 
   const familyTitle = useCallback((s: Space | null): string => {
     if (!s) return '';
@@ -2184,6 +2232,26 @@ export default function HomeScreen() {
         setMaintScan(null);
         setMaintDismissed(false);
         maintScanDoneRef.current = false;
+        // Product Foundation: clear EVERYTHING account-scoped, not just the
+        // identity — the previous account's vault session (including the
+        // memory-only master hashes), family context, open modals, and list
+        // data must never bleed into the next account on this device.
+        closeVaultSession();
+        setActiveFamilyId(null);
+        setFamilySlots(1);
+        setPendingJoinCode(null);
+        setFamsOpen(false);
+        setPaywallOpen(false);
+        setJoinOpen(false);
+        setInviteOpen(false);
+        setProfileOpen(false);
+        setAboutOpen(false);
+        setNotes([]);
+        setThings([]);
+        setTasks([]);
+        setUpcoming([]);
+        setShopping([]);
+        setShopLists([]);
       } else if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
         // magic-link return, or anonymous → permanent upgrade
         boot();
@@ -4160,7 +4228,9 @@ export default function HomeScreen() {
         onEndReached={thingsSearch.inSearch ? undefined : thingsPage.loadMore}
         onEndReachedThreshold={0.5}
         ListFooterComponent={
-          !thingsSearch.inSearch && thingsPage.loadingMore ? (
+          !thingsSearch.inSearch && thingsPage.moreError ? (
+            <ListLoadError compact kind={thingsPage.moreError} onRetry={thingsPage.retry} />
+          ) : !thingsSearch.inSearch && thingsPage.loadingMore ? (
             <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
           ) : null
         }
@@ -4170,6 +4240,8 @@ export default function HomeScreen() {
           <Text style={styles.muted}>{t('noResults')}</Text>
         ) : thingsPage.loading && things.length === 0 ? (
           <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
+        ) : thingsPage.error && things.length === 0 ? (
+          <ListLoadError kind={thingsPage.error} onRetry={thingsPage.retry} />
         ) : (
           <EmptyState icon="📦" message={t('thingsEmpty')} example={t('exThings')} onTryExample={tryExample} />
         )
@@ -4292,7 +4364,9 @@ export default function HomeScreen() {
         onEndReached={notesSearch.inSearch ? undefined : notesPage.loadMore}
         onEndReachedThreshold={0.5}
         ListFooterComponent={
-          !notesSearch.inSearch && notesPage.loadingMore ? (
+          !notesSearch.inSearch && notesPage.moreError ? (
+            <ListLoadError compact kind={notesPage.moreError} onRetry={notesPage.retry} />
+          ) : !notesSearch.inSearch && notesPage.loadingMore ? (
             <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
           ) : null
         }
@@ -4302,6 +4376,8 @@ export default function HomeScreen() {
             <Text style={styles.muted}>{t('noResults')}</Text>
           ) : notesPage.loading && notes.length === 0 ? (
             <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
+          ) : notesPage.error && notes.length === 0 ? (
+            <ListLoadError kind={notesPage.error} onRetry={notesPage.retry} />
           ) : (
             <EmptyState icon="📝" message={t('notesEmpty')} example={t('exNotes')} onTryExample={tryExample} />
           )
@@ -5189,7 +5265,16 @@ export default function HomeScreen() {
                   </View>
                 ))
               )}
-              {!membersBusy && familyMembers && familyMembers.length === 0 && !memberSearch.inSearch ? (
+              {membersError && !memberSearch.inSearch ? (
+                <ListLoadError
+                  compact={!!familyMembers}
+                  kind={membersError}
+                  onRetry={() => {
+                    if (famSpace) void refreshFamilyMembers(famSpace);
+                  }}
+                />
+              ) : null}
+              {!membersBusy && familyMembers && familyMembers.length === 0 && !memberSearch.inSearch && !membersError ? (
                 <EmptyState icon="👥" message={t('membersEmpty')} />
               ) : null}
               {famSpace && (
@@ -5232,7 +5317,16 @@ export default function HomeScreen() {
               />
               {/* ── active lists ── */}
               <Text style={styles.sectionTitle}>{t('shopListsTitle')}</Text>
-              {activeLists.length === 0 && archivedLists.length === 0 ? (
+              {shopListsError && !shopSearch.inSearch ? (
+                <ListLoadError
+                  compact={activeLists.length + archivedLists.length > 0}
+                  kind={shopListsError}
+                  onRetry={() => {
+                    if (viewSpace) void refreshFamily(viewSpace.id);
+                  }}
+                />
+              ) : null}
+              {activeLists.length === 0 && archivedLists.length === 0 && !shopListsError ? (
                 shopSearch.inSearch ? (
                   <Text style={styles.muted}>{t('noResults')}</Text>
                 ) : (
@@ -5352,6 +5446,9 @@ export default function HomeScreen() {
                   <Text style={styles.showMoreText}>{t('showMore')}</Text>
                 </Pressable>
               ) : null}
+              {shopListsMoreError && !shopSearch.inSearch ? (
+                <ListLoadError compact kind={shopListsMoreError} onRetry={() => void loadMoreShopLists()} />
+              ) : null}
             </ScrollView>
           )}
 
@@ -5371,7 +5468,9 @@ export default function HomeScreen() {
               onEndReached={tasksSearch.inSearch ? undefined : tasksPage.loadMore}
               onEndReachedThreshold={0.5}
               ListFooterComponent={
-                !tasksSearch.inSearch && tasksPage.loadingMore ? (
+                !tasksSearch.inSearch && tasksPage.moreError ? (
+                  <ListLoadError compact kind={tasksPage.moreError} onRetry={tasksPage.retry} />
+                ) : !tasksSearch.inSearch && tasksPage.loadingMore ? (
                   <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
                 ) : null
               }
@@ -5381,6 +5480,8 @@ export default function HomeScreen() {
                   <Text style={styles.muted}>{t('noResults')}</Text>
                 ) : tasksPage.loading && tasks.length === 0 ? (
                   <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
+                ) : tasksPage.error && tasks.length === 0 ? (
+                  <ListLoadError kind={tasksPage.error} onRetry={tasksPage.retry} />
                 ) : (
                   <EmptyState icon="✅" message={t('tasksEmpty')} example={t('exTasks')} onTryExample={tryExample} />
                 )
@@ -5508,7 +5609,9 @@ export default function HomeScreen() {
               onEndReached={agendaSearch.inSearch ? undefined : upcomingPage.loadMore}
               onEndReachedThreshold={0.5}
               ListFooterComponent={
-                !agendaSearch.inSearch && upcomingPage.loadingMore ? (
+                !agendaSearch.inSearch && upcomingPage.moreError ? (
+                  <ListLoadError compact kind={upcomingPage.moreError} onRetry={upcomingPage.retry} />
+                ) : !agendaSearch.inSearch && upcomingPage.loadingMore ? (
                   <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
                 ) : null
               }
@@ -5518,6 +5621,8 @@ export default function HomeScreen() {
                   <Text style={styles.muted}>{t('noResults')}</Text>
                 ) : upcomingPage.loading && upcoming.length === 0 ? (
                   <ActivityIndicator size="small" color={P.accent} style={styles.moreSpinner} />
+                ) : upcomingPage.error && upcoming.length === 0 ? (
+                  <ListLoadError kind={upcomingPage.error} onRetry={upcomingPage.retry} />
                 ) : (
                   <EmptyState icon="📅" message={t('agendaEmpty')} example={t('exAgenda')} onTryExample={tryExample} />
                 )
@@ -5743,7 +5848,18 @@ export default function HomeScreen() {
             keyExtractor={(n) => n.id}
             renderItem={renderSecretNote}
             contentContainerStyle={styles.vaultList}
-            ListEmptyComponent={<Text style={styles.modalBody}>{t('secretEmpty')}</Text>}
+            ListEmptyComponent={
+              secretNotesError && secretNotes.length === 0 && !secretSearch.trim() ? (
+                <ListLoadError kind={secretNotesError} onRetry={refreshSecretNotes} />
+              ) : (
+                <Text style={styles.modalBody}>{t('secretEmpty')}</Text>
+              )
+            }
+            ListFooterComponent={
+              secretNotesError && secretNotes.length > 0 && !secretSearch.trim() ? (
+                <ListLoadError compact kind={secretNotesError} onRetry={refreshSecretNotes} />
+              ) : null
+            }
           />
           <View style={styles.vaultFooter}>
             <Text style={[styles.modalBody, { marginTop: 0, marginBottom: 6 }]}>{t('secretOpenHint')}</Text>

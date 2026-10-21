@@ -18,6 +18,9 @@ export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 }
 
 
+/** Why a bounded load failed: the deadline won, or the loader rejected. */
+export type LoadFailure = 'timeout' | 'error';
+
 /** Outcome of a bounded list/page load (Product Foundation wave). */
 export type BoundedLoad<T> =
   | { status: 'ok'; value: T }

@@ -8,6 +8,8 @@ import bcrypt from 'bcryptjs';
 import type { ManagedVault, Note, RecordedAudio, SpaceType } from '@mawjood/voice-engine';
 import { engine } from '../../../lib/engine';
 import { t, getLang, DECOY_FILLER } from '../../../lib/i18n';
+import { boundedLoad, type LoadFailure } from '../../../lib/withTimeout';
+import { reportTelemetry } from '../../../lib/crash-guard';
 import { recoveryWaitInfo } from '../helpers';
 
 export interface UseVaultArgs {
@@ -91,29 +93,67 @@ export function useVault({ userId, spaceIdByType, trashRetention, isRecording, s
   const [secretCodeDraft, setSecretCodeDraft] = useState('');
   const [secretCodeMsg, setSecretCodeMsg] = useState<string | null>(null);
   const [secretCodeMsgOk, setSecretCodeMsgOk] = useState(false);
+  // Product Foundation: vault note loads are bounded and classified, so a
+  // stalled network shows a retryable error instead of a fake-empty vault.
+  const [secretNotesError, setSecretNotesError] = useState<LoadFailure | null>(null);
+  // Sequence guard for vault opens: the LAST opened vault wins — a slow
+  // response for vault A must never land inside vault B's page.
+  const vaultOpenSeqRef = useRef(0);
   /** Re-read the open vault's notes (after a secret restore/delete). */
   const refreshSecretNotes = useCallback(() => {
     if (!secretVaultId || !userId) return;
     const pid = spaceIdByType('private');
     if (!pid) return;
-    engine
-      .listSecretNotes(pid, userId, secretVaultId)
-      .then(setSecretNotes)
-      .catch((e) => console.warn('refreshSecretNotes failed', e));
+    void boundedLoad(engine.listSecretNotes(pid, userId, secretVaultId), 15_000).then((res) => {
+      if (res.status === 'ok') {
+        setSecretNotes(res.value);
+        setSecretNotesError(null);
+      } else {
+        setSecretNotesError(res.status);
+        reportTelemetry('list-load', `vault-refresh-${res.status}`);
+      }
+    });
   }, [secretVaultId, userId, spaceIdByType]);
   const openSecretVault = useCallback(
     async (vaultId: string) => {
       const pid = spaceIdByType('private');
       if (!pid || !userId) return;
+      const seq = ++vaultOpenSeqRef.current;
       setSecretVaultId(vaultId);
-      try {
-        setSecretNotes(await engine.listSecretNotes(pid, userId, vaultId));
-      } catch (e) {
-        console.warn('listSecretNotes failed', e);
+      setSecretNotesError(null);
+      const res = await boundedLoad(engine.listSecretNotes(pid, userId, vaultId), 15_000);
+      if (seq !== vaultOpenSeqRef.current) return; // a newer vault open superseded this one
+      if (res.status === 'ok') {
+        setSecretNotes(res.value);
+      } else {
+        setSecretNotes([]);
+        setSecretNotesError(res.status);
+        reportTelemetry('list-load', `vault-open-${res.status}`);
       }
     },
     [spaceIdByType, userId],
   );
+  /**
+   * Sign-out cleanup (Product Foundation): drop EVERYTHING account-scoped —
+   * the open vault, its notes, management state, and the session-only master
+   * hashes (memory-only by design; sign-out must end their session too), so
+   * a second account on this device never inherits the previous one's vault.
+   */
+  const closeVaultSession = useCallback(() => {
+    vaultOpenSeqRef.current += 1;
+    setSecretVault({ enabled: false, vaults: [] });
+    setTrashSecret(false);
+    setMgmtOpen(false);
+    setMgmtVaults([]);
+    setSecretVaultId(null);
+    setSecretNotes([]);
+    setSecretNotesError(null);
+    setSecretDraft('');
+    setMasterState(null);
+    masterHashRef.current = null;
+    decoyMasterHashRef.current = null;
+    mgmtTokenRef.current = '';
+  }, []);
 
   const saveSecretNoteLocal = useCallback(async () => {
     const pid = spaceIdByType('private');
@@ -930,6 +970,8 @@ export function useVault({ userId, spaceIdByType, trashRetention, isRecording, s
     setSecretCodeMsgOk,
     refreshSecretNotes,
     openSecretVault,
+    secretNotesError,
+    closeVaultSession,
     saveSecretNoteLocal,
     pollSecretNote,
     onSecretRecordPress,
