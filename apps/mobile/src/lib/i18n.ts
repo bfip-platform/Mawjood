@@ -36,6 +36,10 @@ const ar = {
   photoSourceQ: 'من وين بدك تاخد الصورة؟',
   photoUploadFail: 'تعذّر رفع الصورة',
   tryAgain: 'جرّب مرة تانية.',
+  // list loading (Product Foundation)
+  loadFailed: 'تعذّر تحميل البيانات',
+  loadTimedOut: 'انتهت مهلة التحميل — تحقق من الاتصال',
+  retryAction: 'إعادة المحاولة',
   photoFailVoice: '⚠️ الصورة ما اترفعت — انحفظ التسجيل بدونها',
   photoFailNote: '⚠️ الصورة ما اترفعت — انحفظت الملاحظة بدونها',
   photoTalkOrType: 'احكي عنها أو اكتب 🎙️',
@@ -574,6 +578,10 @@ const en: Record<keyof typeof ar, string> = {
   photoSourceQ: 'Where should the photo come from?',
   photoUploadFail: "Couldn't upload the photo",
   tryAgain: 'Try again.',
+  // list loading (Product Foundation)
+  loadFailed: "Couldn't load data",
+  loadTimedOut: 'Loading timed out — check your connection',
+  retryAction: 'Retry',
   photoFailVoice: "⚠️ Photo didn't upload — voice note saved without it",
   photoFailNote: "⚠️ Photo didn't upload — note saved without it",
   photoTalkOrType: 'Talk about it or type 🎙️',

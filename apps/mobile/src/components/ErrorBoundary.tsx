@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useTheme } from '../lib/theme';
 import { useLang } from '../lib/i18n';
+import { reportFatalLike } from '../lib/crash-guard';
 
 type Props = { children: React.ReactNode };
 type State = { error: Error | null };
@@ -17,6 +18,10 @@ class Boundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error) {
     console.error('[Mawjood] render crash:', error);
+    // Product Foundation: recovered render crashes used to be invisible
+    // remotely (console only). Report through the existing sanitized
+    // report-error channel — message + stack only, never screen content.
+    void reportFatalLike(error, false, 'render-boundary');
   }
 
   private retry = () => this.setState({ error: null });
