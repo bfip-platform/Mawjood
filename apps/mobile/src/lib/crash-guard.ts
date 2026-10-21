@@ -23,7 +23,11 @@
 let installed = false;
 
 /** Best-effort report of an uncaught error. Never throws. */
-export async function reportFatalLike(error: unknown, isFatal?: boolean): Promise<void> {
+export async function reportFatalLike(
+  error: unknown,
+  isFatal?: boolean,
+  context: string = 'startup-global-handler',
+): Promise<void> {
   try {
     const { supabase } = await import('./supabase');
     await supabase.functions
@@ -31,13 +35,24 @@ export async function reportFatalLike(error: unknown, isFatal?: boolean): Promis
         body: {
           message: String((error as { message?: unknown } | null)?.message ?? error),
           stack: String((error as { stack?: unknown } | null)?.stack ?? ''),
-          context: 'startup-global-handler',
+          context,
         },
       })
       .catch(() => {});
   } catch {
     // Swallow everything: telemetry must never become a crash source.
   }
+}
+
+/**
+ * Best-effort telemetry for a classified operational failure (Product
+ * Foundation wave): list-load timeouts/failures, modal sequencing errors,
+ * navigation problems. `label` must be a static surface name (e.g.
+ * 'things-refresh') plus the failure kind — NEVER user content, note text,
+ * or secrets. The server sanitizes again before storing.
+ */
+export function reportTelemetry(context: string, label: string): void {
+  void reportFatalLike(new Error(label), false, context);
 }
 
 function installCrashGuard(): void {
@@ -64,6 +79,33 @@ function installCrashGuard(): void {
   } catch {
     // Never throw at startup.
   }
+  // Unhandled promise rejections (Product Foundation wave): the `promise`
+  // polyfill's rejection tracking only sees promises created through it —
+  // Hermes-native promises may bypass it, so this is best-effort coverage,
+  // feature-detected and fully guarded: any failure simply leaves the
+  // previous behavior untouched.
+  void (async () => {
+    try {
+      const mod = (await import('promise/setimmediate/rejection-tracking')) as {
+        enable?: (opts: {
+          allRejections: boolean;
+          onUnhandled: (id: number, error: unknown) => void;
+          onHandled: () => void;
+        }) => void;
+      };
+      if (typeof mod.enable === 'function') {
+        mod.enable({
+          allRejections: true,
+          onUnhandled: (_id: number, error: unknown) => {
+            void reportFatalLike(error, false, 'unhandled-rejection');
+          },
+          onHandled: () => {},
+        });
+      }
+    } catch {
+      // Module unavailable on this platform/build — coverage stays partial.
+    }
+  })();
 }
 
 installCrashGuard();
