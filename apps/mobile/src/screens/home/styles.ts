@@ -348,6 +348,20 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   tabActive: { backgroundColor: P.ink },
   tabText: { ...typeStyle(TYPO.subBold), color: P.text2 },
   tabTextActive: { color: P.paper },
+  // Spaces & Family UX: strip reorder mode
+  stripEditWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  stripMoveBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: P.surface2,
+  },
+  stripMoveBtnOff: { opacity: 0.3 },
+  stripMoveText: { fontSize: 22, fontWeight: '700', color: P.ink },
+  stripDone: { backgroundColor: P.ink },
+  stripDoneText: { color: P.paper, fontWeight: '700' },
   // chat
   chatList: { paddingHorizontal: 16, paddingVertical: 8, gap: 10, flexGrow: 1 },
   emptyChat: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -124,6 +124,8 @@ import {
 import { UndoBar } from '../lib/UndoBar';
 import { usePaginatedList } from '../lib/usePaginatedList';
 import { ListLoadError } from '../lib/ListLoadError';
+import { applySpaceOrder, entryKey, moveInOrder, type SpaceStripEntry } from '../lib/spaceOrder';
+import { loadSpaceIcons, loadSpaceOrder, saveSpaceIcons, saveSpaceOrder } from '../lib/spacePrefs';
 import { useTabSearch } from '../lib/useTabSearch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { engine } from '../lib/engine';
@@ -543,6 +545,7 @@ export default function HomeScreen() {
   // ── Phase C: borrowing domain (see screens/home/hooks/useBorrows.ts) ──
   const { setBorrows, confirmReturnId, borrowFor, onReturnBorrow } = useBorrows();
   const itemsSub = useRef<(() => void) | null>(null);
+  const itemsSeqRef = useRef(0);
 
   // ── voice note playback (expo-audio, one shared player) ──
   // P0-3: lazy — the native player is created on the first play tap, not
@@ -893,8 +896,13 @@ export default function HomeScreen() {
   // effect, or via notesPage.refresh() etc. (latest loader) elsewhere.
 
   const refreshItems = useCallback(async (spaceId: string) => {
+    // Realtime bursts fire this repeatedly (Spaces & Family UX): a slow
+    // earlier response must never overwrite a newer one — sequence-guard
+    // the apply, same discipline as usePaginatedList.
+    const seq = ++itemsSeqRef.current;
     try {
       const { items } = await engine.listItemsCached(spaceId);
+      if (seq !== itemsSeqRef.current) return;
       const grouped: Record<string, Item[]> = {};
       for (const it of items) {
         if (!it.note_id) continue;
@@ -1697,7 +1705,14 @@ export default function HomeScreen() {
 
   const shareInvite = useCallback(async () => {
     if (!inviteCode) return;
-    const text = tx('joinWithCode', { code: inviteCode });
+    // Invite-by-link (Spaces & Family UX): the deep-link join path already
+    // exists end-to-end (fail-closed parser + confirm + join), so the share
+    // text carries the tappable link alongside the code — the code alone
+    // stays for the copy button and manual entry.
+    const text = tx('joinWithLink', {
+      link: `mawjood://family/join?code=${inviteCode}`,
+      code: inviteCode,
+    });
     try {
       const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
       if (typeof nav.share === 'function') await nav.share({ text });
@@ -1808,6 +1823,12 @@ export default function HomeScreen() {
 
   // ── CFP-01 item 7: custom spaces — managed via the manage-space edge fn ──
   const [customSpacesLimit, setCustomSpacesLimit] = useState(2);
+  // ── Spaces & Family UX wave: strip order + custom-space icons are
+  // per-user device-local display prefs (lib/spacePrefs) — never space data.
+  const [stripOrder, setStripOrder] = useState<string[] | null>(null);
+  const [stripEdit, setStripEdit] = useState(false);
+  const [spaceIcons, setSpaceIcons] = useState<Record<string, string>>({});
+  const [spaceIconDraft, setSpaceIconDraft] = useState('🗂️');
   const [spaceNameOpen, setSpaceNameOpen] = useState(false);
   const [spaceNameValue, setSpaceNameValue] = useState('');
   const [spaceNameTarget, setSpaceNameTarget] = useState<Space | null>(null); // null = create mode
@@ -1828,6 +1849,47 @@ export default function HomeScreen() {
     () => spaces.filter((sp) => (sp.type as string) === 'custom' && sp.owner_id === userId),
     [spaces, userId],
   );
+  // The strip's space entries in display order: built-in types + custom
+  // spaces, rearranged by the user's saved order (unknown entries keep
+  // their natural order at the end — see lib/spaceOrder).
+  const stripEntries = useMemo<SpaceStripEntry[]>(
+    () => [
+      ...(Object.keys(SPACE_NAME_KEYS) as SpaceType[]).map((type) => ({ kind: 'builtin' as const, type })),
+      ...customSpaces.map((sp) => ({ kind: 'custom' as const, id: sp.id })),
+    ],
+    [customSpaces],
+  );
+  const orderedStrip = useMemo(
+    () => applySpaceOrder(stripEntries, stripOrder),
+    [stripEntries, stripOrder],
+  );
+  const stripKeysRef = useRef<string[]>([]);
+  useEffect(() => {
+    stripKeysRef.current = orderedStrip.map(entryKey);
+  }, [orderedStrip]);
+  /** Optimistic strip reorder: apply instantly, persist, roll back on failure. */
+  const onMoveEntry = useCallback(
+    (key: string, dir: -1 | 1) => {
+      const uid = userIdRef.current;
+      if (!uid) return;
+      const prev = stripKeysRef.current;
+      const next = moveInOrder(prev, key, dir);
+      if (next.every((k, i) => k === prev[i])) return;
+      setStripOrder(next);
+      void saveSpaceOrder(uid, next).then((ok) => {
+        if (!ok) {
+          setStripOrder(prev);
+          showToast(t('spacePrefsFail'));
+        }
+      });
+    },
+    [showToast],
+  );
+  /** Long-press a space tab → reorder mode (arrows + Done). */
+  const enterStripEdit = useCallback(() => {
+    setStripEdit(true);
+    showToast(t('stripEditHint'));
+  }, [showToast]);
   const spaceErrText = useCallback((e: unknown): string => {
     const code = (e as { code?: string })?.code ?? '';
     if (code === 'limit_reached') return t('spaceLimitMsg');
@@ -1839,6 +1901,7 @@ export default function HomeScreen() {
     setSpaceNameTarget(null);
     setSpaceNameValue('');
     setSpaceNameMsg(null);
+    setSpaceIconDraft('🗂️');
     setProfileOpen(false);
     queueAfterModalClose(() => setSpaceNameOpen(true));
   }, [queueAfterModalClose]);
@@ -1846,9 +1909,10 @@ export default function HomeScreen() {
     setSpaceNameTarget(sp);
     setSpaceNameValue(sp.name);
     setSpaceNameMsg(null);
+    setSpaceIconDraft(spaceIcons[sp.id] ?? '🗂️');
     setProfileOpen(false);
     queueAfterModalClose(() => setSpaceNameOpen(true));
-  }, [queueAfterModalClose]);
+  }, [queueAfterModalClose, spaceIcons]);
   /** Close the space-name modal; optionally return to Profile (sequenced). */
   const closeSpaceName = useCallback((backToProfile: boolean) => {
     setSpaceNameOpen(false);
@@ -1859,16 +1923,33 @@ export default function HomeScreen() {
     if (!spaceNameValue.trim()) { setSpaceNameMsg(t('renameEmpty')); return; }
     setSpaceNameBusy(true);
     try {
+      const beforeIds = new Set(spaces.map((s) => s.id));
       if (spaceNameTarget) await engine.renameCustomSpace(spaceNameTarget.id, spaceNameValue);
       else await engine.createCustomSpace(spaceNameValue);
-      setSpaces(await engine.listSpaces());
+      const fresh = await engine.listSpaces();
+      setSpaces(fresh);
+      // Spaces & Family UX: persist the picked icon for the renamed space,
+      // or for the just-created one (identified as the new id). Device-local
+      // display pref; failure rolls the icon back, the rename itself stands.
+      const targetId = spaceNameTarget?.id ?? fresh.find((s) => !beforeIds.has(s.id))?.id;
+      const uid = userIdRef.current;
+      if (targetId && uid && (spaceIcons[targetId] ?? '🗂️') !== spaceIconDraft) {
+        const prevIcons = spaceIcons;
+        const nextIcons = { ...spaceIcons, [targetId]: spaceIconDraft };
+        setSpaceIcons(nextIcons);
+        const ok = await saveSpaceIcons(uid, nextIcons);
+        if (!ok) {
+          setSpaceIcons(prevIcons);
+          showToast(t('spacePrefsFail'));
+        }
+      }
       closeSpaceName(true);
     } catch (e) {
       setSpaceNameMsg(spaceErrText(e));
     } finally {
       setSpaceNameBusy(false);
     }
-  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText, closeSpaceName]);
+  }, [spaceNameBusy, spaceNameValue, spaceNameTarget, spaceErrText, closeSpaceName, spaces, spaceIcons, spaceIconDraft, showToast]);
   // Product Foundation: one shared in-flight guard for space/family
   // destructive actions — a double-tap during the network call must never
   // execute the operation twice.
@@ -2045,6 +2126,10 @@ export default function HomeScreen() {
   const loadSpaces = useCallback(async (uid: string): Promise<boolean> => {
     try {
       setSpaces(await engine.ensureDefaultSpaces(uid));
+      // Spaces & Family UX: this user's strip order + space icons (device-
+      // local prefs; failures just leave the defaults in place).
+      void loadSpaceOrder(uid).then(setStripOrder);
+      void loadSpaceIcons(uid).then(setSpaceIcons);
       setBootError(false);
       return true;
     } catch (e) {
@@ -2258,6 +2343,12 @@ export default function HomeScreen() {
         setUpcoming([]);
         setShopping([]);
         setShopLists([]);
+        // Spaces & Family UX: in-memory strip prefs belong to the signed-out
+        // user too (the stored copies are keyed by their uid and reload for
+        // the next account at boot).
+        setStripOrder(null);
+        setSpaceIcons({});
+        setStripEdit(false);
       } else if (event === 'TOKEN_REFRESHED' && session && authStateRef.current === 'signed-out') {
         // Product Foundation: boot treats a 12s-stalled session read as
         // signed-out even when the stored session is valid; the client's
@@ -4653,7 +4744,10 @@ export default function HomeScreen() {
         contentContainerStyle={styles.tabBarInner}
       >
         <Pressable
-          onPress={() => setView('chat')}
+          onPress={() => {
+            setStripEdit(false);
+            setView('chat');
+          }}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
           testID="tab-home"
           accessibilityRole="tab"
@@ -4663,38 +4757,109 @@ export default function HomeScreen() {
             {t('tabHome')}
           </Text>
         </Pressable>
-        {(Object.keys(SPACE_NAME_KEYS) as SpaceType[]).map((st) => (
-          <Pressable
-            key={st}
-            onPress={() => openSpace(st)}
-            style={[styles.tab, view === st && styles.tabActive]}
-            testID={`tab-space-${st}`}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: view === st }}
-          >
-            <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
-              {spaceLabel(st)}
-            </Text>
-          </Pressable>
-        ))}
-
-        {customSpaces.map((sp) => {
+        {/* Spaces & Family UX: ONE ordered strip — built-in types and
+            custom spaces interleaved by the user's saved order. Long-press
+            any space tab to reorder (arrows are logical: the first always
+            moves toward the strip's start, in RTL and LTR alike). */}
+        {orderedStrip.map((entry, idx) => {
+          const key = entryKey(entry);
+          const moveBtns = stripEdit ? (
+            <>
+              <Pressable
+                onPress={() => onMoveEntry(key, -1)}
+                disabled={idx === 0}
+                style={[styles.stripMoveBtn, idx === 0 && styles.stripMoveBtnOff]}
+                accessibilityRole="button"
+                accessibilityLabel={t('moveEarlier')}
+              >
+                <Text style={styles.stripMoveText}>{getLang() === 'ar' ? '›' : '‹'}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onMoveEntry(key, 1)}
+                disabled={idx === orderedStrip.length - 1}
+                style={[styles.stripMoveBtn, idx === orderedStrip.length - 1 && styles.stripMoveBtnOff]}
+                accessibilityRole="button"
+                accessibilityLabel={t('moveLater')}
+              >
+                <Text style={styles.stripMoveText}>{getLang() === 'ar' ? '‹' : '›'}</Text>
+              </Pressable>
+            </>
+          ) : null;
+          if (entry.kind === 'builtin') {
+            const st = entry.type;
+            const tab = (
+              <Pressable
+                onPress={
+                  stripEdit
+                    ? undefined
+                    : () => {
+                        setStripEdit(false);
+                        openSpace(st);
+                      }
+                }
+                onLongPress={stripEdit ? undefined : enterStripEdit}
+                style={[styles.tab, view === st && styles.tabActive]}
+                testID={`tab-space-${st}`}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: view === st }}
+              >
+                <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
+                  {spaceLabel(st)}
+                </Text>
+              </Pressable>
+            );
+            return stripEdit ? (
+              <View key={key} style={styles.stripEditWrap}>
+                {tab}
+                {moveBtns}
+              </View>
+            ) : (
+              <React.Fragment key={key}>{tab}</React.Fragment>
+            );
+          }
+          const sp = customSpaces.find((s) => s.id === entry.id);
+          if (!sp) return null;
           const active = view === 'custom' && viewSpace?.id === sp.id;
-          return (
+          const tab = (
             <Pressable
-              key={`custom-${sp.id}`}
-              onPress={() => openCustomSpace(sp)}
+              onPress={
+                stripEdit
+                  ? undefined
+                  : () => {
+                      setStripEdit(false);
+                      openCustomSpace(sp);
+                    }
+              }
+              onLongPress={stripEdit ? undefined : enterStripEdit}
               style={[styles.tab, active && styles.tabActive]}
               testID={`tab-custom-${sp.id}`}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
-                🗂️ {sp.name}
+                {spaceIcons[sp.id] ?? '🗂️'} {sp.name}
               </Text>
             </Pressable>
           );
+          return stripEdit ? (
+            <View key={key} style={styles.stripEditWrap}>
+              {tab}
+              {moveBtns}
+            </View>
+          ) : (
+            <React.Fragment key={key}>{tab}</React.Fragment>
+          );
         })}
+        {stripEdit ? (
+          <Pressable
+            onPress={() => setStripEdit(false)}
+            style={[styles.tab, styles.stripDone]}
+            accessibilityRole="button"
+            accessibilityLabel={t('stripDone')}
+          >
+            <Text style={[styles.tabText, styles.stripDoneText]}>✓ {t('stripDone')}</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       {/* anonymous trial account → link an email to keep the data */}
@@ -6294,6 +6459,25 @@ export default function HomeScreen() {
             <Text style={{ fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 }}>
               {spaceNameValue.length}/40
             </Text>
+            {/* Spaces & Family UX: icon picker — display-only pref, stored
+                per user on this device (the spaces schema has no icon). */}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: P.ink, marginTop: 12 }}>
+              {t('spaceIconLabel')}
+            </Text>
+            <View style={[styles.iconRow, { marginTop: 8 }]}>
+              {['🗂️', ...TAB_ICON_CHOICES].map((ic) => (
+                <Pressable
+                  key={ic}
+                  onPress={() => setSpaceIconDraft(ic)}
+                  style={[styles.iconPick, spaceIconDraft === ic && styles.iconPickActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={ic}
+                  accessibilityState={{ selected: spaceIconDraft === ic }}
+                >
+                  <Text style={styles.iconPickText}>{ic}</Text>
+                </Pressable>
+              ))}
+            </View>
             {spaceNameMsg ? <Text style={styles.fieldError}>⚠️ {spaceNameMsg}</Text> : null}
             <View style={styles.modalRow}>
               <Pressable onPress={() => void saveSpaceName()} disabled={spaceNameBusy} style={styles.modalBtn}>
