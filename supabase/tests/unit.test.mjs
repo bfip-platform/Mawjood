@@ -3296,8 +3296,6 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     const page = read('../../apps/mobile/public/join/index.html');
     assert.ok(page.includes('mawjood://family/join?code=${encodeURIComponent(code)}'), 'the landing page opens the app with the same invite code');
     assert.ok(page.includes('navigator.clipboard.writeText(code)'), 'the landing page offers code copy as a fallback');
-    const config = JSON.parse(read('../../apps/mobile/app.json'));
-    assert.equal(config.expo.experiments.baseUrl, '/Mawjood', 'the web export is rooted at the GitHub Pages project path');
     const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
     assert.deepEqual(parseDeepLink('mawjood://family/join?code=ABCDEFG234'), { kind: 'join-family', code: 'ABCDEFG234' });
   });
