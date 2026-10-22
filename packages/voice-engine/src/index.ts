@@ -6,3 +6,4 @@ export * from './family';
 export * from './offline';
 export * from './rank';
 export * from './age';
+export * from './nameLimits';

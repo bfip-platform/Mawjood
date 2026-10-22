@@ -552,8 +552,9 @@ async function toolProposeTab(
   vctx?: VaultCtx | null,
 ) {
   if (vctx && vctx.mode !== 'normal') return { error: 'unavailable_in_vault' };
-  const name = (args.name ?? '').trim().slice(0, 40);
+  const name = (args.name ?? '').trim();
   if (!name) return { error: 'name required' };
+  if (Array.from(name).length > 40) return { error: 'tab name exceeds 40 characters' };
   const space_id = args.space_id && Object.values(spaceByType).includes(args.space_id) ? args.space_id : null;
   if (!space_id) return { error: 'bad space_id — call list_tabs first and use its space_id' };
   const norm = normAr(name);
@@ -710,9 +711,10 @@ async function toolCancelAction(admin: any, userId: string, args: { action_id?: 
 // deno-lint-ignore no-explicit-any
 async function executeCreateTab(admin: any, userId: string, payload: Record<string, any>, gov: Governance | null, uiAr: boolean) {
   const space_id = String(payload.space_id ?? '');
-  const name = String(payload.name ?? '').trim().slice(0, 40);
+  const name = String(payload.name ?? '').trim();
   const icon = String(payload.emoji ?? payload.icon ?? '📁').slice(0, 8);
   if (!space_id || !name) return { error: 'bad payload' };
+  if (Array.from(name).length > 40) return { error: 'tab name exceeds 40 characters' };
   const sw = await spaceWritable(admin, userId, space_id);
   if (!sw.ok) return { error: 'no access to space' };
   // 💳 paid gate: creating beyond the free custom-tab limit needs a plan/grant
@@ -761,9 +763,10 @@ async function executeDeleteTab(admin: any, userId: string, payload: Record<stri
 
 // deno-lint-ignore no-explicit-any
 async function executeCreateSpace(admin: any, userId: string, payload: Record<string, any>, gov: Governance | null, uiAr: boolean) {
-  const name = String(payload.name ?? '').trim().slice(0, 40);
+  const name = String(payload.name ?? '').trim();
   const icon = String(payload.emoji ?? payload.icon ?? '📁').slice(0, 8);
   if (!name) return { error: 'bad payload' };
+  if (Array.from(name).length > 40) return { error: 'space name exceeds 40 characters' };
   // 💳 custom spaces are always beyond the free tier
   if (gov?.capabilities?.require_paid_for_extra) {
     const paid = await isPaidUser(admin, userId);

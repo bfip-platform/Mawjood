@@ -36,6 +36,8 @@ import {
   resolveFamilyMember,
   isAdult,
   parseBirthDate,
+  NAME_LIMITS,
+  clampNameLength,
 } from '@mawjood/voice-engine';
 import type { FamilyMember, Item, Note, Space, SpaceTab, SpaceType, TrashKind, TrashRow } from '@mawjood/voice-engine';
 import { supabase } from '../lib/supabase';
@@ -1097,8 +1099,8 @@ export default function HomeScreen() {
     setTabModalOpen(false);
     try {
       if (editingTab) {
-        await engine.renameSpaceTab(editingTab.id, tabName);
-        setSpaceTabs((prev) => prev.map((x) => (x.id === editingTab.id ? { ...x, title: tabName.trim() } : x)));
+        await engine.renameSpaceTab(editingTab.id, tabName, tabIcon);
+        setSpaceTabs((prev) => prev.map((x) => (x.id === editingTab.id ? { ...x, title: tabName.trim(), icon: tabIcon } : x)));
       } else {
         const tab = await engine.createSpaceTab(spaceId, userId, tabName, tabIcon);
         setSpaceTabs((prev) => [...prev, tab]);
@@ -1171,23 +1173,24 @@ export default function HomeScreen() {
 
   const runDeleteTab = useCallback(
     async (tabId: string, opts: { moveTo?: string | null; trashDays: number }) => {
-      if (spaceTab === tabId) setSpaceTab('notes');
-      if (familyTab === tabId) setFamilyTab('members');
-      setSpaceTabs((prev) => prev.filter((x) => x.id !== tabId));
-      setNotes((prev) =>
-        opts.moveTo !== undefined
-          ? prev.map((n) => (n.tab_id === tabId ? { ...n, tab_id: opts.moveTo ?? null } : n))
-          : prev.filter((n) => n.tab_id !== tabId),
-      );
-      setDelTab(null);
-      setDelTabPickTarget(false);
       try {
         await engine.deleteSpaceTab(tabId, opts);
+        if (spaceTab === tabId) setSpaceTab('notes');
+        if (familyTab === tabId) setFamilyTab('members');
+        setSpaceTabs((prev) => prev.filter((x) => x.id !== tabId));
+        setNotes((prev) =>
+          opts.moveTo !== undefined
+            ? prev.map((n) => (n.tab_id === tabId ? { ...n, tab_id: opts.moveTo ?? null } : n))
+            : prev.filter((n) => n.tab_id !== tabId),
+        );
+        setDelTab(null);
+        setDelTabPickTarget(false);
       } catch (e) {
         console.warn('deleteSpaceTab failed', e);
+        showToast(t('tryAgain'));
       }
     },
-    [spaceTab, familyTab, setNotes],
+    [spaceTab, familyTab, setNotes, showToast],
   );
 
   /** Move a custom tab (+ its notes) to another space. */
@@ -1211,19 +1214,34 @@ export default function HomeScreen() {
   );
 
   /** Delete a custom tab → modal: move its notes to another tab, or trash/delete them. */
+  const deleteTabToSpace = useCallback(async (tabId: string, targetSpaceId: string) => {
+    try {
+      await engine.deleteSpaceTabToSpace(tabId, targetSpaceId);
+      setDelTab(null);
+      setDelTabPickTarget(false);
+      if (spaceTab === tabId) setSpaceTab('notes');
+      if (familyTab === tabId) setFamilyTab('members');
+      if (viewSpace) {
+        await refreshTabs(viewSpace.id);
+        notesPage.refresh();
+      }
+      const target = spaces.find((s) => s.id === targetSpaceId);
+      if (target) await refreshTabs(target.id);
+    } catch (e) {
+      console.warn('deleteSpaceTabToSpace failed', e);
+      showToast(t('tryAgain'));
+    }
+  }, [spaceTab, familyTab, viewSpace, refreshTabs, notesPage, spaces, showToast]);
+
   const askDeleteTab = useCallback(
     (tab: SpaceTab) => {
       setTabMenuId(null);
       const n = notes.filter((x) => x.tab_id === tab.id).length;
-      if (n === 0) {
-        void runDeleteTab(tab.id, { trashDays: trashRetention });
-        return;
-      }
       setDelTab(tab);
       setDelTabCount(n);
       setDelTabPickTarget(false);
     },
-    [notes, runDeleteTab, trashRetention],
+    [notes],
   );
 
   // ── universal trash (one bin for the whole account; vault_id set = secret trash) ──
@@ -4816,8 +4834,11 @@ export default function HomeScreen() {
             </Pressable>
           )}
         </ScrollView>
-        {menuTab && (
-          <View style={styles.tabMenu}>
+        <Modal visible={!!menuTab} transparent animationType="fade" onRequestClose={() => { setTabMenuId(null); setTabMoveFor(null); }}>
+          <View style={styles.modalBg}>
+            <Pressable accessible={false} style={styles.tabMenuBackdrop} onPress={() => { setTabMenuId(null); setTabMoveFor(null); }} />
+            {menuTab && <View style={[styles.modalCard, { alignItems: 'stretch' }]}>
+            <Text style={styles.modalTitle}>{menuTab.icon} {menuTab.title}</Text>
             <Pressable
               onPress={() => {
                 setEditingTab(menuTab);
@@ -4839,7 +4860,7 @@ export default function HomeScreen() {
             {tabMoveFor === menuTab.id && (
               <View>
                 {spaces
-                  .filter((s) => s.id !== menuTab.space_id)
+                  .filter((s) => s.id !== menuTab.space_id && s.owner_id === userId)
                   .map((s) => (
                     <Pressable
                       key={s.id}
@@ -4859,8 +4880,10 @@ export default function HomeScreen() {
             >
               <Text style={styles.tabMenuText}>🗑️ {t('deleteTab')}</Text>
             </Pressable>
+            <Pressable onPress={() => { setTabMenuId(null); setTabMoveFor(null); }} style={[styles.famLink, { marginTop: 8 }]}><Text style={styles.famLinkText}>{t('cancel')}</Text></Pressable>
+            </View>}
           </View>
-        )}
+        </Modal>
       </>
     );
   };
@@ -5186,12 +5209,11 @@ export default function HomeScreen() {
                 style={[styles.fieldInput, { textAlign: ta() }]}
                 value={nameDraft}
                 onChangeText={(tt) => {
-                  setNameDraft(tt);
+                  setNameDraft(clampNameLength(tt, NAME_LIMITS.profileDisplay));
                   setNameError(null);
                 }}
                 placeholder={t('nameExample')}
                 placeholderTextColor={P.faint2}
-                maxLength={60}
               />
               {nameError ? <Text style={styles.fieldError}>⚠️ {nameError}</Text> : null}
               <Pressable
@@ -6135,11 +6157,10 @@ export default function HomeScreen() {
             </View>
             <TextInput
               value={tabName}
-              onChangeText={setTabName}
+              onChangeText={(v) => setTabName(clampNameLength(v, NAME_LIMITS.customTab))}
               placeholder={t('tabNamePh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, { textAlign: ta() }]}
-              maxLength={40}
+              style={[styles.fieldInput, styles.nameInputFixed, { textAlign: ta() }]}
               autoFocus
             />
             <View style={styles.modalRow}>
@@ -6176,7 +6197,7 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* ── delete tab: move its notes or trash/delete them ── */}
+      {/* ── delete tab: confirm delete or move its contents to another space ── */}
       <Modal visible={delTab !== null} transparent animationType="fade" onRequestClose={() => setDelTab(null)}>
         <View style={styles.modalBg}>
           <View style={styles.modalCard}>
@@ -6194,7 +6215,7 @@ export default function HomeScreen() {
                   style={[styles.modalBtn, { marginTop: 4 }]}
                 >
                   <Text style={styles.modalBtnText}>
-                    📁 {tx('delTabMove', { count: String(delTabCount) })}
+                  📁 {t('moveToSpace')}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -6219,26 +6240,13 @@ export default function HomeScreen() {
               <>
                 <Text style={[styles.modalBody, { marginTop: 0 }]}>{t('delTabPickTarget')}</Text>
                 <ScrollView style={{ maxHeight: 280 }}>
-                  {(
-                    [
-                      {
-                        id: null as string | null,
-                        label: viewSpace?.type === 'family' ? t('tabNotes') : t('tabMyNotes'),
-                      },
-                      ...(viewSpace?.type !== 'family'
-                        ? [{ id: 'papers' as string | null, label: t('tabMyPapers') }]
-                        : []),
-                      ...spaceTabs
-                        .filter((x) => delTab && x.id !== delTab.id)
-                        .map((x) => ({ id: x.id as string | null, label: `${x.icon} ${x.title}` })),
-                    ] as { id: string | null; label: string }[]
-                  ).map((opt) => (
+                  {spaces.filter((s) => s.id !== viewSpace?.id && s.owner_id === userId).map((space) => (
                     <Pressable
-                      key={opt.id ?? 'main'}
-                      onPress={() => delTab && void runDeleteTab(delTab.id, { moveTo: opt.id, trashDays: 0 })}
+                      key={space.id}
+                      onPress={() => delTab && void deleteTabToSpace(delTab.id, space.id)}
                       style={styles.fileRow}
                     >
-                      <Text style={styles.fileRowText}>{opt.label}</Text>
+                      <Text style={styles.fileRowText}>{spaceLabel(space.type, space.name)}</Text>
                     </Pressable>
                   ))}
                 </ScrollView>
@@ -6588,7 +6596,7 @@ export default function HomeScreen() {
               placeholderTextColor={P.faint2}
               autoCapitalize="characters"
               autoCorrect={false}
-              style={[styles.fieldInput, styles.joinCodeInput]}
+              style={[styles.fieldInput, styles.joinCodeInput, styles.nameInputFixed]}
               textAlign="center"
               maxLength={12}
             />
@@ -6693,18 +6701,17 @@ export default function HomeScreen() {
             <Text style={styles.modalTitle}>{spaceNameTarget ? t('spaceRenameBtn') : t('newSpaceBtn')}</Text>
             <TextInput
               value={spaceNameValue}
-              onChangeText={setSpaceNameValue}
+              onChangeText={(v) => setSpaceNameValue(clampNameLength(v, NAME_LIMITS.customSpace))}
               placeholder={t('spaceNamePh')}
               placeholderTextColor={P.faint2}
               autoCorrect={false}
-              style={[styles.fieldInput, { textAlign: ta() }]}
-              maxLength={40}
+              style={[styles.fieldInput, styles.nameInputFixed, { textAlign: ta() }]}
               autoFocus
               onSubmitEditing={() => void saveSpaceName()}
               returnKeyType="done"
             />
             <Text style={{ fontSize: 11, color: P.faint, alignSelf: 'flex-end', marginTop: 4, paddingHorizontal: 4 }}>
-              {spaceNameValue.length}/40
+              {Array.from(spaceNameValue).length}/{NAME_LIMITS.customSpace}
             </Text>
             {/* Spaces & Family UX: icon picker — display-only pref, stored
                 per user on this device (the spaces schema has no icon). */}
@@ -6751,17 +6758,16 @@ export default function HomeScreen() {
             <Text style={styles.modalBody}>{t('renameHint')}</Text>
             <TextInput
               value={renameValue}
-              onChangeText={setRenameValue}
+              onChangeText={(v) => setRenameValue(clampNameLength(v, NAME_LIMITS.familySpace))}
               placeholder={t('familyNamePh')}
               placeholderTextColor={P.faint2}
               autoCorrect={false}
-              style={[styles.fieldInput, { textAlign: ta() }]}
-              maxLength={20}
+              style={[styles.fieldInput, styles.nameInputFixed, { textAlign: ta() }]}
               autoFocus
               onSubmitEditing={doRename}
               returnKeyType="done"
             />
-            <Text style={styles.charCount}>{renameValue.length}/20</Text>
+            <Text style={styles.charCount}>{Array.from(renameValue).length}/{NAME_LIMITS.familySpace}</Text>
             {renameMsg ? <Text style={styles.fieldError}>⚠️ {renameMsg}</Text> : null}
             <View style={styles.modalRow}>
               <Pressable onPress={doRename} disabled={renameBusy} style={styles.modalBtn}>
@@ -6942,10 +6948,10 @@ export default function HomeScreen() {
             <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <TextInput
               value={newListTitle}
-              onChangeText={setNewListTitle}
+              onChangeText={(v) => setNewListTitle(clampNameLength(v, NAME_LIMITS.shoppingList))}
               placeholder={t('newListTitlePh')}
               placeholderTextColor={P.faint}
-              style={[styles.fieldInput, { textAlign: ta(), alignSelf: 'stretch', width: '100%' }]}
+              style={[styles.fieldInput, styles.nameInputFixed, { textAlign: ta() }]}
             />
             <Text style={styles.modalLabel}>{t('newListFor')}</Text>
             <View style={styles.chipRow}>
