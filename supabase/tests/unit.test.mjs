@@ -3237,10 +3237,12 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
 
   it('strip wiring: ordered render, hold-and-drop, animation, and rollback', () => {
     const idx = read('../../apps/mobile/src/app/index.tsx');
-    assert.ok(idx.includes('applySpaceOrder(stripEntries, stripOrder)'), 'strip renders through the saved order');
+    assert.ok(idx.includes('applySpaceOrder(stripEntries, stripPreviewOrder ?? stripOrder)'), 'strip renders through the live preview or saved order');
     assert.ok(idx.includes('onLongPress={() => startStripDrag(key)}'), 'long-press starts a direct drag');
     assert.ok(idx.includes('delayLongPress={230}'), 'drag starts without a long wait');
     assert.ok(idx.includes('PanResponder.create(') && idx.includes('finishStripDrag(gesture.moveX)'), 'pointer release selects the drop position');
+    assert.ok(idx.includes('setStripPreviewOrder(next);') && idx.includes('LayoutAnimation.configureNext('), 'neighbors reflow into the live drop slot');
+    assert.ok(idx.includes('gesture.dx + stripDragCompensationRef.current'), 'the dragged tab stays under the pointer as its slot moves');
     assert.ok(idx.includes('moveToIndex(prev, key, prev.indexOf(target.key))'), 'drop reorders in one operation');
     assert.ok(idx.includes("saveSpaceOrder(uid, next).then((ok) => {"), 'moves persist');
     assert.ok(idx.includes('setStripOrder(prev);'), 'a failed save rolls the order back');

@@ -10,6 +10,7 @@ import {
   I18nManager,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Linking,
   Modal,
   PanResponder,
@@ -20,6 +21,7 @@ import {
   Text,
   TextInput,
   View,
+  UIManager,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
@@ -1857,6 +1859,7 @@ export default function HomeScreen() {
   // per-user device-local display prefs (lib/spacePrefs) — never space data.
   const [stripOrder, setStripOrder] = useState<string[] | null>(null);
   const [stripDragKey, setStripDragKey] = useState<string | null>(null);
+  const [stripPreviewOrder, setStripPreviewOrder] = useState<string[] | null>(null);
   const [spaceIcons, setSpaceIcons] = useState<Record<string, string>>({});
   const [spaceIconDraft, setSpaceIconDraft] = useState('🗂️');
   const [spaceNameOpen, setSpaceNameOpen] = useState(false);
@@ -1890,15 +1893,24 @@ export default function HomeScreen() {
     [customSpaces],
   );
   const orderedStrip = useMemo(
-    () => applySpaceOrder(stripEntries, stripOrder),
-    [stripEntries, stripOrder],
+    () => applySpaceOrder(stripEntries, stripPreviewOrder ?? stripOrder),
+    [stripEntries, stripOrder, stripPreviewOrder],
   );
   const stripKeysRef = useRef<string[]>([]);
   const stripDragKeyRef = useRef<string | null>(null);
   const stripLayoutsRef = useRef<Record<string, { left: number; width: number }>>({});
+  const stripDragCompensationRef = useRef(0);
+  const stripDragLastLeftRef = useRef<number | null>(null);
+  const stripDragStartOrderRef = useRef<string[]>([]);
+  const stripPreviewOrderRef = useRef<string[] | null>(null);
   const stripViewRefs = useRef<Record<string, View | null>>({});
   const stripDragValue = useRef(new Animated.ValueXY()).current;
   const stripDragScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
   useEffect(() => {
     stripKeysRef.current = orderedStrip.map(entryKey);
   }, [orderedStrip]);
@@ -1906,6 +1918,11 @@ export default function HomeScreen() {
   const startStripDrag = useCallback((key: string) => {
     stripDragKeyRef.current = key;
     setStripDragKey(key);
+    stripPreviewOrderRef.current = stripKeysRef.current;
+    stripDragStartOrderRef.current = stripKeysRef.current;
+    setStripPreviewOrder(stripKeysRef.current);
+    stripDragCompensationRef.current = 0;
+    stripDragLastLeftRef.current = stripLayoutsRef.current[key]?.left ?? null;
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1.06, useNativeDriver: true, speed: 28, bounciness: 5 }).start();
     void tap();
@@ -1914,20 +1931,46 @@ export default function HomeScreen() {
   /** Drop directly into place, persist once, and roll back on failure. */
   const cancelStripDrag = useCallback(() => {
     stripDragKeyRef.current = null;
+    stripPreviewOrderRef.current = null;
     setStripDragKey(null);
+    setStripPreviewOrder(null);
+    stripDragCompensationRef.current = 0;
+    stripDragLastLeftRef.current = null;
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
   }, [stripDragScale, stripDragValue]);
   const finishStripDrag = useCallback(
     (moveX: number, didMove = true) => {
       const key = stripDragKeyRef.current;
+      const preview = stripPreviewOrderRef.current;
+      const dragStartOrder = stripDragStartOrderRef.current;
       stripDragKeyRef.current = null;
+      stripPreviewOrderRef.current = null;
       setStripDragKey(null);
+      setStripPreviewOrder(null);
+      stripDragCompensationRef.current = 0;
+      stripDragLastLeftRef.current = null;
       Animated.parallel([
         Animated.spring(stripDragValue, { toValue: { x: 0, y: 0 }, useNativeDriver: true, speed: 24, bounciness: 4 }),
         Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }),
       ]).start();
       if (!key || !didMove) return;
+      if (preview) {
+        const prev = dragStartOrder;
+        if (preview.every((k, i) => k === prev[i])) return;
+        const uid = userIdRef.current;
+        if (!uid) return;
+        stripKeysRef.current = preview;
+        setStripOrder(preview);
+        void saveSpaceOrder(uid, preview).then((ok) => {
+          if (!ok) {
+            stripKeysRef.current = prev;
+            setStripOrder(prev);
+            showToast(t('spacePrefsFail'));
+          }
+        });
+        return;
+      }
       const layouts = stripLayoutsRef.current;
       const target = orderedStrip.reduce<{ key: string; distance: number } | null>((best, entry) => {
         const candidateKey = entryKey(entry);
@@ -1957,7 +2000,32 @@ export default function HomeScreen() {
   const stripPanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: () => stripDragKeyRef.current !== null,
     onMoveShouldSetPanResponderCapture: () => stripDragKeyRef.current !== null,
-    onPanResponderMove: (_event, gesture) => stripDragValue.setValue({ x: gesture.dx, y: gesture.dy }),
+    onPanResponderMove: (_event, gesture) => {
+      const key = stripDragKeyRef.current;
+      const current = stripPreviewOrderRef.current;
+      const layouts = stripLayoutsRef.current;
+      if (key && current) {
+        const target = current.reduce<{ key: string; distance: number } | null>((best, candidate) => {
+          if (candidate === key) return best;
+          const box = layouts[candidate];
+          if (!box) return best;
+          const distance = Math.abs(gesture.moveX - (box.left + box.width / 2));
+          return !best || distance < best.distance ? { key: candidate, distance } : best;
+        }, null);
+        if (target) {
+          const next = moveToIndex(current, key, current.indexOf(target.key));
+          if (next.some((item, index) => item !== current[index])) {
+            LayoutAnimation.configureNext({
+              duration: 150,
+              update: { type: LayoutAnimation.Types.easeInEaseOut },
+            });
+            stripPreviewOrderRef.current = next;
+            setStripPreviewOrder(next);
+          }
+        }
+      }
+      stripDragValue.setValue({ x: gesture.dx + stripDragCompensationRef.current, y: gesture.dy });
+    },
     onPanResponderRelease: (_event, gesture) => finishStripDrag(gesture.moveX),
     onPanResponderTerminate: cancelStripDrag,
     onPanResponderTerminationRequest: () => false,
@@ -4907,6 +4975,10 @@ export default function HomeScreen() {
               onLayout={() => {
                 stripViewRefs.current[key]?.measureInWindow((left, _top, width) => {
                   stripLayoutsRef.current[key] = { left, width };
+                  if (stripDragKeyRef.current === key && stripDragLastLeftRef.current !== null) {
+                    stripDragCompensationRef.current += stripDragLastLeftRef.current - left;
+                  }
+                  if (stripDragKeyRef.current === key) stripDragLastLeftRef.current = left;
                 });
               }}
               style={[
