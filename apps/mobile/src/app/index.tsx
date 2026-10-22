@@ -129,7 +129,7 @@ import { UndoBar } from '../lib/UndoBar';
 import { usePaginatedList } from '../lib/usePaginatedList';
 import { ListLoadError } from '../lib/ListLoadError';
 import { dueState } from '../lib/due';
-import { applySpaceOrder, entryKey, moveToIndex, type SpaceStripEntry } from '../lib/spaceOrder';
+import { applySpaceOrder, entryKey, moveToIndex, resolveDropIndex, type SpaceStripEntry } from '../lib/spaceOrder';
 import { loadSpaceIcons, loadSpaceOrder, saveSpaceIcons, saveSpaceOrder } from '../lib/spacePrefs';
 import { useTabSearch } from '../lib/useTabSearch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1898,9 +1898,10 @@ export default function HomeScreen() {
   );
   const stripKeysRef = useRef<string[]>([]);
   const stripDragKeyRef = useRef<string | null>(null);
-  const stripLayoutsRef = useRef<Record<string, { left: number; width: number }>>({});
-  const stripDragCompensationRef = useRef(0);
-  const stripDragLastLeftRef = useRef<number | null>(null);
+  const stripLayoutsRef = useRef<Record<string, { left: number; top: number; width: number; height: number }>>({});
+  const stripContainerRef = useRef<View | null>(null);
+  const stripContainerBoundsRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 });
+  const stripDragOriginRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
   const stripDragStartOrderRef = useRef<string[]>([]);
   const stripPreviewOrderRef = useRef<string[] | null>(null);
   const stripViewRefs = useRef<Record<string, View | null>>({});
@@ -1921,8 +1922,13 @@ export default function HomeScreen() {
     stripPreviewOrderRef.current = stripKeysRef.current;
     stripDragStartOrderRef.current = stripKeysRef.current;
     setStripPreviewOrder(stripKeysRef.current);
-    stripDragCompensationRef.current = 0;
-    stripDragLastLeftRef.current = stripLayoutsRef.current[key]?.left ?? null;
+    const box = stripLayoutsRef.current[key];
+    stripDragOriginRef.current = box ? {
+      left: box.left - stripContainerBoundsRef.current.left,
+      top: box.top - stripContainerBoundsRef.current.top,
+      width: box.width,
+      height: box.height,
+    } : null;
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1.06, useNativeDriver: true, speed: 28, bounciness: 5 }).start();
     void tap();
@@ -1932,59 +1938,33 @@ export default function HomeScreen() {
   const cancelStripDrag = useCallback(() => {
     stripDragKeyRef.current = null;
     stripPreviewOrderRef.current = null;
+    stripDragOriginRef.current = null;
     setStripDragKey(null);
     setStripPreviewOrder(null);
-    stripDragCompensationRef.current = 0;
-    stripDragLastLeftRef.current = null;
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
   }, [stripDragScale, stripDragValue]);
   const finishStripDrag = useCallback(
-    (moveX: number, didMove = true) => {
+    (moveX: number) => {
       const key = stripDragKeyRef.current;
       const preview = stripPreviewOrderRef.current;
       const dragStartOrder = stripDragStartOrderRef.current;
       stripDragKeyRef.current = null;
       stripPreviewOrderRef.current = null;
+      stripDragOriginRef.current = null;
       setStripDragKey(null);
       setStripPreviewOrder(null);
-      stripDragCompensationRef.current = 0;
-      stripDragLastLeftRef.current = null;
       Animated.parallel([
         Animated.spring(stripDragValue, { toValue: { x: 0, y: 0 }, useNativeDriver: true, speed: 24, bounciness: 4 }),
         Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }),
       ]).start();
-      if (!key || !didMove) return;
-      if (preview) {
-        const prev = dragStartOrder;
-        if (preview.every((k, i) => k === prev[i])) return;
-        const uid = userIdRef.current;
-        if (!uid) return;
-        stripKeysRef.current = preview;
-        setStripOrder(preview);
-        void saveSpaceOrder(uid, preview).then((ok) => {
-          if (!ok) {
-            stripKeysRef.current = prev;
-            setStripOrder(prev);
-            showToast(t('spacePrefsFail'));
-          }
-        });
-        return;
-      }
-      const layouts = stripLayoutsRef.current;
-      const target = orderedStrip.reduce<{ key: string; distance: number } | null>((best, entry) => {
-        const candidateKey = entryKey(entry);
-        const box = layouts[candidateKey];
-        if (!box) return best;
-        const distance = Math.abs(moveX - (box.left + box.width / 2));
-        return !best || distance < best.distance ? { key: candidateKey, distance } : best;
-      }, null);
-      if (!target || target.key === key) return;
+      if (!key || !preview) return;
+      const finalIndex = resolveDropIndex(preview, key, moveX, stripLayoutsRef.current, I18nManager.isRTL);
+      const next = finalIndex < 0 ? preview : moveToIndex(preview, key, finalIndex);
+      const prev = dragStartOrder;
+      if (next.every((k, i) => k === prev[i])) return;
       const uid = userIdRef.current;
       if (!uid) return;
-      const prev = stripKeysRef.current;
-      const next = moveToIndex(prev, key, prev.indexOf(target.key));
-      if (next.every((k, i) => k === prev[i])) return;
       stripKeysRef.current = next;
       setStripOrder(next);
       void saveSpaceOrder(uid, next).then((ok) => {
@@ -1995,7 +1975,7 @@ export default function HomeScreen() {
         }
       });
     },
-    [orderedStrip, showToast, stripDragScale, stripDragValue],
+    [showToast, stripDragScale, stripDragValue],
   );
   const stripPanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: () => stripDragKeyRef.current !== null,
@@ -2003,28 +1983,19 @@ export default function HomeScreen() {
     onPanResponderMove: (_event, gesture) => {
       const key = stripDragKeyRef.current;
       const current = stripPreviewOrderRef.current;
-      const layouts = stripLayoutsRef.current;
       if (key && current) {
-        const target = current.reduce<{ key: string; distance: number } | null>((best, candidate) => {
-          if (candidate === key) return best;
-          const box = layouts[candidate];
-          if (!box) return best;
-          const distance = Math.abs(gesture.moveX - (box.left + box.width / 2));
-          return !best || distance < best.distance ? { key: candidate, distance } : best;
-        }, null);
-        if (target) {
-          const next = moveToIndex(current, key, current.indexOf(target.key));
-          if (next.some((item, index) => item !== current[index])) {
-            LayoutAnimation.configureNext({
-              duration: 150,
-              update: { type: LayoutAnimation.Types.easeInEaseOut },
-            });
-            stripPreviewOrderRef.current = next;
-            setStripPreviewOrder(next);
-          }
+        const targetIndex = resolveDropIndex(current, key, gesture.moveX, stripLayoutsRef.current, I18nManager.isRTL);
+        const next = targetIndex < 0 ? current : moveToIndex(current, key, targetIndex);
+        if (next.some((item, index) => item !== current[index])) {
+          LayoutAnimation.configureNext({
+            duration: 150,
+            update: { type: LayoutAnimation.Types.easeInEaseOut },
+          });
+          stripPreviewOrderRef.current = next;
+          setStripPreviewOrder(next);
         }
       }
-      stripDragValue.setValue({ x: gesture.dx + stripDragCompensationRef.current, y: gesture.dy });
+      stripDragValue.setValue({ x: gesture.dx, y: gesture.dy });
     },
     onPanResponderRelease: (_event, gesture) => finishStripDrag(gesture.moveX),
     onPanResponderTerminate: cancelStripDrag,
@@ -2490,6 +2461,10 @@ export default function HomeScreen() {
         setStripOrder(null);
         setSpaceIcons({});
         stripDragKeyRef.current = null;
+        stripPreviewOrderRef.current = null;
+        stripDragOriginRef.current = null;
+        setStripPreviewOrder(null);
+        stripDragValue.setValue({ x: 0, y: 0 });
         setStripDragKey(null);
       } else if (event === 'TOKEN_REFRESHED' && session && authStateRef.current === 'signed-out') {
         // Product Foundation: boot treats a 12s-stalled session read as
@@ -2504,7 +2479,7 @@ export default function HomeScreen() {
         boot();
       }
     },
-    [boot],
+    [boot, stripDragValue],
   );
 
   useEffect(() => {
@@ -4879,6 +4854,38 @@ export default function HomeScreen() {
       year: 'numeric',
     });
 
+  const renderSpaceStripTab = (entry: SpaceStripEntry, overlay = false) => {
+    const key = entryKey(entry);
+    const interactionProps = {
+      onPress: () => {
+        if (stripDragKeyRef.current) { cancelStripDrag(); return; }
+        if (entry.kind === 'builtin') openSpace(entry.type);
+        else {
+          const sp = customSpaces.find((space) => space.id === entry.id);
+          if (sp) openCustomSpace(sp);
+        }
+      },
+      onLongPress: () => startStripDrag(key),
+      delayLongPress: 230,
+      accessibilityRole: 'tab' as const,
+      accessibilityHint: t('stripEditHint'),
+    };
+    if (entry.kind === 'builtin') {
+      const active = view === entry.type;
+      const label = <Text style={[styles.tabText, active && styles.tabTextActive]}>{spaceLabel(entry.type)}</Text>;
+      return overlay
+        ? <View style={[styles.tab, active && styles.tabActive]}>{label}</View>
+        : <Pressable {...interactionProps} style={[styles.tab, active && styles.tabActive]} testID={`tab-space-${entry.type}`} accessibilityState={{ selected: active }}>{label}</Pressable>;
+    }
+    const sp = customSpaces.find((space) => space.id === entry.id);
+    if (!sp) return null;
+    const active = view === 'custom' && viewSpace?.id === sp.id;
+    const label = <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>{spaceIcons[sp.id] ?? '🗂️'} {sp.name}</Text>;
+    return overlay
+      ? <View style={[styles.tab, active && styles.tabActive]}>{label}</View>
+      : <Pressable {...interactionProps} style={[styles.tab, active && styles.tabActive]} testID={`tab-custom-${sp.id}`} accessibilityState={{ selected: active }}>{label}</Pressable>;
+  };
+
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
@@ -4942,104 +4949,83 @@ export default function HomeScreen() {
       )}
 
       {/* view tabs: chat home + spaces for browsing */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEnabled={!stripDragKey}
-        style={styles.tabBar}
-        contentContainerStyle={styles.tabBarInner}
+      <View
+        ref={(node) => { stripContainerRef.current = node; }}
+        style={styles.stripDragContainer}
+        onLayout={() => {
+          stripContainerRef.current?.measureInWindow((left, top) => {
+            stripContainerBoundsRef.current = { left, top };
+          });
+        }}
       >
-        <Pressable
-          onPress={() => {
-            cancelStripDrag();
-            setView('chat');
-          }}
-          style={[styles.tab, view === 'chat' && styles.tabActive]}
-          testID="tab-home"
-          accessibilityRole="tab"
-          accessibilityState={{ selected: view === 'chat' }}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          scrollEnabled={!stripDragKey}
+          style={styles.tabBar}
+          contentContainerStyle={styles.tabBarInner}
         >
-          <Text style={[styles.tabText, view === 'chat' && styles.tabTextActive]}>
-            {t('tabHome')}
-          </Text>
-        </Pressable>
-        {/* Built-in and custom spaces share one hold-and-drag strip. */}
-        {orderedStrip.map((entry) => {
-          const key = entryKey(entry);
-          const dragging = stripDragKey === key;
-          const dragWrap = (child: React.ReactNode) => (
+          <Pressable
+            onPress={() => {
+              cancelStripDrag();
+              setView('chat');
+            }}
+            style={[styles.tab, view === 'chat' && styles.tabActive]}
+            testID="tab-home"
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === 'chat' }}
+          >
+            <Text style={[styles.tabText, view === 'chat' && styles.tabTextActive]}>{t('tabHome')}</Text>
+          </Pressable>
+          {orderedStrip.map((entry) => {
+            const key = entryKey(entry);
+            const dragging = stripDragKey === key;
+            return (
+              <Animated.View
+                key={key}
+                {...stripPanResponder.panHandlers}
+                ref={(node) => { stripViewRefs.current[key] = node as unknown as View | null; }}
+                onLayout={(event) => {
+                  const { width, height } = event.nativeEvent.layout;
+                  stripViewRefs.current[key]?.measureInWindow((left, top, measuredWidth, measuredHeight) => {
+                    stripLayoutsRef.current[key] = {
+                      left,
+                      top,
+                      width: measuredWidth || width,
+                      height: measuredHeight || height,
+                    };
+                  });
+                }}
+                style={[styles.stripDragWrap, dragging && { opacity: 0 }]}
+              >
+                {renderSpaceStripTab(entry)}
+              </Animated.View>
+            );
+          })}
+        </ScrollView>
+        {stripDragKey && stripDragOriginRef.current && (() => {
+          const entry = orderedStrip.find((candidate) => entryKey(candidate) === stripDragKey);
+          const origin = stripDragOriginRef.current;
+          if (!entry || !origin) return null;
+          return (
             <Animated.View
-              key={key}
-              {...stripPanResponder.panHandlers}
-              ref={(node) => { stripViewRefs.current[key] = node as unknown as View | null; }}
-              onLayout={() => {
-                stripViewRefs.current[key]?.measureInWindow((left, _top, width) => {
-                  stripLayoutsRef.current[key] = { left, width };
-                  if (stripDragKeyRef.current === key && stripDragLastLeftRef.current !== null) {
-                    stripDragCompensationRef.current += stripDragLastLeftRef.current - left;
-                  }
-                  if (stripDragKeyRef.current === key) stripDragLastLeftRef.current = left;
-                });
-              }}
+              pointerEvents="none"
               style={[
-                styles.stripDragWrap,
-                dragging && styles.stripDragActive,
-                dragging && { transform: [
+                styles.stripDragActive,
+                styles.stripDragOverlay,
+                { left: origin.left, top: origin.top, width: origin.width, height: origin.height },
+                { transform: [
                   { translateX: stripDragValue.x },
                   { translateY: stripDragValue.y },
                   { scale: stripDragScale },
                 ] },
               ]}
             >
-              {child}
+              {renderSpaceStripTab(entry, true)}
             </Animated.View>
           );
-          if (entry.kind === 'builtin') {
-            const st = entry.type;
-            return dragWrap(
-              <Pressable
-                onPress={() => {
-                  if (stripDragKeyRef.current) { cancelStripDrag(); return; }
-                  openSpace(st);
-                }}
-                onLongPress={() => startStripDrag(key)}
-                delayLongPress={230}
-                style={[styles.tab, view === st && styles.tabActive]}
-                testID={`tab-space-${st}`}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: view === st }}
-                accessibilityHint={t('stripEditHint')}
-              >
-                <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
-                  {spaceLabel(st)}
-                </Text>
-              </Pressable>
-            );
-          }
-          const sp = customSpaces.find((s) => s.id === entry.id);
-          if (!sp) return null;
-          const active = view === 'custom' && viewSpace?.id === sp.id;
-          return dragWrap(
-            <Pressable
-              onPress={() => {
-                if (stripDragKeyRef.current) { cancelStripDrag(); return; }
-                openCustomSpace(sp);
-              }}
-              onLongPress={() => startStripDrag(key)}
-              delayLongPress={230}
-              style={[styles.tab, active && styles.tabActive]}
-              testID={`tab-custom-${sp.id}`}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: active }}
-              accessibilityHint={t('stripEditHint')}
-            >
-              <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
-                {spaceIcons[sp.id] ?? '🗂️'} {sp.name}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        })()}
+      </View>
 
       {/* anonymous trial account → link an email to keep the data */}
       {isAnonymous && !upgradeSent && (

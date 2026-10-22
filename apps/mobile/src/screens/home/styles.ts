@@ -350,6 +350,8 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   tabTextActive: { color: P.paper },
   // Spaces & Family UX: direct hold-and-drag reorder
   stripDragWrap: { borderRadius: 24, zIndex: 0 },
+  stripDragContainer: { position: 'relative' },
+  stripDragOverlay: { position: 'absolute', zIndex: 20, elevation: 12 },
   stripDragActive: {
     zIndex: 20,
     elevation: 12,

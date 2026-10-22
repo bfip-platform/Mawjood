@@ -80,6 +80,30 @@ export function moveToIndex(orderKeys: string[], key: string, targetIndex: numbe
   return next;
 }
 
+/**
+ * Resolve the insertion slot from the dragged pointer and current peer centers.
+ * Counting peers on the pointer's leading side is stable after the placeholder
+ * moves; selecting the nearest center can bounce between adjacent slots.
+ */
+export function resolveDropIndex(
+  orderKeys: string[],
+  key: string,
+  pointerX: number,
+  layouts: Record<string, { left: number; width: number }>,
+  isRTL = false,
+): number {
+  if (!orderKeys.includes(key)) return -1;
+  let index = 0;
+  for (const candidate of orderKeys) {
+    if (candidate === key) continue;
+    const box = layouts[candidate];
+    if (!box) continue;
+    const center = box.left + box.width / 2;
+    if (isRTL ? center > pointerX : center < pointerX) index += 1;
+  }
+  return Math.min(orderKeys.length - 1, index);
+}
+
 /** Sanitize an unparsed persisted value into a clean key list. */
 export function sanitizeOrderKeys(raw: unknown): string[] | null {
   if (!Array.isArray(raw)) return null;

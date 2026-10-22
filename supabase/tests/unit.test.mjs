@@ -2637,7 +2637,7 @@ describe('CFP-01 A — modal stability, tap-outside policy, space labels', () =>
       assert.ok((i18n.match(new RegExp(`${k}:`, 'g')) ?? []).length >= 2, `${k} exists in both dicts`);
     }
     assert.ok(constants.includes('export function spaceLabel'), 'localized spaceLabel helper exists');
-    assert.ok(idx.includes('{spaceLabel(st)}'), 'space tab bar renders icon + visible name');
+    assert.ok(idx.includes('{spaceLabel(entry.type)}'), 'space tab bar renders localized built-in names');
     assert.ok(!idx.includes('SPACE_LABELS'), 'hardcoded-English label map no longer used by the screen');
   });
 
@@ -2966,9 +2966,9 @@ describe('mobile home navigation regressions', () => {
     // Spaces & Family UX wave: customs render through the unified ordered
     // strip (orderedStrip.map + customSpaces.find), not a separate map.
     assert.match(tabs, /orderedStrip\.map/);
-    assert.match(tabs, /customSpaces\.find/);
-    assert.match(tabs, /openCustomSpace\(sp\)/);
-    assert.match(tabs, /view === 'custom' && viewSpace\?\.id === sp\.id/);
+    assert.match(idx, /customSpaces\.find/);
+    assert.match(idx, /openCustomSpace\(sp\)/);
+    assert.match(idx, /view === 'custom' && viewSpace\?\.id === sp\.id/);
   });
 });
 
@@ -3216,6 +3216,22 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     assert.deepEqual(base, ['a', 'b', 'c'], 'input is never mutated');
   });
 
+  it('resolveDropIndex: inserts stably from peer centers in LTR and RTL layouts', async () => {
+    const { moveToIndex, resolveDropIndex } = await import('../../apps/mobile/src/lib/spaceOrder.ts');
+    const ltr = { a: { left: 0, width: 100 }, b: { left: 100, width: 100 }, c: { left: 200, width: 100 } };
+    const afterB = moveToIndex(['a', 'b', 'c'], 'a', resolveDropIndex(['a', 'b', 'c'], 'a', 151, ltr));
+    assert.deepEqual(afterB, ['b', 'a', 'c']);
+    const reflowedLTR = { b: { left: 0, width: 100 }, a: { left: 100, width: 100 }, c: { left: 200, width: 100 } };
+    assert.equal(resolveDropIndex(afterB, 'a', 151, reflowedLTR), 1, 'same pointer does not bounce into the next slot');
+    assert.equal(resolveDropIndex(afterB, 'a', 251, reflowedLTR), 2, 'crossing the next center advances one slot');
+
+    const rtl = { a: { left: 200, width: 100 }, b: { left: 100, width: 100 }, c: { left: 0, width: 100 } };
+    const rtlAfterB = moveToIndex(['a', 'b', 'c'], 'a', resolveDropIndex(['a', 'b', 'c'], 'a', 149, rtl, true));
+    assert.deepEqual(rtlAfterB, ['b', 'a', 'c']);
+    const reflowedRTL = { b: { left: 200, width: 100 }, a: { left: 100, width: 100 }, c: { left: 0, width: 100 } };
+    assert.equal(resolveDropIndex(rtlAfterB, 'a', 149, reflowedRTL, true), 1, 'RTL layout remains stable after reflow');
+  });
+
   it('family slots ignore the per-account starter Family space', async () => {
     const { countJoinedFamilies } = await import('../../apps/mobile/src/lib/familySlots.ts');
     const spaces = [
@@ -3238,12 +3254,12 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
   it('strip wiring: ordered render, hold-and-drop, animation, and rollback', () => {
     const idx = read('../../apps/mobile/src/app/index.tsx');
     assert.ok(idx.includes('applySpaceOrder(stripEntries, stripPreviewOrder ?? stripOrder)'), 'strip renders through the live preview or saved order');
-    assert.ok(idx.includes('onLongPress={() => startStripDrag(key)}'), 'long-press starts a direct drag');
-    assert.ok(idx.includes('delayLongPress={230}'), 'drag starts without a long wait');
+    assert.ok(idx.includes('onLongPress: () => startStripDrag(key)'), 'long-press starts a direct drag');
+    assert.ok(idx.includes('delayLongPress: 230'), 'drag starts without a long wait');
     assert.ok(idx.includes('PanResponder.create(') && idx.includes('finishStripDrag(gesture.moveX)'), 'pointer release selects the drop position');
     assert.ok(idx.includes('setStripPreviewOrder(next);') && idx.includes('LayoutAnimation.configureNext('), 'neighbors reflow into the live drop slot');
-    assert.ok(idx.includes('gesture.dx + stripDragCompensationRef.current'), 'the dragged tab stays under the pointer as its slot moves');
-    assert.ok(idx.includes('moveToIndex(prev, key, prev.indexOf(target.key))'), 'drop reorders in one operation');
+    assert.ok(idx.includes('styles.stripDragOverlay') && idx.includes('{ translateX: stripDragValue.x }'), 'floating drag overlay remains under the pointer');
+    assert.ok(idx.includes('resolveDropIndex(preview, key, moveX, stripLayoutsRef.current, I18nManager.isRTL)'), 'release resolves the final insertion slot for Arabic and English layouts');
     assert.ok(idx.includes("saveSpaceOrder(uid, next).then((ok) => {"), 'moves persist');
     assert.ok(idx.includes('setStripOrder(prev);'), 'a failed save rolls the order back');
     assert.ok(idx.includes("showToast(t('spacePrefsFail'))"), 'rollback is surfaced to the user');
