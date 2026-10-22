@@ -7,13 +7,13 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  if tg_table_name = 'space_tabs' and char_length(new.title) > 40 then
+  if tg_table_name = 'space_tabs' and char_length(to_jsonb(new)->>'title') > 40 then
     raise exception 'tab name exceeds 40 characters' using errcode = '22001';
-  elsif tg_table_name = 'shopping_lists' and char_length(new.title) > 80 then
+  elsif tg_table_name = 'shopping_lists' and char_length(to_jsonb(new)->>'title') > 80 then
     raise exception 'shopping list name exceeds 80 characters' using errcode = '22001';
-  elsif tg_table_name = 'profiles' and new.display_name is not null and char_length(new.display_name) > 60 then
+  elsif tg_table_name = 'profiles' and to_jsonb(new)->>'display_name' is not null and char_length(to_jsonb(new)->>'display_name') > 60 then
     raise exception 'display name exceeds 60 characters' using errcode = '22001';
-  elsif tg_table_name = 'spaces' and new.type <> 'family' and char_length(new.name) > 60 then
+  elsif tg_table_name = 'spaces' and to_jsonb(new)->>'type' <> 'family' and char_length(to_jsonb(new)->>'name') > 60 then
     raise exception 'space name exceeds 60 characters' using errcode = '22001';
   end if;
   return new;

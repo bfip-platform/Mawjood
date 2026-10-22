@@ -3390,7 +3390,7 @@ describe('Privacy, Localization and Daily Utility wave — due states, filters, 
     const chat = read('../../supabase/functions/chat/index.ts');
     assert.ok(limits.includes('profileDisplay: 60') && limits.includes('customSpace: 40') && limits.includes('customTab: 40') && limits.includes('shoppingList: 80'));
     assert.ok(limits.includes('Array.from(value).length'), 'emoji count as one name character');
-    assert.ok(migration.includes('char_length(new.title) > 40') && migration.includes('char_length(new.title) > 80') && migration.includes('char_length(new.display_name) > 60'));
+    assert.ok(migration.includes("char_length(to_jsonb(new)->>'title') > 40") && migration.includes("char_length(to_jsonb(new)->>'title') > 80") && migration.includes("char_length(to_jsonb(new)->>'display_name') > 60"));
     assert.ok(chat.includes('Array.from(name).length > 40'), 'AI-created names reject overlong values instead of silently truncating');
     const { nameCharacterCount, clampNameLength, assertNameLength } = await import('../../packages/voice-engine/src/nameLimits.ts');
     assert.equal(nameCharacterCount('👨‍👩‍👧‍👦'), 7, 'uses Unicode code points like PostgreSQL char_length');
