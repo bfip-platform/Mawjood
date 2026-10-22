@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -42,6 +43,7 @@ import AuthScreen from '../components/AuthScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 import { t, tx, ta, useLang, getLang, setLanguage, initLanguage } from '../lib/i18n';
 import { parseDeepLink } from '../lib/deeplinks';
+import { countJoinedFamilies } from '../lib/familySlots';
 import { fetchRemoteConfig, flagOn, type RemoteConfig } from '../lib/remoteConfig';
 import { withTimeout, withTimeoutResult, boundedLoad, type LoadFailure } from '../lib/withTimeout';
 import { reportTelemetry } from '../lib/crash-guard';
@@ -125,7 +127,7 @@ import { UndoBar } from '../lib/UndoBar';
 import { usePaginatedList } from '../lib/usePaginatedList';
 import { ListLoadError } from '../lib/ListLoadError';
 import { dueState } from '../lib/due';
-import { applySpaceOrder, entryKey, moveInOrder, type SpaceStripEntry } from '../lib/spaceOrder';
+import { applySpaceOrder, entryKey, moveToIndex, type SpaceStripEntry } from '../lib/spaceOrder';
 import { loadSpaceIcons, loadSpaceOrder, saveSpaceIcons, saveSpaceOrder } from '../lib/spacePrefs';
 import { useTabSearch } from '../lib/useTabSearch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -895,6 +897,12 @@ export default function HomeScreen() {
     });
     return list;
   }, [spaces, activeFamilyId, userId]);
+  // A new account always gets its own empty Family space; that starter space
+  // does not use a slot meant for joining another household.
+  const joinedFamilyCount = useMemo(
+    () => countJoinedFamilies(familySpaces, userId),
+    [familySpaces, userId],
+  );
 
   /** The family space the tab shows: last-viewed if still available, else the
    *  pickSpace default (joined wins over own). */
@@ -1728,12 +1736,11 @@ export default function HomeScreen() {
 
   const shareInvite = useCallback(async () => {
     if (!inviteCode) return;
-    // Invite-by-link (Spaces & Family UX): the deep-link join path already
-    // exists end-to-end (fail-closed parser + confirm + join), so the share
-    // text carries the tappable link alongside the code — the code alone
-    // stays for the copy button and manual entry.
+    // Share the GitHub Pages HTTPS entry point so messaging apps recognize it
+    // as a tappable URL. Its web bundle uses the same fail-closed parser and
+    // presents the existing join confirmation; keep the code as fallback.
     const text = tx('joinWithLink', {
-      link: `mawjood://family/join?code=${inviteCode}`,
+      link: `https://bfip-platform.github.io/Mawjood/join?code=${inviteCode}`,
       code: inviteCode,
     });
     try {
@@ -1788,7 +1795,7 @@ export default function HomeScreen() {
     const code = joinCode.trim();
     if (!code || joinBusy) return;
     // ── family slots: first family free; extra families need a free slot ──
-    const famCount = spaces.filter((s) => s.type === 'family').length;
+    const famCount = countJoinedFamilies(spaces, userId);
     if (famCount >= familySlots) {
       // kill switch: admin can pause extra-family joins from the admin panel
       if (!flagOn(remoteCfg?.flags, 'extra_families')) {
@@ -1808,7 +1815,7 @@ export default function HomeScreen() {
     // queueAfterModalClose is intentionally not a dep: it is a stable
     // empty-deps callback declared below (timer ref only), and listing it
     // here would evaluate it before its declaration on the first render.
-  }, [joinCode, joinBusy, spaces, familySlots, runJoin, remoteCfg, showToast]);
+  }, [joinCode, joinBusy, spaces, userId, familySlots, runJoin, remoteCfg, showToast]);
 
   /** Leave an invited family from the switcher; frees a slot and resumes a
    *  pending join if the paywall opened this modal. Your own family
@@ -1849,7 +1856,7 @@ export default function HomeScreen() {
   // ── Spaces & Family UX wave: strip order + custom-space icons are
   // per-user device-local display prefs (lib/spacePrefs) — never space data.
   const [stripOrder, setStripOrder] = useState<string[] | null>(null);
-  const [stripEdit, setStripEdit] = useState(false);
+  const [stripDragKey, setStripDragKey] = useState<string | null>(null);
   const [spaceIcons, setSpaceIcons] = useState<Record<string, string>>({});
   const [spaceIconDraft, setSpaceIconDraft] = useState('🗂️');
   const [spaceNameOpen, setSpaceNameOpen] = useState(false);
@@ -1887,33 +1894,74 @@ export default function HomeScreen() {
     [stripEntries, stripOrder],
   );
   const stripKeysRef = useRef<string[]>([]);
+  const stripDragKeyRef = useRef<string | null>(null);
+  const stripLayoutsRef = useRef<Record<string, { left: number; width: number }>>({});
+  const stripViewRefs = useRef<Record<string, View | null>>({});
+  const stripDragValue = useRef(new Animated.ValueXY()).current;
+  const stripDragScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     stripKeysRef.current = orderedStrip.map(entryKey);
   }, [orderedStrip]);
 
-  /** Optimistic strip reorder: apply instantly, persist, roll back on failure. */
-  const onMoveEntry = useCallback(
-    (key: string, dir: -1 | 1) => {
+  const startStripDrag = useCallback((key: string) => {
+    stripDragKeyRef.current = key;
+    setStripDragKey(key);
+    stripDragValue.setValue({ x: 0, y: 0 });
+    Animated.spring(stripDragScale, { toValue: 1.06, useNativeDriver: true, speed: 28, bounciness: 5 }).start();
+    void tap();
+  }, [stripDragScale, stripDragValue]);
+
+  /** Drop directly into place, persist once, and roll back on failure. */
+  const cancelStripDrag = useCallback(() => {
+    stripDragKeyRef.current = null;
+    setStripDragKey(null);
+    stripDragValue.setValue({ x: 0, y: 0 });
+    Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+  }, [stripDragScale, stripDragValue]);
+  const finishStripDrag = useCallback(
+    (moveX: number, didMove = true) => {
+      const key = stripDragKeyRef.current;
+      stripDragKeyRef.current = null;
+      setStripDragKey(null);
+      Animated.parallel([
+        Animated.spring(stripDragValue, { toValue: { x: 0, y: 0 }, useNativeDriver: true, speed: 24, bounciness: 4 }),
+        Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }),
+      ]).start();
+      if (!key || !didMove) return;
+      const layouts = stripLayoutsRef.current;
+      const target = orderedStrip.reduce<{ key: string; distance: number } | null>((best, entry) => {
+        const candidateKey = entryKey(entry);
+        const box = layouts[candidateKey];
+        if (!box) return best;
+        const distance = Math.abs(moveX - (box.left + box.width / 2));
+        return !best || distance < best.distance ? { key: candidateKey, distance } : best;
+      }, null);
+      if (!target || target.key === key) return;
       const uid = userIdRef.current;
       if (!uid) return;
       const prev = stripKeysRef.current;
-      const next = moveInOrder(prev, key, dir);
+      const next = moveToIndex(prev, key, prev.indexOf(target.key));
       if (next.every((k, i) => k === prev[i])) return;
+      stripKeysRef.current = next;
       setStripOrder(next);
       void saveSpaceOrder(uid, next).then((ok) => {
         if (!ok) {
+          stripKeysRef.current = prev;
           setStripOrder(prev);
           showToast(t('spacePrefsFail'));
         }
       });
     },
-    [showToast],
+    [orderedStrip, showToast, stripDragScale, stripDragValue],
   );
-  /** Long-press a space tab → reorder mode (arrows + Done). */
-  const enterStripEdit = useCallback(() => {
-    setStripEdit(true);
-    showToast(t('stripEditHint'));
-  }, [showToast]);
+  const stripPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: () => stripDragKeyRef.current !== null,
+    onMoveShouldSetPanResponderCapture: () => stripDragKeyRef.current !== null,
+    onPanResponderMove: (_event, gesture) => stripDragValue.setValue({ x: gesture.dx, y: gesture.dy }),
+    onPanResponderRelease: (_event, gesture) => finishStripDrag(gesture.moveX),
+    onPanResponderTerminate: cancelStripDrag,
+    onPanResponderTerminationRequest: () => false,
+  }), [cancelStripDrag, finishStripDrag, stripDragValue]);
   const spaceErrText = useCallback((e: unknown): string => {
     const code = (e as { code?: string })?.code ?? '';
     if (code === 'limit_reached') return t('spaceLimitMsg');
@@ -2007,12 +2055,13 @@ export default function HomeScreen() {
       const fresh = await engine.listSpaces();
       setSpaces(fresh);
       const rest = fresh.filter((x) => x.type === 'family');
+      const joinedCount = countJoinedFamilies(rest, userId);
       const next = rest.find((x) => x.id === activeFamilyId) ?? rest[0] ?? null;
       if (view === 'family' && next) activateFamilySpace(next);
       else rememberActiveFamily(next?.id ?? null);
       setFamMsg(null);
       // a slot just freed — resume the join the paywall was blocking
-      if (pendingJoinCode && rest.length < familySlots) {
+      if (pendingJoinCode && joinedCount < familySlots) {
         const code = pendingJoinCode;
         setPendingJoinCode(null);
         setFamsOpen(false);
@@ -2372,7 +2421,8 @@ export default function HomeScreen() {
         // the next account at boot).
         setStripOrder(null);
         setSpaceIcons({});
-        setStripEdit(false);
+        stripDragKeyRef.current = null;
+        setStripDragKey(null);
       } else if (event === 'TOKEN_REFRESHED' && session && authStateRef.current === 'signed-out') {
         // Product Foundation: boot treats a 12s-stalled session read as
         // signed-out even when the stored session is valid; the client's
@@ -4827,12 +4877,13 @@ export default function HomeScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        scrollEnabled={!stripDragKey}
         style={styles.tabBar}
         contentContainerStyle={styles.tabBarInner}
       >
         <Pressable
           onPress={() => {
-            setStripEdit(false);
+            cancelStripDrag();
             setView('chat');
           }}
           style={[styles.tab, view === 'chat' && styles.tabActive]}
@@ -4844,109 +4895,78 @@ export default function HomeScreen() {
             {t('tabHome')}
           </Text>
         </Pressable>
-        {/* Spaces & Family UX: ONE ordered strip — built-in types and
-            custom spaces interleaved by the user's saved order. Long-press
-            any space tab to reorder (arrows are logical: the first always
-            moves toward the strip's start, in RTL and LTR alike). */}
-        {orderedStrip.map((entry, idx) => {
+        {/* Built-in and custom spaces share one hold-and-drag strip. */}
+        {orderedStrip.map((entry) => {
           const key = entryKey(entry);
-          const moveBtns = stripEdit ? (
-            <>
-              <Pressable
-                onPress={() => onMoveEntry(key, -1)}
-                disabled={idx === 0}
-                style={[styles.stripMoveBtn, idx === 0 && styles.stripMoveBtnOff]}
-                accessibilityRole="button"
-                accessibilityLabel={t('moveEarlier')}
-              >
-                <Text style={styles.stripMoveText}>{getLang() === 'ar' ? '›' : '‹'}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => onMoveEntry(key, 1)}
-                disabled={idx === orderedStrip.length - 1}
-                style={[styles.stripMoveBtn, idx === orderedStrip.length - 1 && styles.stripMoveBtnOff]}
-                accessibilityRole="button"
-                accessibilityLabel={t('moveLater')}
-              >
-                <Text style={styles.stripMoveText}>{getLang() === 'ar' ? '‹' : '›'}</Text>
-              </Pressable>
-            </>
-          ) : null;
+          const dragging = stripDragKey === key;
+          const dragWrap = (child: React.ReactNode) => (
+            <Animated.View
+              key={key}
+              {...stripPanResponder.panHandlers}
+              ref={(node) => { stripViewRefs.current[key] = node as unknown as View | null; }}
+              onLayout={() => {
+                stripViewRefs.current[key]?.measureInWindow((left, _top, width) => {
+                  stripLayoutsRef.current[key] = { left, width };
+                });
+              }}
+              style={[
+                styles.stripDragWrap,
+                dragging && styles.stripDragActive,
+                dragging && { transform: [
+                  { translateX: stripDragValue.x },
+                  { translateY: stripDragValue.y },
+                  { scale: stripDragScale },
+                ] },
+              ]}
+            >
+              {child}
+            </Animated.View>
+          );
           if (entry.kind === 'builtin') {
             const st = entry.type;
-            const tab = (
+            return dragWrap(
               <Pressable
-                onPress={
-                  stripEdit
-                    ? undefined
-                    : () => {
-                        setStripEdit(false);
-                        openSpace(st);
-                      }
-                }
-                onLongPress={stripEdit ? undefined : enterStripEdit}
+                onPress={() => {
+                  if (stripDragKeyRef.current) { cancelStripDrag(); return; }
+                  openSpace(st);
+                }}
+                onLongPress={() => startStripDrag(key)}
+                delayLongPress={230}
                 style={[styles.tab, view === st && styles.tabActive]}
                 testID={`tab-space-${st}`}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: view === st }}
+                accessibilityHint={t('stripEditHint')}
               >
                 <Text style={[styles.tabText, view === st && styles.tabTextActive]}>
                   {spaceLabel(st)}
                 </Text>
               </Pressable>
             );
-            return stripEdit ? (
-              <View key={key} style={styles.stripEditWrap}>
-                {tab}
-                {moveBtns}
-              </View>
-            ) : (
-              <React.Fragment key={key}>{tab}</React.Fragment>
-            );
           }
           const sp = customSpaces.find((s) => s.id === entry.id);
           if (!sp) return null;
           const active = view === 'custom' && viewSpace?.id === sp.id;
-          const tab = (
+          return dragWrap(
             <Pressable
-              onPress={
-                stripEdit
-                  ? undefined
-                  : () => {
-                      setStripEdit(false);
-                      openCustomSpace(sp);
-                    }
-              }
-              onLongPress={stripEdit ? undefined : enterStripEdit}
+              onPress={() => {
+                if (stripDragKeyRef.current) { cancelStripDrag(); return; }
+                openCustomSpace(sp);
+              }}
+              onLongPress={() => startStripDrag(key)}
+              delayLongPress={230}
               style={[styles.tab, active && styles.tabActive]}
               testID={`tab-custom-${sp.id}`}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
+              accessibilityHint={t('stripEditHint')}
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
                 {spaceIcons[sp.id] ?? '🗂️'} {sp.name}
               </Text>
             </Pressable>
           );
-          return stripEdit ? (
-            <View key={key} style={styles.stripEditWrap}>
-              {tab}
-              {moveBtns}
-            </View>
-          ) : (
-            <React.Fragment key={key}>{tab}</React.Fragment>
-          );
         })}
-        {stripEdit ? (
-          <Pressable
-            onPress={() => setStripEdit(false)}
-            style={[styles.tab, styles.stripDone]}
-            accessibilityRole="button"
-            accessibilityLabel={t('stripDone')}
-          >
-            <Text style={[styles.tabText, styles.stripDoneText]}>✓ {t('stripDone')}</Text>
-          </Pressable>
-        ) : null}
       </ScrollView>
 
       {/* anonymous trial account → link an email to keep the data */}
@@ -6435,7 +6455,7 @@ export default function HomeScreen() {
             {inviteBusy ? (
               <ActivityIndicator color={P.accent} style={{ marginVertical: 16 }} />
             ) : inviteCode ? (
-              <Text style={styles.inviteCode}>{inviteCode}</Text>
+              <Text selectable style={styles.inviteCode}>{inviteCode}</Text>
             ) : (
               <Text style={styles.modalBody}>{t('codeFail')}</Text>
             )}
@@ -6524,7 +6544,7 @@ export default function HomeScreen() {
             <ScrollView showsVerticalScrollIndicator={false} style={styles.profileScroll}>
               <Text style={styles.modalTitle}>{t('familiesTitle')}</Text>
               <Text style={[styles.modalBody, { marginBottom: 10 }]}>
-                {tx('familiesSlots', { used: familySpaces.length, slots: familySlots })}
+                {tx('familiesSlots', { used: joinedFamilyCount, slots: familySlots })}
               </Text>
               {familySpaces.map((s) => {
                 const isOwner = !!userId && s.owner_id === userId;

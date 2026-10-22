@@ -42,10 +42,7 @@ const ar = {
   retryAction: 'إعادة المحاولة',
   // spaces strip (Spaces & Family UX)
   spacePrefsFail: 'تعذّر حفظ التفضيلات',
-  stripEditHint: 'وضع الترتيب: حرّك المساحات بالأسهم، وكبّس تم لما تخلّص',
-  moveEarlier: 'قدّم بالترتيب',
-  moveLater: 'أخّر بالترتيب',
-  stripDone: 'تم',
+  stripEditHint: 'اكبس مطوّل على المساحة واسحبها لمكانها، بعدين اتركها',
   spaceIconLabel: 'أيقونة المساحة',
   joinWithLink: 'انضم لمساحة العائلة في موجود: {link} (الرمز: {code})',
   // daily utility (Privacy, Localization and Daily Utility)
@@ -600,10 +597,7 @@ const en: Record<keyof typeof ar, string> = {
   retryAction: 'Retry',
   // spaces strip (Spaces & Family UX)
   spacePrefsFail: "Couldn't save preferences",
-  stripEditHint: 'Reorder mode: move spaces with the arrows, then tap Done',
-  moveEarlier: 'Move earlier',
-  moveLater: 'Move later',
-  stripDone: 'Done',
+  stripEditHint: 'Press and hold a space, drag it into place, then release',
   spaceIconLabel: 'Space icon',
   joinWithLink: 'Join the Mawjood family space: {link} (code: {code})',
   // daily utility (Privacy, Localization and Daily Utility)
