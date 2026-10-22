@@ -3286,13 +3286,18 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     assert.ok(prefs.includes('catch'), 'prefs IO is total (never throws into the UI)');
   });
 
-  it('invite sharing carries the deep link; the parser contract is unchanged', () => {
+  it('invite sharing carries the deep link; the parser contract is unchanged', async () => {
     const idx = read('../../apps/mobile/src/app/index.tsx');
-    assert.ok(idx.includes('https://bfip-platform.github.io/Mawjood/join?code=${inviteCode}'), 'share text includes an HTTPS join link');
+    assert.ok(idx.includes('https://bfip-platform.github.io/Mawjood/join/?code=${encodeURIComponent(inviteCode)}'), 'share text uses the HTTPS invite page route');
     assert.ok(idx.includes('code: inviteCode'), 'the code remains available for manual entry');
     assert.ok(idx.includes("tx('joinWithLink'"), 'link share text is localized');
     const i18n = read('../../apps/mobile/src/lib/i18n.ts');
     assert.ok(i18n.includes('joinWithLink:'), 'joinWithLink exists in the dictionaries');
+    const page = read('../../apps/mobile/public/join/index.html');
+    assert.ok(page.includes('mawjood://family/join?code=${encodeURIComponent(code)}'), 'the landing page opens the app with the same invite code');
+    assert.ok(page.includes('navigator.clipboard.writeText(code)'), 'the landing page offers code copy as a fallback');
+    const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
+    assert.deepEqual(parseDeepLink('mawjood://family/join?code=ABCDEFG234'), { kind: 'join-family', code: 'ABCDEFG234' });
   });
 
   it('realtime refresh of note items is sequence-guarded; sign-out drops strip prefs', () => {

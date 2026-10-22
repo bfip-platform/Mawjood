@@ -1738,11 +1738,11 @@ export default function HomeScreen() {
 
   const shareInvite = useCallback(async () => {
     if (!inviteCode) return;
-    // Share the GitHub Pages HTTPS entry point so messaging apps recognize it
-    // as a tappable URL. Its web bundle uses the same fail-closed parser and
-    // presents the existing join confirmation; keep the code as fallback.
+    // The exported static invite page is served from the GitHub Pages project
+    // subpath. Keep the plain code in the message for recipients who prefer
+    // entering it in the app.
     const text = tx('joinWithLink', {
-      link: `https://bfip-platform.github.io/Mawjood/join?code=${inviteCode}`,
+      link: `https://bfip-platform.github.io/Mawjood/join/?code=${encodeURIComponent(inviteCode)}`,
       code: inviteCode,
     });
     try {
