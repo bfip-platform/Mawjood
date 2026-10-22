@@ -2568,7 +2568,7 @@ export class VoiceEngine {
 
   /** Create (or reuse) an active invite code for a space. */
   async getOrCreateInvite(spaceId: string): Promise<{ code: string; expires_at: string }> {
-    const { data: existing } = await this.supabase
+    const { data: existing, error: lookupError } = await this.supabase
       .from('space_invites')
       .select('code, expires_at')
       .eq('space_id', spaceId)
@@ -2576,18 +2576,26 @@ export class VoiceEngine {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (lookupError) throw lookupError;
     if (existing) return existing as { code: string; expires_at: string };
-    const { data: user } = await this.supabase.auth.getUser();
+    const { data: user, error: authError } = await this.supabase.auth.getUser();
+    if (authError) throw authError;
+    if (!user.user) throw new Error('Sign in before creating a family invite');
+    let lastError: Error | null = null;
     for (let i = 0; i < 3; i++) {
       const code = this.makeInviteCode();
       const { data, error } = await this.supabase
         .from('space_invites')
-        .insert({ space_id: spaceId, code, created_by: user.user!.id })
+        .insert({ space_id: spaceId, code, created_by: user.user.id })
         .select('code, expires_at')
         .single();
       if (!error) return data as { code: string; expires_at: string };
+      lastError = error;
+      // Retry only for a code collision. Network, permission, and schema
+      // errors should be surfaced immediately instead of being masked.
+      if ((error as { code?: string }).code !== '23505') throw error;
     }
-    throw new Error('could not create invite code');
+    throw lastError ?? new Error('could not create invite code');
   }
 
   /** Revoke all active invite codes for a space (regenerate). */

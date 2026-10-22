@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Clipboard from 'expo-clipboard';
 import {
   ActivityIndicator,
   Alert,
@@ -1719,6 +1720,7 @@ export default function HomeScreen() {
       setInviteCode(inv.code);
     } catch (e) {
       console.warn('regenerate failed', e);
+      setInviteCode(null);
     } finally {
       setInviteBusy(false);
     }
@@ -1727,14 +1729,12 @@ export default function HomeScreen() {
   const copyInviteCode = useCallback(async () => {
     if (!inviteCode) return;
     try {
-      // web clipboard
-      await navigator.clipboard.writeText(inviteCode);
+      await Clipboard.setStringAsync(inviteCode);
+      showToast(t('inviteCodeCopied'));
     } catch {
-      try {
-        await Share.share({ message: tx('shareInviteText', { code: inviteCode }) });
-      } catch {}
+      showToast(t('inviteCodeCopyFailed'));
     }
-  }, [inviteCode]);
+  }, [inviteCode, showToast]);
 
   const shareInvite = useCallback(async () => {
     if (!inviteCode) return;
@@ -1746,9 +1746,14 @@ export default function HomeScreen() {
       code: inviteCode,
     });
     try {
-      const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
-      if (typeof nav.share === 'function') await nav.share({ text });
-      else await Share.share({ message: text });
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
+        const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
+        if (typeof nav.share === 'function') {
+          await nav.share({ text });
+          return;
+        }
+      }
+      await Share.share({ message: text, title: t('inviteTitle') });
     } catch {}
   }, [inviteCode]);
 
