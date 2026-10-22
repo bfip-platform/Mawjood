@@ -48,8 +48,9 @@ Before the first functional update, make sure there is a known-good update group
 - Comparison with the Build 24 source shows the only app-source difference in that update was the visible `· OTA TEST 01` marker; the other intervening changes were OTA workflow/preflight files. Its iOS bundle had the same fingerprint as Build 24, so this is the known-good, embedded-equivalent rollback baseline for this installed binary.
 - iOS B0-equivalent group: `92647e98-1cf9-44f1-9e61-dcc01a706426`.
 - Android group (separate runtime): `3490ddfa-b132-412c-9796-bb07d78ff6a4`.
+- Latest published OTA before waves #109–#111: run #48, message `Chat first-token streaming`, source commit `308a7b8d02f5b702fb54666501ad47273c73b39e`; iOS group `9c7b4446-54da-45a3-8c4c-d203a2c7654a` (runtime above), Android group `9e1b5990-3123-4b8f-be96-166f85a48259`. The publish succeeded; device verification for this later group is not recorded.
 
-The iOS group is the rollback anchor for the upcoming functional update. Do not republish the old baseline to beta before a normal update; doing so would replace the currently working test bundle unnecessarily.
+Use the latest previous successful group as the immediate rollback target for the next OTA. The earlier `OTA TEST 01` iOS group remains the device-verified embedded-equivalent baseline. Do not republish either group before a normal update; that would replace the currently served bundle.
 
 ## Publishing a normal update
 
