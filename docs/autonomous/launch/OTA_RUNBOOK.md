@@ -38,13 +38,18 @@ the binary is the permanent fallback ("embedded update"). There is no
 
 ## Safe first-update baseline (B0)
 
-Before any functional update, publish the **baseline update B0**: dispatch
-the update workflow against the SAME main commit Build 24 was built
-from, with message `baseline B0 (embedded-equivalent)`. B0's JS is
-functionally the embedded bundle, so from then on a known-good update
-GROUP always exists to republish — rollback never depends on the
-embedded fallback alone. Record B0's group ID here after publishing:
-`B0 group: ____________` (owner fills from expo.dev → Updates).
+Before the first functional update, make sure there is a known-good update group that can be republished for rollback. For a new binary without one, publish an embedded-equivalent baseline from the same build commit, using message `baseline B0 (embedded-equivalent)`.
+
+### Recorded baseline for Build 24 (2026-10-22)
+
+- Build 24 source commit: `20098105f248507411d3000991bee0902d8d6eb7`.
+- Build 24 iOS fingerprint: `d1c70031cf41280e2b6d526fd62cb52c7418b361`.
+- First successful OTA, `OTA TEST 01`, was published from `ef788458d0e71a0ad32c1b923fc87a8ec2927a84` and verified on the target iPhone.
+- Comparison with the Build 24 source shows the only app-source difference in that update was the visible `· OTA TEST 01` marker; the other intervening changes were OTA workflow/preflight files. Its iOS bundle had the same fingerprint as Build 24, so this is the known-good, embedded-equivalent rollback baseline for this installed binary.
+- iOS B0-equivalent group: `92647e98-1cf9-44f1-9e61-dcc01a706426`.
+- Android group (separate runtime): `3490ddfa-b132-412c-9796-bb07d78ff6a4`.
+
+The iOS group is the rollback anchor for the upcoming functional update. Do not republish the old baseline to beta before a normal update; doing so would replace the currently working test bundle unnecessarily.
 
 ## Publishing a normal update
 
