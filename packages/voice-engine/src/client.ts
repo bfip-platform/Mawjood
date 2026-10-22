@@ -5,6 +5,7 @@ import { isCorrection, isQuestion } from './answer';
 import { OfflineSync, isQueueableError, listCacheKey, type KVStore } from './offline';
 import { rankByRelevance } from './rank';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { assertNameLength, NAME_LIMITS } from './nameLimits';
 
 /**
  * Shrink a photo before upload: max 1280px wide, JPEG q70. A 4MB phone photo
@@ -1021,11 +1022,12 @@ export class VoiceEngine {
     items: string[];
     userId?: string;
   }): Promise<ShoppingList> {
+    const cleanTitle = assertNameLength(input.title, NAME_LIMITS.shoppingList, 'Shopping list name');
     const { data: list, error: lErr } = await this.supabase
       .from('shopping_lists')
       .insert({
         space_id: input.spaceId,
-        title: input.title,
+        title: cleanTitle,
         assigned_to: input.assignedTo,
         assigned_name: input.assignedName,
         created_by: input.userId ?? null,
@@ -1176,7 +1178,7 @@ export class VoiceEngine {
       .from('space_tabs')
       .insert({
         space_id: spaceId,
-        title: title.trim().slice(0, 40),
+        title: assertNameLength(title, NAME_LIMITS.customTab, 'Tab name'),
         icon: icon || '📁',
         position: count ?? 0,
         created_by: userId,
@@ -1187,10 +1189,10 @@ export class VoiceEngine {
     return data as SpaceTab;
   }
 
-  async renameSpaceTab(tabId: string, title: string): Promise<void> {
+  async renameSpaceTab(tabId: string, title: string, icon?: string): Promise<void> {
     const { error } = await this.supabase
       .from('space_tabs')
-      .update({ title: title.trim().slice(0, 40) })
+      .update({ title: assertNameLength(title, NAME_LIMITS.customTab, 'Tab name'), ...(icon ? { icon } : {}) })
       .eq('id', tabId);
     if (error) throw error;
   }
@@ -1316,6 +1318,15 @@ export class VoiceEngine {
       await this.supabase.from('notes').delete().in('id', noteIds);
     }
     await this.supabase.from('space_tabs').delete().eq('id', tabId);
+  }
+
+  /** Atomically delete a tab and move its notes and associated items into another owned space. */
+  async deleteSpaceTabToSpace(tabId: string, targetSpaceId: string): Promise<void> {
+    const { error } = await this.supabase.rpc('delete_space_tab_to_space', {
+      p_tab_id: tabId,
+      p_target_space_id: targetSpaceId,
+    });
+    if (error) throw error;
   }
 
   /** Hard-delete a tab with all its notes and their items. No trash, no way back. */
@@ -1733,8 +1744,7 @@ export class VoiceEngine {
 
   /** Rename a space the caller owns (RLS: owner-only update on spaces). */
   async renameSpace(spaceId: string, name: string): Promise<void> {
-    const clean = name.trim().slice(0, 20); // CFP-01 item 3: family/space name limit is 20 (UI + engine + DB trigger 0047)
-    if (!clean) throw new Error('empty name');
+    const clean = assertNameLength(name, NAME_LIMITS.familySpace, 'Space name'); // DB trigger 0047 is final boundary
     const { error } = await this.supabase.from('spaces').update({ name: clean }).eq('id', spaceId);
     if (error) throw error;
   }
@@ -2676,7 +2686,8 @@ export class VoiceEngine {
   /** Set own display name (upserts the profiles row). */
   async setDisplayName(name: string): Promise<void> {    const { data: user } = await this.supabase.auth.getUser();
     if (!user.user) throw new Error('not authenticated');
-    const clean = name.trim().slice(0, 60);
+    const clean = name.trim();
+    if (Array.from(clean).length > NAME_LIMITS.profileDisplay) throw new RangeError('Display name cannot exceed 60 characters');
     const { error } = await this.supabase.from('profiles').upsert(
       {
         id: user.user.id,

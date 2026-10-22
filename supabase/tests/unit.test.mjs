@@ -2680,10 +2680,10 @@ describe('CFP-01 B — input limits (item 3) and conversation history 5/+5 (item
 
   it('GUARD (item 3): family name is capped at 20 in UI, engine, and the DB boundary', () => {
     const renameBlock = idx.slice(idx.indexOf('rename family (owner only)'), idx.indexOf('rename family (owner only)') + 1500);
-    assert.ok(renameBlock.includes('maxLength={20}'), 'rename input caps at 20');
-    assert.ok(renameBlock.includes('{renameValue.length}/20'), 'rename counter is shown');
+    assert.ok(renameBlock.includes('clampNameLength(v, NAME_LIMITS.familySpace)'), 'rename input applies the shared 20-character cap');
+    assert.ok(renameBlock.includes('Array.from(renameValue).length}/{NAME_LIMITS.familySpace}'), 'rename counter counts Unicode characters');
     const rs = client.slice(client.indexOf('async renameSpace(spaceId'), client.indexOf('async renameSpace(spaceId') + 400);
-    assert.ok(rs.includes('slice(0, 20)'), 'engine renameSpace enforces 20');
+    assert.ok(rs.includes('assertNameLength(name, NAME_LIMITS.familySpace'), 'engine rejects overlong names consistently');
     const mig = read('../../supabase/migrations/0047_family_name_length.sql');
     assert.ok(mig.includes("new.type = 'family'"), 'DB trigger scopes to family spaces only');
     assert.ok(mig.includes('char_length(new.name) > 20'), 'DB trigger enforces 20');
@@ -3367,6 +3367,35 @@ describe('Privacy, Localization and Daily Utility wave — due states, filters, 
     assert.ok(idx.includes('const chip = thingsSearch.inSearch ? spaceChipFor(item.space_id) : null;'), 'things search rows carry the chip');
     assert.ok(idx.includes('const chip = spaceChipFor(it.space_id);'), 'notes search rows carry the chip');
     assert.ok(idx.includes('styles.spaceChip'), 'rows render the chip style');
+  });
+
+  it('custom tab actions save icons, confirm deletion, and move contents atomically across owned spaces', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    const client = read('../../packages/voice-engine/src/client.ts');
+    const migration = read('../../supabase/migrations/0050_name_limits_and_tab_move.sql');
+    assert.ok(idx.includes('renameSpaceTab(editingTab.id, tabName, tabIcon)'), 'renaming sends the selected icon');
+    assert.ok(idx.includes('<Modal visible={!!menuTab}'), 'tab actions render in an overlay');
+    assert.ok(idx.includes('setDelTab(tab);'), 'even empty tabs require confirmation');
+    assert.ok(idx.includes('deleteTabToSpace(delTab.id, space.id)'), 'delete flow offers another space');
+    assert.ok(client.includes("rpc('delete_space_tab_to_space'"), 'cross-space move uses one server transaction');
+    assert.ok(migration.includes('update public.items i') && migration.includes('delete from public.space_tabs'), 'items and notes move before the tab is removed');
+    assert.ok(migration.includes('public.is_space_owner(p_target_space_id)'), 'the database checks destination ownership');
+    const styles = read('../../apps/mobile/src/screens/home/styles.ts');
+    assert.ok(styles.includes("nameInputFixed: { width: '100%', alignSelf: 'stretch', flexShrink: 0 }"), 'name fields stay full-width while typing');
+  });
+
+  it('name length limits use Unicode code points and match database guards', async () => {
+    const limits = read('../../packages/voice-engine/src/nameLimits.ts');
+    const migration = read('../../supabase/migrations/0050_name_limits_and_tab_move.sql');
+    const chat = read('../../supabase/functions/chat/index.ts');
+    assert.ok(limits.includes('profileDisplay: 60') && limits.includes('customSpace: 40') && limits.includes('customTab: 40') && limits.includes('shoppingList: 80'));
+    assert.ok(limits.includes('Array.from(value).length'), 'emoji count as one name character');
+    assert.ok(migration.includes("char_length(to_jsonb(new)->>'title') > 40") && migration.includes("char_length(to_jsonb(new)->>'title') > 80") && migration.includes("char_length(to_jsonb(new)->>'display_name') > 60"));
+    assert.ok(chat.includes('Array.from(name).length > 40'), 'AI-created names reject overlong values instead of silently truncating');
+    const { nameCharacterCount, clampNameLength, assertNameLength } = await import('../../packages/voice-engine/src/nameLimits.ts');
+    assert.equal(nameCharacterCount('👨‍👩‍👧‍👦'), 7, 'uses Unicode code points like PostgreSQL char_length');
+    assert.equal(clampNameLength('😀😀😀', 2), '😀😀');
+    assert.throws(() => assertNameLength('😀'.repeat(41), 40), RangeError);
   });
 
   it('no biometric or plaintext-secret shortcuts were introduced (Face ID stays a documented native-build item)', () => {

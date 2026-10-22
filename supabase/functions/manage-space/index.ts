@@ -94,7 +94,7 @@ async function effectiveLimit(admin: Admin, userId: string): Promise<number> {
 function cleanName(raw: unknown): { name?: string; code?: string } {
   const name = String(raw ?? '').trim().replace(/\s+/g, ' ');
   if (!name) return { code: 'name_required' };
-  if (name.length > NAME_MAX) return { code: 'name_too_long' };
+  if (Array.from(name).length > NAME_MAX) return { code: 'name_too_long' };
   return { name };
 }
 
