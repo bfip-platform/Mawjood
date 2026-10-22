@@ -1859,6 +1859,7 @@ export default function HomeScreen() {
   // per-user device-local display prefs (lib/spacePrefs) — never space data.
   const [stripOrder, setStripOrder] = useState<string[] | null>(null);
   const [stripDragKey, setStripDragKey] = useState<string | null>(null);
+  const [stripDragOrigin, setStripDragOrigin] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [stripPreviewOrder, setStripPreviewOrder] = useState<string[] | null>(null);
   const [spaceIcons, setSpaceIcons] = useState<Record<string, string>>({});
   const [spaceIconDraft, setSpaceIconDraft] = useState('🗂️');
@@ -1898,15 +1899,32 @@ export default function HomeScreen() {
   );
   const stripKeysRef = useRef<string[]>([]);
   const stripDragKeyRef = useRef<string | null>(null);
+  const stripPanActiveRef = useRef(false);
+  const stripOrderWriteRevisionRef = useRef(0);
   const stripLayoutsRef = useRef<Record<string, { left: number; top: number; width: number; height: number }>>({});
   const stripContainerRef = useRef<View | null>(null);
   const stripContainerBoundsRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 });
-  const stripDragOriginRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
   const stripDragStartOrderRef = useRef<string[]>([]);
   const stripPreviewOrderRef = useRef<string[] | null>(null);
   const stripViewRefs = useRef<Record<string, View | null>>({});
   const stripDragValue = useRef(new Animated.ValueXY()).current;
   const stripDragScale = useRef(new Animated.Value(1)).current;
+  const measureStripGeometry = useCallback((dragKey?: string) => {
+    stripContainerRef.current?.measureInWindow((containerLeft, containerTop) => {
+      stripContainerBoundsRef.current = { left: containerLeft, top: containerTop };
+      for (const [key, node] of Object.entries(stripViewRefs.current)) {
+        node?.measureInWindow((left, top, width, height) => {
+          if (width > 0 && height > 0) stripLayoutsRef.current[key] = { left, top, width, height };
+        });
+      }
+      if (!dragKey) return;
+      stripViewRefs.current[dragKey]?.measureInWindow((left, top, width, height) => {
+        if (stripDragKeyRef.current !== dragKey || width <= 0 || height <= 0) return;
+        stripLayoutsRef.current[dragKey] = { left, top, width, height };
+        setStripDragOrigin({ left: left - containerLeft, top: top - containerTop, width, height });
+      });
+    });
+  }, []);
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
       UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -1922,24 +1940,26 @@ export default function HomeScreen() {
     stripPreviewOrderRef.current = stripKeysRef.current;
     stripDragStartOrderRef.current = stripKeysRef.current;
     setStripPreviewOrder(stripKeysRef.current);
-    const box = stripLayoutsRef.current[key];
-    stripDragOriginRef.current = box ? {
-      left: box.left - stripContainerBoundsRef.current.left,
-      top: box.top - stripContainerBoundsRef.current.top,
-      width: box.width,
-      height: box.height,
-    } : null;
+    const cachedBox = stripLayoutsRef.current[key];
+    setStripDragOrigin(cachedBox ? {
+      left: cachedBox.left - stripContainerBoundsRef.current.left,
+      top: cachedBox.top - stripContainerBoundsRef.current.top,
+      width: cachedBox.width,
+      height: cachedBox.height,
+    } : null);
+    measureStripGeometry(key);
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1.06, useNativeDriver: true, speed: 28, bounciness: 5 }).start();
     void tap();
-  }, [stripDragScale, stripDragValue]);
+  }, [measureStripGeometry, stripDragScale, stripDragValue]);
 
   /** Drop directly into place, persist once, and roll back on failure. */
   const cancelStripDrag = useCallback(() => {
     stripDragKeyRef.current = null;
+    stripPanActiveRef.current = false;
     stripPreviewOrderRef.current = null;
-    stripDragOriginRef.current = null;
     setStripDragKey(null);
+    setStripDragOrigin(null);
     setStripPreviewOrder(null);
     stripDragValue.setValue({ x: 0, y: 0 });
     Animated.spring(stripDragScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
@@ -1950,9 +1970,10 @@ export default function HomeScreen() {
       const preview = stripPreviewOrderRef.current;
       const dragStartOrder = stripDragStartOrderRef.current;
       stripDragKeyRef.current = null;
+      stripPanActiveRef.current = false;
       stripPreviewOrderRef.current = null;
-      stripDragOriginRef.current = null;
       setStripDragKey(null);
+      setStripDragOrigin(null);
       setStripPreviewOrder(null);
       Animated.parallel([
         Animated.spring(stripDragValue, { toValue: { x: 0, y: 0 }, useNativeDriver: true, speed: 24, bounciness: 4 }),
@@ -1967,7 +1988,9 @@ export default function HomeScreen() {
       if (!uid) return;
       stripKeysRef.current = next;
       setStripOrder(next);
+      const writeRevision = ++stripOrderWriteRevisionRef.current;
       void saveSpaceOrder(uid, next).then((ok) => {
+        if (writeRevision !== stripOrderWriteRevisionRef.current || userIdRef.current !== uid) return;
         if (!ok) {
           stripKeysRef.current = prev;
           setStripOrder(prev);
@@ -1980,6 +2003,7 @@ export default function HomeScreen() {
   const stripPanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: () => stripDragKeyRef.current !== null,
     onMoveShouldSetPanResponderCapture: () => stripDragKeyRef.current !== null,
+    onPanResponderGrant: () => { stripPanActiveRef.current = true; },
     onPanResponderMove: (_event, gesture) => {
       const key = stripDragKeyRef.current;
       const current = stripPreviewOrderRef.current;
@@ -2461,8 +2485,10 @@ export default function HomeScreen() {
         setStripOrder(null);
         setSpaceIcons({});
         stripDragKeyRef.current = null;
+        stripPanActiveRef.current = false;
+        stripOrderWriteRevisionRef.current += 1;
         stripPreviewOrderRef.current = null;
-        stripDragOriginRef.current = null;
+        setStripDragOrigin(null);
         setStripPreviewOrder(null);
         stripDragValue.setValue({ x: 0, y: 0 });
         setStripDragKey(null);
@@ -4866,6 +4892,13 @@ export default function HomeScreen() {
         }
       },
       onLongPress: () => startStripDrag(key),
+      onPressOut: () => {
+        // A long press can be released before any move event grants the
+        // PanResponder. Clear that pending drag after responder handoff settles.
+        setTimeout(() => {
+          if (stripDragKeyRef.current === key && !stripPanActiveRef.current) cancelStripDrag();
+        }, 0);
+      },
       delayLongPress: 230,
       accessibilityRole: 'tab' as const,
       accessibilityHint: t('stripEditHint'),
@@ -4962,6 +4995,8 @@ export default function HomeScreen() {
           horizontal
           showsHorizontalScrollIndicator={false}
           scrollEnabled={!stripDragKey}
+          onScrollEndDrag={() => measureStripGeometry()}
+          onMomentumScrollEnd={() => measureStripGeometry()}
           style={styles.tabBar}
           contentContainerStyle={styles.tabBarInner}
         >
@@ -4996,16 +5031,16 @@ export default function HomeScreen() {
                     };
                   });
                 }}
-                style={[styles.stripDragWrap, dragging && { opacity: 0 }]}
+                style={[styles.stripDragWrap, dragging && stripDragOrigin && { opacity: 0 }]}
               >
                 {renderSpaceStripTab(entry)}
               </Animated.View>
             );
           })}
         </ScrollView>
-        {stripDragKey && stripDragOriginRef.current && (() => {
+        {stripDragKey && stripDragOrigin && (() => {
           const entry = orderedStrip.find((candidate) => entryKey(candidate) === stripDragKey);
-          const origin = stripDragOriginRef.current;
+          const origin = stripDragOrigin;
           if (!entry || !origin) return null;
           return (
             <Animated.View

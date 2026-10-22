@@ -92,12 +92,13 @@ export function resolveDropIndex(
   layouts: Record<string, { left: number; width: number }>,
   isRTL = false,
 ): number {
-  if (!orderKeys.includes(key)) return -1;
+  if (!orderKeys.includes(key) || !Number.isFinite(pointerX)) return -1;
+  const peers = orderKeys.filter((candidate) => candidate !== key);
+  if (peers.length === 0) return -1;
   let index = 0;
-  for (const candidate of orderKeys) {
-    if (candidate === key) continue;
+  for (const candidate of peers) {
     const box = layouts[candidate];
-    if (!box) continue;
+    if (!box || !Number.isFinite(box.left) || !Number.isFinite(box.width) || box.width <= 0) return -1;
     const center = box.left + box.width / 2;
     if (isRTL ? center > pointerX : center < pointerX) index += 1;
   }
