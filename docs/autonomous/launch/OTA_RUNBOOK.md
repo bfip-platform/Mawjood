@@ -38,13 +38,25 @@ the binary is the permanent fallback ("embedded update"). There is no
 
 ## Safe first-update baseline (B0)
 
-Before any functional update, publish the **baseline update B0**: dispatch
-the update workflow against the SAME main commit Build 24 was built
-from, with message `baseline B0 (embedded-equivalent)`. B0's JS is
-functionally the embedded bundle, so from then on a known-good update
-GROUP always exists to republish — rollback never depends on the
-embedded fallback alone. Record B0's group ID here after publishing:
-`B0 group: ____________` (owner fills from expo.dev → Updates).
+Before the first functional update, make sure there is a known-good update group that can be republished for rollback. For a new binary without one, publish an embedded-equivalent baseline from the same build commit, using message `baseline B0 (embedded-equivalent)`.
+
+### Recorded baseline for Build 24 (2026-10-22)
+
+- Build 24 source commit: `20098105f248507411d3000991bee0902d8d6eb7`.
+- Build 24 iOS fingerprint: `d1c70031cf41280e2b6d526fd62cb52c7418b361`.
+- First successful OTA, `OTA TEST 01`, was published from `ef788458d0e71a0ad32c1b923fc87a8ec2927a84` and verified on the target iPhone.
+- Comparison with the Build 24 source shows the only app-source difference in that update was the visible `· OTA TEST 01` marker; the other intervening changes were OTA workflow/preflight files. Its iOS bundle had the same fingerprint as Build 24, so this is the known-good, embedded-equivalent rollback baseline for this installed binary.
+- iOS B0-equivalent group: `92647e98-1cf9-44f1-9e61-dcc01a706426`.
+- Android group (separate runtime): `3490ddfa-b132-412c-9796-bb07d78ff6a4`.
+- Latest published OTA before waves #109–#111: run #48, message `Chat first-token streaming`, source commit `308a7b8d02f5b702fb54666501ad47273c73b39e`; iOS group `9c7b4446-54da-45a3-8c4c-d203a2c7654a` (runtime above), Android group `9e1b5990-3123-4b8f-be96-166f85a48259`. The publish succeeded; device verification for this later group is not recorded.
+
+## Current release — Waves 1–3 (2026-10-21)
+
+- Published successfully by workflow run `39716229825` from main commit `1985b3ebbfd0155cf7550c3c668ea1bdaefb83ca`, message `Mawjood waves 1-3: reliability, spaces, privacy`.
+- iOS group: `64d9ea92-9ef9-4dc9-b818-247ad1b7e8bf`; iOS runtime: `d1c70031cf41280e2b6d526fd62cb52c7418b361` (matches Build 24).
+- Android group: `ad141c83-322b-4efb-b429-1d6c24c65917` (separate runtime).
+- OTA preflight and publish guards passed. The iPhone still needs the two-launch install check and feature smoke checks in the section below.
+- Until that device check passes, the device-verified `OTA TEST 01` iOS group above is the safe rollback target. After verification, this release can be used as the next known-good rollback group. Do not republish either group before a normal update; that would replace the currently served bundle.
 
 ## Publishing a normal update
 
