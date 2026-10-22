@@ -50,7 +50,13 @@ Before the first functional update, make sure there is a known-good update group
 - Android group (separate runtime): `3490ddfa-b132-412c-9796-bb07d78ff6a4`.
 - Latest published OTA before waves #109–#111: run #48, message `Chat first-token streaming`, source commit `308a7b8d02f5b702fb54666501ad47273c73b39e`; iOS group `9c7b4446-54da-45a3-8c4c-d203a2c7654a` (runtime above), Android group `9e1b5990-3123-4b8f-be96-166f85a48259`. The publish succeeded; device verification for this later group is not recorded.
 
-Use the latest previous successful group as the immediate rollback target for the next OTA. The earlier `OTA TEST 01` iOS group remains the device-verified embedded-equivalent baseline. Do not republish either group before a normal update; that would replace the currently served bundle.
+## Current release — Waves 1–3 (2026-10-21)
+
+- Published successfully by workflow run `39716229825` from main commit `1985b3ebbfd0155cf7550c3c668ea1bdaefb83ca`, message `Mawjood waves 1-3: reliability, spaces, privacy`.
+- iOS group: `64d9ea92-9ef9-4dc9-b818-247ad1b7e8bf`; iOS runtime: `d1c70031cf41280e2b6d526fd62cb52c7418b361` (matches Build 24).
+- Android group: `ad141c83-322b-4efb-b429-1d6c24c65917` (separate runtime).
+- OTA preflight and publish guards passed. The iPhone still needs the two-launch install check and feature smoke checks in the section below.
+- Until that device check passes, the device-verified `OTA TEST 01` iOS group above is the safe rollback target. After verification, this release can be used as the next known-good rollback group. Do not republish either group before a normal update; that would replace the currently served bundle.
 
 ## Publishing a normal update
 
