@@ -3224,6 +3224,9 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     const reflowedLTR = { b: { left: 0, width: 100 }, a: { left: 100, width: 100 }, c: { left: 200, width: 100 } };
     assert.equal(resolveDropIndex(afterB, 'a', 151, reflowedLTR), 1, 'same pointer does not bounce into the next slot');
     assert.equal(resolveDropIndex(afterB, 'a', 251, reflowedLTR), 2, 'crossing the next center advances one slot');
+    assert.equal(resolveDropIndex(['a', 'b', 'c'], 'a', 151, { b: ltr.b }), -1, 'incomplete measurements refuse a potentially wrong drop');
+    assert.equal(resolveDropIndex(['a', 'b'], 'a', Number.NaN, ltr), -1, 'invalid pointer coordinates refuse a drop');
+    assert.equal(resolveDropIndex(['a'], 'a', 10, {}), -1, 'a lone item has no insertion slot');
 
     const rtl = { a: { left: 200, width: 100 }, b: { left: 100, width: 100 }, c: { left: 0, width: 100 } };
     const rtlAfterB = moveToIndex(['a', 'b', 'c'], 'a', resolveDropIndex(['a', 'b', 'c'], 'a', 149, rtl, true));
@@ -3255,10 +3258,14 @@ describe('Spaces & Family UX wave — strip order, icons, invite link, realtime 
     const idx = read('../../apps/mobile/src/app/index.tsx');
     assert.ok(idx.includes('applySpaceOrder(stripEntries, stripPreviewOrder ?? stripOrder)'), 'strip renders through the live preview or saved order');
     assert.ok(idx.includes('onLongPress: () => startStripDrag(key)'), 'long-press starts a direct drag');
+    assert.ok(idx.includes('onPressOut: () => {') && idx.includes('!stripPanActiveRef.current) cancelStripDrag()'), 'a long press released without movement cannot leave the strip stuck');
+    assert.ok(idx.includes('onPanResponderGrant: () => { stripPanActiveRef.current = true; }'), 'the responder handoff protects an active drag from the press-out cleanup');
+    assert.ok(idx.includes('dragging && stripDragOrigin && { opacity: 0 }'), 'the source tab stays visible until the overlay has valid geometry');
     assert.ok(idx.includes('delayLongPress: 230'), 'drag starts without a long wait');
     assert.ok(idx.includes('PanResponder.create(') && idx.includes('finishStripDrag(gesture.moveX)'), 'pointer release selects the drop position');
     assert.ok(idx.includes('setStripPreviewOrder(next);') && idx.includes('LayoutAnimation.configureNext('), 'neighbors reflow into the live drop slot');
     assert.ok(idx.includes('styles.stripDragOverlay') && idx.includes('{ translateX: stripDragValue.x }'), 'floating drag overlay remains under the pointer');
+    assert.ok(idx.includes('measureStripGeometry(key)') && idx.includes('onMomentumScrollEnd={() => measureStripGeometry()}'), 'screen-space measurements refresh after scrolling and at drag start');
     assert.ok(idx.includes('resolveDropIndex(preview, key, moveX, stripLayoutsRef.current, I18nManager.isRTL)'), 'release resolves the final insertion slot for Arabic and English layouts');
     assert.ok(idx.includes("saveSpaceOrder(uid, next).then((ok) => {"), 'moves persist');
     assert.ok(idx.includes('setStripOrder(prev);'), 'a failed save rolls the order back');
