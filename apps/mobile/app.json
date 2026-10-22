@@ -75,6 +75,9 @@
       "display": "standalone",
       "orientation": "portrait"
     },
+    "experiments": {
+      "baseUrl": "/Mawjood"
+    },
     "extra": {
       "router": {},
       "eas": {
