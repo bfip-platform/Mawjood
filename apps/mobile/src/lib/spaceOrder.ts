@@ -68,6 +68,18 @@ export function moveInOrder(orderKeys: string[], key: string, dir: -1 | 1): stri
   return next;
 }
 
+/** Move an item directly to the drop target index, preserving every other key. */
+export function moveToIndex(orderKeys: string[], key: string, targetIndex: number): string[] {
+  const from = orderKeys.indexOf(key);
+  if (from < 0 || orderKeys.length < 2) return [...orderKeys];
+  const to = Math.max(0, Math.min(orderKeys.length - 1, targetIndex));
+  if (from === to) return [...orderKeys];
+  const next = [...orderKeys];
+  next.splice(from, 1);
+  next.splice(to, 0, key);
+  return next;
+}
+
 /** Sanitize an unparsed persisted value into a clean key list. */
 export function sanitizeOrderKeys(raw: unknown): string[] | null {
   if (!Array.isArray(raw)) return null;
