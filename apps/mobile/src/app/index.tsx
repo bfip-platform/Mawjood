@@ -5884,11 +5884,9 @@ export default function HomeScreen() {
                             </Pressable>
                           ))}
                         <View style={styles.archActions}>
-                          {missing > 0 ? (
-                            <Pressable onPress={() => restoreShopList(l.id)} hitSlop={10}>
-                              <Text style={styles.restoreBtn}>{t('restoreList')}</Text>
-                            </Pressable>
-                          ) : null}
+                          <Pressable onPress={() => restoreShopList(l.id)} hitSlop={10}>
+                            <Text style={styles.restoreBtn}>{t('restoreList')}</Text>
+                          </Pressable>
                           <Pressable
                             onPress={() => deleteShopList(l.id)}
                             hitSlop={10}
