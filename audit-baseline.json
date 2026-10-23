@@ -1,1 +1,14 @@
-{"_comment":"Pre-existing high/critical advisories in the Expo/metro toolchain. The CI gate (scripts/audit-gate.mjs) fails on NEW high/critical advisories AND on stale entries (baseline IDs with zero live findings). Entries carry review-by dates; re-check on every Expo SDK upgrade.","advisories":[{"id":"GHSA-vfj7-8cjw-p6xm","package":"braces","reason":"No patched version exists (3.0.3 latest; upstream fix unmerged). Only reachable via metro's file-globbing with developer-authored patterns — not attacker-reachable.","review-by":"2027-01-10","severity":"high"},{"id":"GHSA-86w9-cpqp-85rv","package":"node-forge","reason":"No patched version exists (1.4.0 latest; upstream PR unmerged). @expo/cli uses it only for its own code-signing keys — absent from app runtime.","review-by":"2027-01-10","severity":"high"}],"generated":"2026-10-10","pruned":"2026-10-11: removed GHSA-pqg4-j6r4-53mv (shell-quote→1.12.0) and GHSA-68fv-2mgg-jv7q (source-map-js→1.2.2); both had published fixes within declared ranges (WS6 finding)"}
+{
+  "_comment": "Pre-existing high/critical advisories in the Expo/metro toolchain. The CI gate (scripts/audit-gate.mjs) fails on NEW high/critical advisories AND on stale entries (baseline IDs with zero live findings). Entries carry review-by dates; re-check on every Expo SDK upgrade.",
+  "advisories": [
+    {
+      "id": "GHSA-86w9-cpqp-85rv",
+      "package": "node-forge",
+      "reason": "No patched version exists (1.4.0 latest; upstream PR unmerged). @expo/cli uses it only for its own code-signing keys — absent from app runtime.",
+      "review-by": "2027-01-10",
+      "severity": "high"
+    }
+  ],
+  "generated": "2026-10-10",
+  "pruned": "2026-10-23: removed GHSA-vfj7-8cjw-p6xm (braces) after npm audit returned zero live findings on PR #122 CI run 39995587617."
+}
