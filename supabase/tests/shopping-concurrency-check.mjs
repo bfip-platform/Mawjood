@@ -34,7 +34,7 @@ try {
 
   userId = (await db.query('insert into auth.users default values returning id')).rows[0].id;
   spaceId = (await db.query(
-    `insert into public.spaces (owner_id, type, name) values ($1, 'family', 'shopping concurrency check') returning id`,
+    `insert into public.spaces (owner_id, type, name) values ($1, 'family', 'shop race check') returning id`,
     [userId],
   )).rows[0].id;
 
