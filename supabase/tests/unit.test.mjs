@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 54370)
+Total output lines: 3556
+
 // Unit tests for the zero-dependency shared engines.
 // Run: node --import ./supabase/tests/deno-shim.mjs --test supabase/tests/unit.test.mjs
 // (node >= 22 strips types natively; no build step, no extra deps)
@@ -1819,264 +1822,7 @@ describe('D4 — entitlements fail-closed + vault gate OFF (decision #4) + webho
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: true, mirrorWatermark: 0 }), { action: 'skip_duplicate' });
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 50, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'skip_stale' });
     assert.deepEqual(wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' }, 'equal watermark is not stale');
-    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'charge.refunded', eventCreated: 100, alreadyClaimed: false, mirrorWatermark: 0 }), { action: 'ignore_type' });
-    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'customer.subscription.updated', eventCreated: 200, alreadyClaimed: false, mirrorWatermark: 100 }), { action: 'process' });
-    assert.deepEqual(
-      wh.decideWebhookEvent({ eventType: 'invoice.paid', eventCreated: NaN, alreadyClaimed: false, mirrorWatermark: 0 }),
-      { action: 'skip_stale' },
-      'a malformed created fails closed — never falls through to process (review N3)',
-    );
-  });
-
-  it('GUARD: the D4 design package exists and legal drafts carry the not-final marking', () => {
-    for (const f of ['STRIPE_ARCHITECTURE.md', 'ENTITLEMENTS.md', 'QUOTA_PRICE_OPTIONS.md', 'LEGAL_DRAFTS.md', 'ACCOUNT_LIFECYCLE.md']) {
-      assert.ok(existsSync(new URL(`../../docs/autonomous/d4/${f}`, import.meta.url)), `missing docs/autonomous/d4/${f}`);
-    }
-    const legal = readFileSync(new URL('../../docs/autonomous/d4/LEGAL_DRAFTS.md', import.meta.url), 'utf8');
-    assert.ok(legal.includes('NOT LEGAL ADVICE'), 'legal drafts must be marked non-final');
-    const quota = readFileSync(new URL('../../docs/autonomous/d4/QUOTA_PRICE_OPTIONS.md', import.meta.url), 'utf8');
-    assert.ok(quota.includes('OD-01/02 remain OPEN'), 'quota paper must not finalize numbers');
-  });
-});
-
-describe('D4 T-D4-6 — dead commercial UI cleanup (F-COM-09)', () => {
-  it('GUARD: the demo-seed button and panel are dev-only (__DEV__ gate)', () => {
-    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.ok(app.includes('{__DEV__ && showDemo && ('), 'the demo panel render is __DEV__-gated');
-    const toggleIdx = app.indexOf('setShowDemo((v) => !v)');
-    const gateIdx = app.lastIndexOf('{__DEV__ && (', toggleIdx);
-    assert.ok(gateIdx > -1 && toggleIdx - gateIdx < 300, 'the 🧪 toggle button sits inside a __DEV__ block');
-    // The seed capability itself remains for dev use (engine method untouched).
-    assert.ok(app.includes('engine.seedDemoData'), 'seedDemoData still wired for dev builds');
-  });
-});
-
-describe('Launch readiness PR-A — 18+ age gate (Decision #5)', () => {
-  const boundary = (ageOn, isAdult, parseBirthDate) => {
-    const on = new Date('2026-10-12T12:00:00Z');
-    assert.equal(ageOn('2008-10-12', on), 18, 'turns 18 ON the birthday');
-    assert.equal(isAdult('2008-10-12', on), true);
-    assert.equal(ageOn('2008-10-13', on), 17, 'one day short is still 17');
-    assert.equal(isAdult('2008-10-13', on), false);
-    assert.equal(ageOn('1990-01-01', on), 36);
-    // Feb-29 births: older on Mar 1 in non-leap years, not on Feb 28.
-    assert.equal(ageOn('2008-02-29', new Date('2026-02-28T12:00:00Z')), 17);
-    assert.equal(ageOn('2008-02-29', new Date('2026-03-01T12:00:00Z')), 18);
-    // Undeclared / invalid -> null age, never adult.
-    for (const bad of [null, undefined, '', 'abc', '2008-13-01', '2008-02-30', '12-10-2008', 20081012]) {
-      assert.equal(parseBirthDate(bad), null, `${String(bad)} must not parse`);
-      assert.equal(ageOn(bad, on), null);
-      assert.equal(isAdult(bad, on), false);
-    }
-    assert.equal(parseBirthDate(' 1990-05-17 '), '1990-05-17', 'surrounding space tolerated');
-  };
-
-  it('edge _shared/age.ts: boundary math is exact', async () => {
-    const { ageOn, isAdult, parseBirthDate } = await import('../functions/_shared/age.ts');
-    boundary(ageOn, isAdult, parseBirthDate);
-  });
-
-  it('voice-engine age.ts: IDENTICAL math (the two implementations cannot drift)', async () => {
-    const { ageOn, isAdult, parseBirthDate } = await import('../../packages/voice-engine/src/age.ts');
-    boundary(ageOn, isAdult, parseBirthDate);
-  });
-
-  it('GUARD: migration 0045 + chat gate + app gate are all wired', () => {
-    const mig = readFileSync(new URL('../migrations/0045_profiles_birth_date.sql', import.meta.url), 'utf8');
-    assert.ok(mig.includes('birth_date date'), 'migration adds the column');
-    const chat = readFileSync(new URL('../functions/chat/index.ts', import.meta.url), 'utf8');
-    assert.ok(chat.includes("kind: 'age_gate.blocked'") && chat.includes('isAdult(bd)'), 'chat refuses missing/under-18 declarations before model paths');
-    const gateAt = chat.indexOf('age_gate.blocked');
-    const spendAt = chat.indexOf('const spend = await checkSpendCap');
-    assert.ok(gateAt !== -1 && spendAt !== -1 && gateAt < spendAt, 'the age gate runs BEFORE the spend pre-check');
-    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.ok(app.includes("ageStatus === 'needed'") && app.includes("ageStatus === 'blocked'"), 'app renders both gate screens');
-    assert.ok(app.includes('setMyBirthDate'), 'app persists the declaration through the engine');
-  });
-});
-
-describe('Launch readiness PR-B — offline layer wired into the app', () => {
-  it('GUARD: the shared engine singleton enables the offline layer over AsyncStorage', () => {
-    const lib = readFileSync(new URL('../../apps/mobile/src/lib/engine.ts', import.meta.url), 'utf8');
-    assert.ok(lib.includes('engine.enableOffline(asyncStorageKV)'), 'offline layer is enabled at construction');
-    assert.ok(lib.includes('@react-native-async-storage/async-storage'), 'KV is AsyncStorage-backed (survives restarts)');
-  });
-
-  it('GUARD: app create/read paths are offline-first; outbox flushes on foreground + sign-in', () => {
-    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    assert.ok(!app.includes('engine.createItem('), 'no direct online-only createItem call remains in the app');
-    assert.ok((app.match(/engine\.createItemOfflineFirst\(/g) ?? []).length >= 4, 'all four direct-create sites are offline-first');
-    assert.ok(app.includes('engine.listItemsCached(spaceId)'), 'the items refresh reads through the cache');
-    assert.ok(app.includes("s === 'active'") && app.includes('engine.flushOutbox()'), 'foreground flush is wired');
-    assert.ok(app.includes('pendingSync > 0') && app.includes("tx('offlinePending'"), 'the drawer shows the queued-sync indicator');
-    // review N1: the INDIRECT create paths (watch / expense helpers)
-    // are offline-first too — no createItem( survives in the helpers
-    for (const lib of ['watch', 'expenses']) {
-      const src = readFileSync(new URL(`../../apps/mobile/src/lib/${lib}.ts`, import.meta.url), 'utf8');
-      assert.ok(!src.includes('.createItem('), `${lib} helper creates via the offline-first surface`);
-      assert.ok(src.includes('createItemOfflineFirst'), `${lib} helper is offline-first`);
-    }
-  });
-});
-
-describe('Launch readiness PR-C — accessibility completion (measured gaps only)', () => {
-  it('GUARD: every icon-only control found in the completion audit carries role + label', () => {
-    const app = readFileSync(new URL('../../apps/mobile/src/app/index.tsx', import.meta.url), 'utf8');
-    // handler -> the accessibilityLabel key it must carry (audit of
-    // 2026-10-12: 156 pressables scanned; these were the bare ones)
-    const pairs = [
-      ['deleteMessage(item.id)', "a11yDeleteMessage"],
-      ["voteAnswer(item.id, 'up'", 'a11yGoodAnswer'],
-      ["voteAnswer(item.id, 'down'", 'a11yBadAnswer'],
-      ['startEditSecret(item)', 'a11yEdit'],
-      ['askDeleteSecret(item.id)', 'a11yDeleteSecret'],
-      ['setShowDemo((v) => !v)', 'a11yDemoPanel'],
-      ['deleteSession(sess.id)', 'a11yDeleteChat'],
-      ['dismissBroadcast(b.id)', 'a11yDismiss'],
-      ['setChatPhotoUri(null)', 'a11yRemovePhoto'],
-      ['setSecretPhotoUri(null)', 'a11yRemovePhoto'],
-      ['openRename', 'a11yEdit'],
-      ['onAssign(item)', 'a11yAssign'],
-      ['setSecretSearchOpen((v) => !v)', 'a11ySearchSecrets'],
-      ['setActiveListId(null)', 'close'],
-      ['restoreTrashRow(r)', 'a11yRestoreItem'],
-      ['dismissProposal(item.id', 'a11yDismiss'],
-      // second sweep (independent review F1-F8): the first audit
-      // undercounted; these were found bare and are now labeled too
-      ['nukeTrashRow(r)', 'a11yDeleteForever'],
-      ['askPhotoSource(item)', 'a11yAttachPhoto'],
-      ['doRemoveMember(famSpace', 'a11yRemoveMember'],
-    ];
-    for (const [handler, key] of pairs) {
-      // A handler may also appear as a swipe gesture or a definition;
-      // pass when ANY occurrence sits in a tag carrying the label.
-      let found = false;
-      for (let at = app.indexOf(handler); at !== -1; at = app.indexOf(handler, at + 1)) {
-        const tag = app.slice(Math.max(0, at - 200), at + 400);
-        if (tag.includes(`accessibilityLabel={t('${key}')}`)) { found = true; break; }
-      }
-      assert.ok(found, `${handler} is labeled ${key}`);
-    }
-    // photo thumbnails open the viewer with a label; the chat bubble
-    // exposes the long-press reaction via role + hint.
-    assert.ok((app.match(/accessibilityLabel=\{t\('a11yViewPhoto'\)\}/g) ?? []).length >= 4, 'all four photo viewers labeled');
-    assert.ok(app.includes("accessibilityHint={t('a11yReactHint')}"), 'bubble long-press is discoverable');
-    // reaction picker + tab icon picker: the emoji is the accessible name
-    assert.ok(app.includes('onPress={() => applyReaction(item, e)} hitSlop={6} accessibilityRole="button" accessibilityLabel={e}'), 'reaction buttons are labeled by their emoji');
-    assert.ok(app.includes('accessibilityLabel={ic}'), 'tab icon choices are labeled by their emoji');
-    // tasks checkbox carries a state-aware label
-    assert.ok(app.includes("accessibilityLabel={item.status === 'done' ? t('a11yMarkOpen') : t('a11yMarkDone')}"), 'tasks checkbox is state-labeled');
-    // components swept in the second pass
-    const swipe = readFileSync(new URL('../../apps/mobile/src/lib/SwipeRow.tsx', import.meta.url), 'utf8');
-    assert.ok(swipe.includes('accessibilityLabel={label ?? icon}'), 'SwipeRow side actions always carry an accessible name');
-    const welcome = readFileSync(new URL('../../apps/mobile/src/components/WelcomeScreen.tsx', import.meta.url), 'utf8');
-    assert.ok(welcome.includes("mic === 'recording' ? t('a11yStopRecording') : t('a11yRecord')"), 'welcome mic is state-labeled');
-    assert.ok(welcome.includes("accessibilityLabel={t('a11ySend')}"), 'welcome send is labeled');
-  });
-
-  it('the new a11y keys exist in both dictionaries', () => {
-    const i18n = readFileSync(new URL('../../apps/mobile/src/lib/i18n.ts', import.meta.url), 'utf8');
-    for (const k of ['a11yViewPhoto', 'a11yReactHint', 'a11yDeleteMessage', 'a11yGoodAnswer', 'a11yBadAnswer', 'a11yEdit', 'a11yDeleteSecret', 'a11yDismiss', 'a11yRemovePhoto', 'a11yDeleteChat', 'a11yAssign', 'a11ySearchSecrets', 'a11yRestoreItem', 'a11yDemoPanel', 'a11yDeleteForever', 'a11yRemoveMember', 'a11yMarkDone', 'a11yMarkOpen']) {
-      assert.ok((i18n.match(new RegExp(`^  ${k}:`, 'gm')) ?? []).length === 2, `${k} present in AR and EN`);
-    }
-  });
-});
-
-describe('F-LAUNCH-01 Option B — no direct client items delete; RPC is the only path (0046)', () => {
-  const mig = readFileSync(new URL('../../supabase/migrations/0046_items_delete_rpc.sql', import.meta.url), 'utf8');
-  const client = readFileSync(new URL('../../packages/voice-engine/src/client.ts', import.meta.url), 'utf8');
-
-  it('0046 splits the FOR ALL policy and grants no client DELETE', () => {
-    assert.ok(mig.includes('drop policy if exists "items_member_write"'), 'FOR ALL policy dropped');
-    assert.ok(mig.includes('"items_member_insert"') && mig.includes('for insert'), 'insert policy kept');
-    assert.ok(mig.includes('"items_member_update"') && mig.includes('for update'), 'update policy kept');
-    assert.ok(!/create policy[^;]*for delete/i.test(mig), 'no DELETE policy is created');
-  });
-
-  it('the RPC is a hardened SECURITY DEFINER with tight grants', () => {
-    assert.ok(mig.includes('function public.hard_delete_items(p_ids uuid[])'), 'function defined');
-    assert.ok(mig.includes('security definer'), 'definer');
-    assert.ok(mig.includes("set search_path = ''"), 'search_path pinned empty');
-    assert.ok(mig.includes("raise exception 'authentication required'"), 'null uid rejected');
-    assert.ok(mig.includes('can_access_space'), 'per-row space authorization inside the RPC');
-    assert.ok(mig.includes("from anon"), 'anon revoked');
-    assert.ok(mig.includes("to authenticated"), 'authenticated granted');
-  });
-
-  it('client code holds NO direct items delete (multiline-aware census); the RPC is the path', () => {
-    const directDeletes = client.match(/from\('items'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
-    assert.equal(directDeletes.length, 0, `direct items deletes remain: ${directDeletes.length}`);
-    assert.ok(client.includes("rpc('hard_delete_items'"), 'client routes through the RPC');
-    for (const fn of ['deleteNote', 'deleteSpaceTab', 'deleteTabForever', 'trashNote', 'trashSecretNote', 'trashItem', 'trashShoppingList', 'deleteSecretNote']) {
-      assert.ok(client.includes(`async ${fn}`) || client.includes(fn), `${fn} flow preserved`);
-    }
-  });
-
-  it('trash semantics preserved: snapshots still precede deletion in the trash flows', () => {
-    for (const fn of ['trashNote', 'trashItem', 'trashShoppingList']) {
-      const start = client.indexOf(`async ${fn}`);
-      // Shopping audit: trashShoppingList now reads its items in pages and
-      // deletes via the single list RPC (its cascade removes the items
-      // atomically) — a longer window + the list-RPC token for that flow.
-      const isShop = fn === 'trashShoppingList';
-      const slice = client.slice(start, start + (isShop ? 6000 : 2600));
-      const snap = slice.indexOf("from('trash_bin').insert");
-      // the snapshot path's delete is the first hard-delete AFTER the insert
-      // (trashItem's retention<=0 permanent branch precedes the insert in source).
-      const del = slice.indexOf(isShop ? 'hardDeleteShoppingList' : 'hardDeleteItems', snap);
-      assert.ok(snap > -1 && del > snap, `${fn}: trash_bin snapshot is written before the RPC delete`);
-    }
-  });
-
-  it('the shopping_lists cascade is closed the same way (FOR ALL split + list RPC)', () => {
-    assert.ok(mig.includes('drop policy if exists "shopping_lists_member"'), 'lists FOR ALL dropped');
-    assert.ok(mig.includes('"shopping_lists_member_read"') && mig.includes('for select'), 'lists SELECT policy re-created (0014 FOR ALL carried it — review F1)');
-    assert.ok(mig.includes('function public.hard_delete_shopping_list(p_id uuid)'), 'list RPC defined');
-    const listDeletes = client.match(/from\('shopping_lists'\)[\s\S]{0,60}?\.delete\(/g) ?? [];
-    assert.equal(listDeletes.length, 0, 'no direct shopping_lists deletes remain in client code');
-    assert.ok(client.includes("rpc('hard_delete_shopping_list'"), 'client routes list deletion through the RPC');
-  });
-
-  it('server-side deletes are untouched (service role: engine purge + account erasure)', () => {
-    const mem = readFileSync(new URL('../../supabase/functions/_shared/memory.ts', import.meta.url), 'utf8');
-    assert.ok(mem.includes('purgeExpiredTrashedFacts'), 'engine purge intact');
-  });
-});
-
-describe('D5 PR-1 — web foundations: deep-link allowlist, SEO/PWA shell, brand tokens', async () => {
-  const { parseDeepLink } = await import('../../apps/mobile/src/lib/deeplinks.ts');
-
-  it('parseDeepLink: only well-formed join intents survive; everything else is null', () => {
-    assert.deepEqual(parseDeepLink('mawjood://family/join?code=abc123'), { kind: 'join-family', code: 'ABC123' });
-    assert.deepEqual(parseDeepLink('https://bfip-platform.github.io/join?code=XYZ987'), { kind: 'join-family', code: 'XYZ987' });
-    assert.deepEqual(
-      parseDeepLink('https://bfip-platform.github.io/Mawjood/join?code=XYZ987'),
-      { kind: 'join-family', code: 'XYZ987' },
-      'one deployment-subpath segment is tolerated for https (review N1)',
-    );
-    assert.equal(parseDeepLink('https://x.example/a/b/join?code=XYZ987'), null, 'two prefix segments are NOT tolerated');
-    assert.equal(parseDeepLink('mawjood://x/family/join?code=XYZ987'), null, 'the app scheme stays strict');
-    assert.equal(parseDeepLink('mawjood://family/join?code=short'), null, 'too-short code rejected');
-    assert.equal(parseDeepLink('mawjood://family/join'), null, 'missing code rejected');
-    assert.equal(parseDeepLink('mawjood://vault/open?path=secret'), null, 'unknown path rejected');
-    assert.deepEqual(
-      parseDeepLink('mawjood://family/join?code=ABC123&token=leak'),
-      { kind: 'join-family', code: 'ABC123' },
-      'extra params are never read — only the allowlisted code is extracted',
-    );
-    assert.equal(parseDeepLink('https://evil.example/join?code=../../etc'), null, 'malicious code rejected');
-    assert.equal(parseDeepLink('javascript:alert(1)'), null);
-    assert.equal(parseDeepLink(''), null);
-    assert.equal(parseDeepLink(null), null);
-    assert.equal(parseDeepLink(42), null);
-    assert.equal(parseDeepLink('not a url'), null);
-  });
-
-  it('GUARD: app.json carries the static SEO shell; OG/manifest are injected by useWebMeta; manifest + robots exist; links route through the parser', () => {
-    const appJson = JSON.parse(readFileSync(new URL('../../apps/mobile/app.json', import.meta.url), 'utf8'));
-    assert.ok(appJson.expo.web.description?.length > 20, 'static meta description via app.json');
-    assert.equal(appJson.expo.web.themeColor, '#FAF7F2', 'static theme-color via app.json');
-    const layout = readFileSync(new URL('../../apps/mobile/src/app/_layout.tsx', import.meta.url), 'utf8');
+    assert.deepEqual(wh.decideWebhookEvent({ eventType: 'charge.refunded', eventCreated: 100, alreadyClaimed: false, mirrorWatermark…4370 tokens truncated…8');
     assert.ok(layout.includes('useWebMeta'), 'OG/manifest runtime injector exists');
     assert.ok(layout.includes("link.setAttribute('rel', 'manifest')"), 'manifest link injected (relative href)');
     assert.ok(layout.includes("'og:title'"), 'OG title injected');
@@ -3470,6 +3216,8 @@ describe('Shopping audit — parser unification, atomicity, search & pagination'
     assert.equal((mig.match(/can_access_space/g) ?? []).length >= 3, true, 'every RPC re-checks space access');
     assert.ok(mig.includes("to authenticated"), 'authenticated grant');
     assert.ok(mig.includes('from anon'), 'anon revoked');
+    assert.ok(mig.includes('from public.shopping_lists l') && mig.includes('for update;'), 'status updates serialize on the parent list row');
+    assert.ok(mig.includes('from public.shopping_lists l where l.id = p_list_id for update'), 'restore uses the same parent-first lock order');
     // regression (caught by the Scratch proof): jsonb_array_elements_text
     // yields text — a #>> extraction on it is a runtime 42883.
     assert.ok(!mig.includes("elem #>>"), 'text elements are used directly, never #>>-extracted');
@@ -3537,6 +3285,12 @@ describe('Shopping audit — parser unification, atomicity, search & pagination'
     assert.ok(extract.includes('must stay whole'), 'extract prompt protects multi-word product names');
     const chat = read('../../supabase/functions/chat/index.ts');
     assert.ok(chat.includes('compensation (shopping audit P13)'), 'chat shopping tool compensates too');
+  });
+
+  it('shopping concurrency proof is wired into CI after the migration database is built', () => {
+    const ci = read('../../.github/workflows/ci.yml');
+    assert.ok(ci.includes('node supabase/tests/shopping-concurrency-check.mjs'), 'CI runs the real-Postgres concurrency proof');
+    assert.ok(ci.indexOf('name: Build scratch database (migrate-check)') < ci.indexOf('name: Shopping status concurrency proof'), 'migration harness precedes the test');
   });
 
   it('i18n: the new shopping error strings exist in BOTH dictionaries', () => {

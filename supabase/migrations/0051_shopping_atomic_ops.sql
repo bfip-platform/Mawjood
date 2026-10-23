@@ -109,6 +109,8 @@ declare
   v_uid uuid := auth.uid();
   v_space uuid;
   v_list uuid;
+  v_locked_list uuid;
+  v_locked_space uuid;
   v_has_open boolean;
   v_existing_completed timestamptz;
 begin
@@ -125,6 +127,33 @@ begin
   end if;
   if not public.can_access_space(v_space) then
     raise exception 'not authorized for this item' using errcode = '42501';
+  end if;
+
+  -- Serialize every mutation for a list before touching its item. Locking
+  -- only the item is insufficient: two members can update different items
+  -- simultaneously, both observe the other as open, and both leave the
+  -- list open after the final two items are resolved. Keep one lock order
+  -- (list, then item) shared with restore_shopping_list to avoid deadlocks.
+  if v_list is not null then
+    select l.id, l.space_id into v_locked_list, v_locked_space
+    from public.shopping_lists l
+    where l.id = v_list
+    for update;
+    if v_locked_list is null then
+      raise exception 'shopping list not found' using errcode = 'P0002';
+    end if;
+    if v_locked_space <> v_space then
+      raise exception 'shopping item changed lists during update' using errcode = '40001';
+    end if;
+  end if;
+
+  -- Lock the item after its parent list. This also makes the loose-item
+  -- path safe, where there is no parent row to serialize on.
+  perform 1 from public.items i
+  where i.id = p_item_id and i.space_id = v_space and i.list_id is not distinct from v_list
+  for update;
+  if not found then
+    raise exception 'shopping item changed during update' using errcode = '40001';
   end if;
 
   update public.items
@@ -183,7 +212,7 @@ begin
   if v_uid is null then
     raise exception 'authentication required' using errcode = '42501';
   end if;
-  select l.space_id into v_space from public.shopping_lists l where l.id = p_list_id;
+  select l.space_id into v_space from public.shopping_lists l where l.id = p_list_id for update;
   if v_space is null then
     raise exception 'list not found' using errcode = 'P0002';
   end if;

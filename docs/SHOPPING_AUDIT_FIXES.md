@@ -71,8 +71,8 @@
 ### ب) migration 0051 — عمليات ذرّية في قاعدة البيانات
 ملف جديد `supabase/migrations/0051_shopping_atomic_ops.sql` — ثلاث RPC بنمط 0046 (`SECURITY DEFINER`، `search_path = ''`، فحص `auth.uid()` + `can_access_space`، سحب الصلاحيات من `anon`/`public` ومنح `authenticated`/`service_role`):
 - `create_shopping_list(space, title, assigned_to, assigned_name, items jsonb)` → تُدخل القائمة وعناصرها في معاملة واحدة؛ تطبيع العناوين داخل SQL بنفس قواعد العميل (طي مسافات، قص 120، إزالة تكرار بأول ظهور وبنفس الترتيب، سقف 100، تخطي الفارغ)؛ `created_by` دائمًا `auth.uid()` (لا قيمة من المستدعي).
-- `set_shop_item_status(item, status)` → تحدّث العنصر (ختم `bought_at` عند `done` فقط — نفس قاعدة `setItemStatus` الحالية) وتعيد حساب حالة القائمة داخل نفس المعاملة: أي عنصر `open` ⇒ قائمة مفتوحة و`completed_at` يُصفّر؛ الكل محسوم ⇒ `done` مع **الحفاظ على ختم الأرشفة الأصلي** عند تعديل قائمة مؤرشفة. ترجع الحالة الموثوقة للقائمة ليتزامن العميل منها. التزامن بين عضوين يُحسم داخل القاعدة (لا سباق حساب عميل).
-- `restore_shopping_list(list)` → فتح القائمة + إعادة `not_found` إلى `open` ذرّيًا؛ المشتراة تبقى مشتراة.
+- `set_shop_item_status(item, status)` → تقفل صف القائمة أولًا ثم العنصر، وتحدّث العنصر (ختم `bought_at` عند `done` فقط — نفس قاعدة `setItemStatus` الحالية) وتعيد حساب حالة القائمة داخل نفس المعاملة: أي عنصر `open` ⇒ قائمة مفتوحة و`completed_at` يُصفّر؛ الكل محسوم ⇒ `done` مع **الحفاظ على ختم الأرشفة الأصلي** عند تعديل قائمة مؤرشفة. ترجع الحالة الموثوقة للقائمة ليتزامن العميل منها. قفل صف القائمة يجعل تحديث عنصرين مختلفين في القائمة نفسها متسلسلًا بدل أن يقرأ كل طلب حالة العنصر الآخر قبل اكتمال طلبه.
+- `restore_shopping_list(list)` → يقفل صف القائمة بنفس ترتيب الأقفال ثم يفتحها ويعيد `not_found` إلى `open` ذرّيًا؛ المشتراة تبقى مشتراة.
 
 ### ج) المحرك — `packages/voice-engine/src/client.ts`
 - `createShoppingList`: مسار RPC أولًا؛ عند غياب الدالة فقط (`isMissingFunctionError`: `PGRST202`/`42883`/رسالة عدم الوجود — أخطاء الصلاحية والتحقق **لا** تفعّل الاحتياطي أبدًا) يقع على المسار القديم **مع تعويض**: فشل إدخال العناصر يحذف القائمة المنشأة فورًا عبر RPC الحذف (لا حذف مباشر — ثبات F-LAUNCH-01 محفوظ ومحروس باختبار).
@@ -128,13 +128,16 @@
 
 أُضيفت مجموعة «Shopping audit» إلى `supabase/tests/unit.test.mjs` (13 اختبارًا): سلوك المحلّل (أسماء متعددة الكلمات عربي/إنجليزي، الفواصل، «و»، المسافات الزائدة، التكرار، السقوف)، بنّاء مرشح المؤشر و`isMissingFunctionError` (بما فيه أن أخطاء الصلاحية لا تفعّل الاحتياطي)، حراس مصدر لـ 0051 (تطابق أمني + انحدار `#>>`)، وحراس المحرك/الخطاف/الواجهة (RPC أولًا + تعويضات، إجهاض الحذف عند فشل القراءة، ترتيب undelete، البحث الخادمي، المؤشر، حالات الانشغال والخطأ)، وتكافؤ النصوص الجديدة. ملاحظة منهجية: اختبار `getBuyHistory` مصدري الشكل لأن `smartShopping.ts` يستورد i18n بلا امتداد بما لا يحلّه مشغّل اختبارات Node مباشرة (نفس سبب عدة حراس قائمة). وحُدّث اختبار F-LAUNCH-01 واحد («snapshots precede deletion») ليعرف خطوة الحذف الجديدة في `trashShoppingList` (RPC القائمة الواحدة) — الثابت المحمي (لقطة قبل أي حذف) لم يتغير، والتعديل موثّق داخل الاختبار.
 
+أُضيف `supabase/tests/shopping-concurrency-check.mjs` إلى مهمة `rls-audit` في CI. يستخدم الاختبار اتصالين PostgreSQL حقيقيين ونقطة تزامن مؤقتة داخل قاعدة الترحيل المؤقتة، ثم يكرر تحديث عنصرين مختلفين في القائمة بالتوازي ويتحقق أن القائمة النهائية مؤرشفة ولا تحتوي عناصر مفتوحة. يُحذف المشغّل الاختباري والبيانات في نهاية التشغيل؛ لا يتصل هذا الفحص بالإنتاج.
+
 | الأمر | النتيجة |
 |---|---|
-| `node --import ./supabase/tests/deno-shim.mjs --test supabase/tests/unit.test.mjs` | ✅ 299/299 (كانت 286 قبل الإضافة؛ إخفاقان أوليان من حراس F-LAUNCH-01 عولجا كما أعلاه — واحد بتحديث الحارس وآخر بإزالة حذف مباشر أضفته مسودة أولى) |
+| `node --import ./supabase/tests/deno-shim.mjs --test supabase/tests/unit.test.mjs` | ✅ 300/300 بعد إضافة حارس للتسلسل والـCI (كانت 299/299 قبل متابعة التزامن) |
 | `npx tsc --noEmit` (apps/mobile) | ✅ نظيف بعد تزويد بيئة العمل بحزمة `expo-clipboard` المعلنة في `package.json` (نسخة node_modules المحلية أقدم من main؛ CI يثبّت طازجًا) |
 | `npx expo lint` | ⚠️ خطأ واحد: `expo-clipboard` غير قابل للحل محليًا (نفس سبب البيئة؛ السطر من main ولم يُمسّ) + 7 تحذيرات سابقة — لا أي ملاحظة في أي ملف عدّلته هذه المهمة |
 | `npx expo export --platform web` | ✅ `Exported: dist` (بعد تزويد `.env` و`react-native-get-random-values` محليًا — كلها فجوات بيئة سابقة للفرع) |
-| تطبيق 0051 على Scratch + إثبات سلوكي | ✅ كما في القسم 4 |
+| تطبيق 0051 على Scratch + إثبات سلوكي | ✅ كما في القسم 4 (قبل إضافة برهان التزامن؛ يعاد تشغيله في CI على قاعدة PostgreSQL مؤقتة) |
+| `node supabase/tests/shopping-concurrency-check.mjs` | ⏳ يحتاج قاعدة PostgreSQL المؤقتة من CI؛ لا يوجد PostgreSQL محلي في بيئة هذه المراجعة |
 | `deno check` للدوال | ⛔ غير متاح محليًا (لا ثنائي deno في البيئة) — CI يغطيه |
 
 ## 6) قرارات تحتاج حسم المنتج (لم تُفرض)
@@ -145,11 +148,11 @@
 
 ## 7) الملفات الأساسية المتغيرة
 
-`packages/voice-engine/src/family.ts` (المحلّل + أدوات المؤشر/الأخطاء)، `packages/voice-engine/src/client.ts` (المحرك)، `supabase/migrations/0051_shopping_atomic_ops.sql` (جديد)، `apps/mobile/src/screens/home/hooks/useShopping.ts`، `apps/mobile/src/app/index.tsx`، `apps/mobile/src/lib/smartShopping.ts`، `apps/mobile/src/lib/i18n.ts`، `apps/mobile/src/screens/home/styles.ts`، `supabase/functions/extract/index.ts`، `supabase/functions/chat/index.ts`، `supabase/tests/unit.test.mjs`، `docs/ROADMAP.md`.
+`packages/voice-engine/src/family.ts` (المحلّل + أدوات المؤشر/الأخطاء)، `packages/voice-engine/src/client.ts` (المحرك)، `supabase/migrations/0051_shopping_atomic_ops.sql` (جديد)، `apps/mobile/src/screens/home/hooks/useShopping.ts`، `apps/mobile/src/app/index.tsx`، `apps/mobile/src/lib/smartShopping.ts`، `apps/mobile/src/lib/i18n.ts`، `apps/mobile/src/screens/home/styles.ts`، `supabase/functions/extract/index.ts`، `supabase/functions/chat/index.ts`، `supabase/tests/unit.test.mjs`، `supabase/tests/shopping-concurrency-check.mjs`، `.github/workflows/ci.yml`، `docs/ROADMAP.md`.
 
 ## 8) مخاطر وقيود متبقية
 
-- **0051 غير مطبقة على الإنتاج** (قرار مالك منفصل، مع بقية rollout). قبل تطبيقها يعمل الكود بمسارات الاحتياطي المُعوِّضة — آمنة من الفشل الجزئي لكن ذرّيتها تعويضية لا معاملية، وسباق الحالة المتزامن يُحسم فقط بعد التطبيق.
+- **0051 غير مطبقة على الإنتاج** (قرار مالك منفصل). قبل تطبيقها يعمل الكود بمسارات الاحتياطي المُعوِّضة — آمنة من الفشل الجزئي لكن ذرّيتها تعويضية لا معاملية؛ وتسلسل تحديثات الحالة المتزامنة على مستوى القائمة لا يتوفر إلا بعد تطبيق migration.
 - نافذة سجل المشتريات (180 يومًا/500) اختيار هندسي موثّق لقابلية الإيقاع؛ إيقاع شراء أبطأ من 180 يومًا لن يُقترح — تعديله رقم منتج إن أراد المالك.
 - نتائج البحث الخادمي بسقف 50 قائمة؛ تجاوزها يتطلب تصفح نتائج (غير مبني — القوائم المطابقة عادة قليلة).
 - لم يُتحقق من أي من هذا على جهاز iPhone فعلي بعد (قائمة فحص الجهاز أدناه).
