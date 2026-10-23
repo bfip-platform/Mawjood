@@ -4839,6 +4839,7 @@ export default function HomeScreen() {
             <Pressable accessible={false} style={styles.tabMenuBackdrop} onPress={() => { setTabMenuId(null); setTabMoveFor(null); }} />
             {menuTab && <View style={[styles.modalCard, { alignItems: 'stretch' }]}>
             <Text style={styles.modalTitle}>{menuTab.icon} {menuTab.title}</Text>
+            <View style={styles.tabMenuOptions}>
             <Pressable
               onPress={() => {
                 setEditingTab(menuTab);
@@ -4858,7 +4859,7 @@ export default function HomeScreen() {
               <Text style={styles.tabMenuText}>📦 {t('moveToSpace')}</Text>
             </Pressable>
             {tabMoveFor === menuTab.id && (
-              <View>
+              <View style={styles.tabMenuSubOptions}>
                 {spaces
                   .filter((s) => s.id !== menuTab.space_id && s.owner_id === userId)
                   .map((s) => (
@@ -4880,6 +4881,7 @@ export default function HomeScreen() {
             >
               <Text style={styles.tabMenuText}>🗑️ {t('deleteTab')}</Text>
             </Pressable>
+            </View>
             <Pressable onPress={() => { setTabMenuId(null); setTabMoveFor(null); }} style={[styles.famLink, { marginTop: 8 }]}><Text style={styles.famLinkText}>{t('cancel')}</Text></Pressable>
             </View>}
           </View>
@@ -6210,28 +6212,27 @@ export default function HomeScreen() {
             </Text>
             {!delTabPickTarget ? (
               <>
-                <Pressable
-                  onPress={() => setDelTabPickTarget(true)}
-                  style={[styles.modalBtn, { marginTop: 4 }]}
-                >
-                  <Text style={styles.modalBtnText}>
-                  📁 {t('moveToSpace')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => delTab && void runDeleteTab(delTab.id, { trashDays: trashRetention })}
-                  style={[styles.modalBtn, { marginTop: 8, backgroundColor: P.danger }]}
-                >
-                  <Text style={styles.modalBtnText}>
-                    {t('delTabDelete')}
-                    {'\n'}
-                    <Text style={{ fontWeight: '400', fontSize: 12 }}>
+                <View style={styles.deleteTabActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setDelTabPickTarget(true)}
+                    style={styles.deleteTabActionButton}
+                  >
+                    <Text style={styles.deleteTabMoveText}>📁 {t('moveToSpace')}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => delTab && void runDeleteTab(delTab.id, { trashDays: trashRetention })}
+                    style={styles.deleteTabDangerButton}
+                  >
+                    <Text style={styles.deleteTabDangerTitle}>{t('delTabDelete')}</Text>
+                    <Text style={styles.deleteTabDangerHint}>
                       {trashRetention > 0
                         ? tx('delTabTrashHint', { days: String(trashRetention) })
                         : t('delTabForeverHint')}
                     </Text>
-                  </Text>
-                </Pressable>
+                  </Pressable>
+                </View>
                 <Pressable onPress={() => setDelTab(null)} style={[styles.famLink, { marginTop: 12 }]}>
                   <Text style={styles.famLinkText}>{t('cancel')}</Text>
                 </Pressable>
