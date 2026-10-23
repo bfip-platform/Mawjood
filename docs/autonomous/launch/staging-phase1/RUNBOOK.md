@@ -81,9 +81,11 @@ G6's API/harness rows are independent of G4/G7 (see R-URL).
    new spaces only** — its expected spaces delta is recorded in G5 and
    replaces the invariant from that point, with `items`/`notes`
    baselines still frozen outside fixture spaces).
-3. Any row appears in `ai_spend_daily` attributable to a fixture user
-   during G6, or the table's row count changes at all before the paid
-   phase.
+3. Any row appears in `ai_spend_daily` attributable to a gate-BLOCKED
+   fixture user (T4/T5 class) during G6, or any ledger row that is not
+   fully explained by a deliberate gate-passing probe (corrected
+   2026-10-13 — designed charge-before-attempt reservations from
+   gate-passing probes are expected; see G6 row (i)).
 4. Any cross-space read or write succeeds in G6(c)/(f)/(g).
 5. The secrets list (G0/G2 postchecks) shows any unexpected name — in
    particular `AI_SPEND_CAP_OFF` or any provider key before G2b.
@@ -802,16 +804,36 @@ select count(*) from public.ai_events
                      -- seam attempts, where logged, show the
                      -- zero-key failure
 
--- THE zero-spend proof
-select count(*) from public.ai_spend_daily
- where user_id in (<fixture user ids>);                          -- 0
-select count(*) from public.ai_spend_daily;  -- equals the G0 baseline
+-- THE zero-spend proof (CORRECTED 2026-10-13 after the first live
+-- G6 execution — see the execution note below)
+select user_id, spent_usd from public.ai_spend_daily
+ where user_id in (<fixture user ids>);
+-- expect: rows ONLY for gate-PASSING fixture users (T1 class), each
+-- equal to the designed charge-before-attempt reservation for the
+-- probe's model attempts. Rows for gate-BLOCKED users (T4/T5 class)
+-- or any unexplained row = FAIL.
+select count(*) from public.ai_spend_daily;  -- baseline + explained
+                                             -- probe reservations
 ```
 RPC outcomes from (f)/(g) are reconstructable from the execution log
 + before/after row state (the RPCs write no ops rows of their own —
 stated so nobody goes looking for them).
-**PASS** = gate rows present, zero successful provider calls, ledger
-untouched. **Any ledger row = global stop condition 3.**
+**PASS** = gate rows present, zero successful provider calls, and the
+ledger carrying ONLY designed reservations from gate-passing probes.
+
+> **Execution note (2026-10-13, first live G6):** the original wording
+> ("ledger untouched; any ledger row = stop") was WRONG against the
+> shipped design and is corrected here. `chargeModelCall` charges the
+> measured bound BEFORE the provider attempt (that ordering is what
+> makes the cap race-proof), so an adult fixture's deliberate chat
+> probe legitimately leaves a reservation row even when the provider
+> call then fails — in the live run: exactly one row, T1, $0.086669,
+> covering that probe's attempts. Actual provider spend was $0.00,
+> proven independently: no provider keys exist on scratch, so no
+> provider could bill anything. The zero-spend proof is therefore
+> "zero successful provider calls + zero provider billing + ledger
+> rows fully explained by gate-passing probes" — never "ledger
+> empty".
 
 **G6 overall PASS** = every row PASS (with row (a)'s G4 sub-row
 allowed as BLOCKED-BY-G4 and T6 as recorded-substitution, both
