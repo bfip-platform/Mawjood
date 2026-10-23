@@ -261,7 +261,12 @@ async function toolCreateShoppingList(supa: Supa, userId: string, spaceByType: R
     space_id, kind: 'shopping', title, status: 'open', created_by: userId, list_id: (list as { id: string }).id,
   }));
   const { error: insErr } = await supa.from('items').insert(rows);
-  if (insErr) return { error: insErr.message };
+  if (insErr) {
+    // compensation (shopping audit P13): remove the just-created list
+    // (its items cascade) so the failure leaves no orphan empty list.
+    await supa.from('shopping_lists').delete().eq('id', (list as { id: string }).id);
+    return { error: insErr.message };
+  }
   return { list_id: (list as { id: string }).id, count: fresh.length, title };
 }
 

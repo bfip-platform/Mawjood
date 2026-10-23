@@ -1,5 +1,7 @@
 // Phase 3 — family pillar helpers.
 // "سارة: اشتري خبز" → { name: 'سارة', task: 'اشتري خبز' }
+// (Deliberately import-free: this module is loaded standalone by the
+// unit-test runner and the edge functions' import graph.)
 
 const ASSIGN_RE = /^([\p{L}][\p{L} .]{1,20}?)\s*[:：]\s*(.+)$/u;
 const NON_NAME_START = /^(الساعة|ساعة|الوقت|وقت|اليوم|بكرا|غدا)\b/;
@@ -43,22 +45,71 @@ export function parseDirectedShopping(text: string): { name: string; itemsRaw: s
 }
 
 /**
- * Split "تفاح، خيار وبندورة" / "تفاح خيار بندورة" into item titles.
- * Explicit separators (، , و) first; bare words as a last resort —
- * in a spoken grocery list "جيب تفاح خيار بندورة" almost always
- * means three items, and a wrong split only costs an extra checkbox.
+ * Shopping item titles: the ONE parsing rule for typed/pasted shopping
+ * input, shared by the new-list modal and the chat directed-shopping
+ * intercept (audit SHOPPING_AUDIT_FIXES.md, P1).
+ *
+ * Separators are ONLY newlines and commas (، , ؛ ;) — the same rule the
+ * new-list field's placeholder has always promised ("افصل بفاصلة أو
+ * سطر جديد"). A chunk is ONE item, however many words it has:
+ * "صابون إيدين" and "حليب خالي الدسم" stay single items. Spaces never
+ * split, and و never splits either — "تفاح وخيار" typed without a
+ * comma is one item named "تفاح وخيار", exactly as written; the old
+ * split-on-every-space behavior (which also stripped a leading و off
+ * words, corrupting e.g. "ورق عنب") is gone.
  */
-export function splitShoppingItems(raw: string): string[] {
+export const MAX_SHOPPING_ITEMS = 100;
+export const MAX_SHOPPING_ITEM_CHARS = 120;
+
+/** De-dupe + cap an already-split title list (first occurrence wins). */
+export function cleanShoppingItemTitles(titles: string[]): string[] {
+  const seen = new Set<string>();
   const out: string[] = [];
-  for (const chunk of raw.split(/[،,]/)) {
-    for (const part of chunk.split(/\s+و\s+/)) {
-      for (const w of part.trim().split(/\s+/)) {
-        const word = w.replace(/^و/, '').trim();
-        if (word) out.push(word);
-      }
-    }
+  for (const raw of titles) {
+    // code-point slice, mirroring nameLimits.clampNameLength (kept local
+    // so this module stays import-free — see the header note)
+    const clean = raw.replace(/\s+/g, ' ').trim();
+    const title = Array.from(clean).slice(0, MAX_SHOPPING_ITEM_CHARS).join('');
+    if (!title) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(title);
+    if (out.length >= MAX_SHOPPING_ITEMS) break;
   }
   return out;
+}
+
+/** Split raw shopping input into item titles per the rule above. */
+export function splitShoppingItems(raw: string): string[] {
+  const chunks = raw
+    .split(/[\n\r،,؛;]+/)
+    .map((c) => c.replace(/^\s*[-•*·]\s+/, '')); // pasted-list bullet markers
+  return cleanShoppingItemTitles(chunks);
+}
+
+/**
+ * PostgREST or-filter for keyset (cursor) pagination over shopping
+ * lists in (created_at desc, id desc) order: rows strictly after the
+ * cursor row. Stable under creates/deletes between page loads, unlike
+ * offset paging (audit P9).
+ */
+export function shoppingListCursorFilter(before: { createdAt: string; id: string }): string {
+  return `created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`;
+}
+
+/**
+ * True when an RPC call failed only because the function does not exist
+ * yet (migration not applied on this environment). Gates the engine's
+ * legacy fallbacks: permission and validation errors must NEVER fall
+ * back — they are real answers from the database.
+ */
+export function isMissingFunctionError(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } | null;
+  if (!e) return false;
+  if (e.code === 'PGRST202' || e.code === '42883') return true;
+  const text = [e.message, e.details, e.hint].filter((v) => typeof v === 'string').join(' ');
+  return /could not find the function|function .* does not exist/i.test(text);
 }
 
 /** Arabic-name normalization for member matching (أ/إ/آ→ا, ة→ه, ى→ي). */

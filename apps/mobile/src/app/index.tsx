@@ -819,10 +819,11 @@ export default function HomeScreen() {
     activeListId, setActiveListId,
     newListOpen, setNewListOpen, newListTitle, setNewListTitle,
     newListItems, setNewListItems, newListAssignee, setNewListAssignee,
+    createBusy, createError, openNewList,
     archOpenId, setArchOpenId, assignFor, setAssignFor, assignName, setAssignName,
     shopRefreshing, setShopRefreshing,
     setShopItemStatus, deleteShopList, shareShoppingList, restoreShopList, createManualList,
-  } = useShopping({ userId, viewSpace, trashRetention, familyMembers, displayName, userEmail, showUndo });
+  } = useShopping({ userId, viewSpace, trashRetention, familyMembers, displayName, userEmail, showUndo, showToast });
 
   const setLastAnswer = useCallback((item: Item | null) => {
     lastAnswerItemRef.current = item;
@@ -995,12 +996,30 @@ export default function HomeScreen() {
   const [shopListsMoreError, setShopListsMoreError] = useState<LoadFailure | null>(null);
   const shopListsLoadedRef = useRef(0);
   const shopListsMoreBusyRef = useRef(false);
+  // Shopping audit P16: which space the on-screen lists belong to + a
+  // first-load flag, so switching spaces never flashes the previous
+  // space's lists (or a false "no lists" empty state) while loading.
+  const shopListsSpaceRef = useRef<string | null>(null);
+  const [shopListsLoading, setShopListsLoading] = useState(false);
   const refreshFamily = useCallback(async (spaceId: string) => {
-    // loose items only — list items live under their list. Bounded: a
-    // stalled fetch must not wedge the tab's pull-to-refresh forever.
-    const loose = await boundedLoad(engine.listShopping(spaceId, { limit: 100 }), 15_000);
+    // Space switch: the on-screen lists belong to another space — clear
+    // them and show the loading state rather than flashing that space's
+    // data (or a false empty state) while this space loads (audit P16).
+    const switched = shopListsSpaceRef.current !== spaceId;
+    if (switched) {
+      shopListsSpaceRef.current = spaceId;
+      setShopLists([]);
+      setShopListsError(null);
+      setShopListsLoading(true);
+    }
+    // loose items only — filtered SERVER-side (list_id IS NULL): the old
+    // fetch took the newest 100 shopping items including listed ones and
+    // filtered here, so loose items could fall out of the window and
+    // never be adopted (audit P11). Bounded: a stalled fetch must not
+    // wedge the tab's pull-to-refresh forever.
+    const loose = await boundedLoad(engine.listLooseShoppingItems(spaceId, { limit: 100 }), 15_000);
     if (loose.status === 'ok') {
-      setShopping(loose.value.filter((i) => !i.list_id));
+      setShopping(loose.value);
     } else {
       reportTelemetry('list-load', `shopping-loose-${loose.status}`);
     }
@@ -1009,26 +1028,36 @@ export default function HomeScreen() {
       engine.listShoppingLists(spaceId, { offset: 0, limit: SHOP_LISTS_PAGE }),
       15_000,
     );
+    if (shopListsSpaceRef.current !== spaceId) return; // a newer space load superseded this one
+    setShopListsLoading(false);
     if (res.status === 'ok') {
       shopListsLoadedRef.current = res.value.length;
       setShopListsHasMore(res.value.length === SHOP_LISTS_PAGE);
       setShopLists(res.value);
       setShopListsError(null);
     } else {
-      // keep any lists already on screen; the tab shows a retryable error
+      // keep any lists already on screen (same space); the tab shows a
+      // retryable error
       setShopListsError(res.status);
       reportTelemetry('list-load', `shopping-refresh-${res.status}`);
     }
   }, [setShopping, setShopLists]);
 
-  /** CFP-01 item 6: append the next page of shopping lists (dedupe by id). */
+  /**
+   * Append the next page of shopping lists (dedupe by id). Keyset cursor
+   * (audit P9): the cursor is the oldest loaded list's (created_at, id),
+   * so lists created or deleted while browsing cannot shift the window
+   * and silently skip a list the way offset paging did.
+   */
   const loadMoreShopLists = useCallback(async () => {
     if (!viewSpace || shopListsMoreBusyRef.current || !shopListsHasMore) return;
+    const last = shopLists[shopLists.length - 1];
+    if (!last) return;
     shopListsMoreBusyRef.current = true;
     setShopListsMoreError(null);
     const res = await boundedLoad(
       engine.listShoppingLists(viewSpace.id, {
-        offset: shopListsLoadedRef.current,
+        before: { createdAt: last.created_at, id: last.id },
         limit: SHOP_LISTS_PAGE,
       }),
       15_000,
@@ -1048,7 +1077,7 @@ export default function HomeScreen() {
       reportTelemetry('list-load', `shopping-more-${res.status}`);
     }
     shopListsMoreBusyRef.current = false;
-  }, [viewSpace, shopListsHasMore, setShopLists]);
+  }, [viewSpace, shopListsHasMore, shopLists, setShopLists]);
 
   const onRefreshShopping = useCallback(async () => {
     if (!viewSpace) return;
@@ -2502,6 +2531,8 @@ export default function HomeScreen() {
         setUpcoming([]);
         setShopping([]);
         setShopLists([]);
+        shopListsSpaceRef.current = null;
+        setShopListsLoading(false);
         // Spaces & Family UX: in-memory strip prefs belong to the signed-out
         // user too (the stored copies are keyed by their uid and reload for
         // the next account at boot).
@@ -5753,7 +5784,10 @@ export default function HomeScreen() {
                   }}
                 />
               ) : null}
-              {activeLists.length === 0 && archivedLists.length === 0 && !shopListsError ? (
+              {shopListsLoading && activeLists.length === 0 && archivedLists.length === 0 && !shopSearch.inSearch ? (
+                <ActivityIndicator size="large" color={P.accent} style={{ marginTop: 32 }} />
+              ) : null}
+              {activeLists.length === 0 && archivedLists.length === 0 && !shopListsError && !shopListsLoading ? (
                 shopSearch.inSearch ? (
                   <Text style={styles.muted}>{t('noResults')}</Text>
                 ) : (
@@ -5775,6 +5809,7 @@ export default function HomeScreen() {
                       <Pressable
                         onPress={() => deleteShopList(l.id)}
                         hitSlop={10}
+                        accessibilityRole="button"
                         accessibilityLabel={t('deleteList')}
                       >
                         <Text style={styles.shopListDel}>🗑️</Text>
@@ -5795,7 +5830,7 @@ export default function HomeScreen() {
                   </SwipeRow>
                 );
               })}
-              <Pressable onPress={() => setNewListOpen(true)} style={styles.newListBtn}>
+              <Pressable onPress={openNewList} style={styles.newListBtn} accessibilityRole="button">
                 <Text style={styles.newListText}>＋ {t('newList')}</Text>
               </Pressable>
               {/* ── archive / history ── */}
@@ -5857,6 +5892,7 @@ export default function HomeScreen() {
                           <Pressable
                             onPress={() => deleteShopList(l.id)}
                             hitSlop={10}
+                            accessibilityRole="button"
                             accessibilityLabel={t('deleteList')}
                           >
                             <Text style={styles.shopListDel}>🗑️</Text>
@@ -6986,12 +7022,19 @@ export default function HomeScreen() {
               placeholderTextColor={P.faint}
               style={[styles.fieldInput, styles.modalInputMulti, { textAlign: ta(), alignSelf: 'stretch', width: '100%' }]}
               multiline
+              editable={!createBusy}
             />
+            {createError ? (
+              <Text style={styles.modalError} accessibilityRole="alert">
+                {createError}
+              </Text>
+            ) : null}
             </ScrollView>
             <View style={styles.modalBtns}>
               <Pressable
                 onPress={() => setNewListOpen(false)}
                 style={[styles.modalBtn, styles.modalBtnGhost]}
+                disabled={createBusy}
               >
                 <Text style={styles.modalBtnGhostText}>{t('cancel')}</Text>
               </Pressable>
@@ -6999,11 +7042,13 @@ export default function HomeScreen() {
                 onPress={createManualList}
                 style={[
                   styles.modalBtn,
-                  splitShoppingItems(newListItems).length === 0 && styles.modalBtnDisabled,
+                  (createBusy || splitShoppingItems(newListItems).length === 0) && styles.modalBtnDisabled,
                 ]}
-                disabled={splitShoppingItems(newListItems).length === 0}
+                disabled={createBusy || splitShoppingItems(newListItems).length === 0}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: createBusy || splitShoppingItems(newListItems).length === 0, busy: createBusy }}
               >
-                <Text style={styles.modalBtnText}>{t('create')}</Text>
+                <Text style={styles.modalBtnText}>{createBusy ? t('shopSaving') : t('create')}</Text>
               </Pressable>
             </View>
           </View>
