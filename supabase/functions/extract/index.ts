@@ -35,7 +35,7 @@ Return ONLY valid JSON: {"items":[{"kind":"task|appointment|shopping|place|spec|
 Kinds:
 - task: something to do (no specific date/time)
 - appointment: a meeting or event with a date/time → set due_at. Today is ${today}; resolve relative days like "tomorrow" against it. Assume timezone America/New_York unless stated.
-- shopping: things to buy → title is ONLY the item name, no verb: "حليب" not "شراء حليب", "milk" not "Buy milk". Split compounds into separate items: "almonds and bananas" → two items.
+- shopping: things to buy → title is ONLY the item name, no verb: "حليب" not "شراء حليب", "milk" not "Buy milk". Split a compound ONLY when it joins two clearly distinct products: "almonds and bananas" → two items. A multi-word product name is ONE item and must stay whole: "حليب خالي الدسم" (skim milk), "صابون إيدين" (hand soap), "ورق عنب" (grape leaves), "dish soap", "olive oil" → one item each. When in doubt, keep the name whole.
 - place: where something was put or left ("I put the keys in the kitchen drawer")
 - thing: something BOUGHT or OWNED ("I bought a screwdriver", "اشتريت مفك للبيت") → title is ONLY the item name ("مفك" not "اشتريت مفك"); put where it is in details ("في درج المطبخ", "at home"); put the price in "price" ("50 دولار", "$50") or null if not mentioned.
 - spec: a specification or measurement worth remembering (filter size, model number, phone number) → put the value in details
@@ -363,7 +363,15 @@ Deno.serve(async (req) => {
             .select('id')
             .single();
           if (listErr) throw listErr;
-          await insertRows(shopRows.map((r) => ({ ...r, list_id: list.id })));
+          try {
+            await insertRows(shopRows.map((r) => ({ ...r, list_id: list.id })));
+          } catch (insErr) {
+            // compensation (audit P13): the list insert already landed —
+            // remove it (its items cascade) so a failed extraction never
+            // leaves an orphan empty shopping list behind.
+            await supabase.from('shopping_lists').delete().eq('id', list.id);
+            throw insErr;
+          }
         }
       }
     }
