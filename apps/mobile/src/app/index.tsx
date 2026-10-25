@@ -6959,8 +6959,12 @@ export default function HomeScreen() {
                   <Pressable
                     onPress={() => setActiveListId(null)}
                     style={[styles.modalBtn, styles.shopDoneBtn]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('shoppingDone')}
                   >
-                    <Text style={styles.modalBtnText}>{t('shoppingDone')}</Text>
+                    <Text style={styles.shopDoneText} numberOfLines={1}>
+                      {t('shoppingDone')}
+                    </Text>
                   </Pressable>
                 </>
               );
