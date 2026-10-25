@@ -7,12 +7,15 @@
 // data shaping and formatting. Nothing here touches storage except
 // through the structural SmartShoppingClient.
 
-import type { ShoppingList } from '@mawjood/voice-engine';
+import type { Item, ShoppingList } from '@mawjood/voice-engine';
 import { getLang, t, tx } from './i18n';
 
 /** Minimal client surface smart shopping needs — structural typing. */
 export interface SmartShoppingClient {
-  listShoppingLists(spaceId: string): Promise<ShoppingList[]>;
+  listBoughtItems(
+    spaceId: string,
+    opts?: { sinceDays?: number; limit?: number },
+  ): Promise<Item[]>;
   createShoppingList(input: {
     spaceId: string;
     title: string;
@@ -123,21 +126,25 @@ export function getSuggestions(rhythms: BuyRhythm[]): BuyRhythm[] {
     .sort((a, b) => b.overdueBy - a.overdueBy);
 }
 
-/** All bought items (status done + bought_at) in a space, newest last. */
+/**
+ * Bought items (status done + bought_at) in a space, newest last.
+ * Bounded (audit P10): the engine query hits the items table directly
+ * with a 180-day / 500-row window — rhythm detection needs recent
+ * repeats, not the space's entire history. The old implementation
+ * fetched EVERY list with ALL its items and filtered client-side.
+ */
 export async function getBuyHistory(
   client: SmartShoppingClient,
   spaceId: string,
 ): Promise<{ name: string; at: string }[]> {
-  const lists = await client.listShoppingLists(spaceId).catch(() => []);
+  const bought = await client
+    .listBoughtItems(spaceId, { sinceDays: 180, limit: 500 })
+    .catch(() => [] as Item[]);
   const out: { name: string; at: string }[] = [];
-  for (const l of lists ?? []) {
-    for (const it of l.items ?? []) {
-      if (it.status === 'done' && it.bought_at) {
-        out.push({ name: it.title, at: it.bought_at });
-      }
-    }
+  for (const it of bought) {
+    if (it.bought_at) out.push({ name: it.title, at: it.bought_at });
   }
-  return out;
+  return out.reverse(); // engine returns newest first; callers expect oldest → newest
 }
 
 // ── formatting ──────────────────────────────────────────────────────

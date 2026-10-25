@@ -2015,11 +2015,15 @@ describe('F-LAUNCH-01 Option B — no direct client items delete; RPC is the onl
   it('trash semantics preserved: snapshots still precede deletion in the trash flows', () => {
     for (const fn of ['trashNote', 'trashItem', 'trashShoppingList']) {
       const start = client.indexOf(`async ${fn}`);
-      const slice = client.slice(start, start + 2600);
+      // Shopping audit: trashShoppingList now reads its items in pages and
+      // deletes via the single list RPC (its cascade removes the items
+      // atomically) — a longer window + the list-RPC token for that flow.
+      const isShop = fn === 'trashShoppingList';
+      const slice = client.slice(start, start + (isShop ? 6000 : 2600));
       const snap = slice.indexOf("from('trash_bin').insert");
-      // the snapshot path's delete is the first hardDeleteItems AFTER the insert
+      // the snapshot path's delete is the first hard-delete AFTER the insert
       // (trashItem's retention<=0 permanent branch precedes the insert in source).
-      const del = slice.indexOf('hardDeleteItems', snap);
+      const del = slice.indexOf(isShop ? 'hardDeleteShoppingList' : 'hardDeleteItems', snap);
       assert.ok(snap > -1 && del > snap, `${fn}: trash_bin snapshot is written before the RPC delete`);
     }
   });
@@ -3403,5 +3407,150 @@ describe('Privacy, Localization and Daily Utility wave — due states, filters, 
     assert.ok(!pkg.includes('expo-local-authentication'), 'no native auth dependency sneaked in via JS-only changes');
     const idx = read('../../apps/mobile/src/app/index.tsx');
     assert.ok(!idx.includes('local-authentication'), 'the app never imports a biometric API it cannot ship via OTA');
+  });
+});
+
+describe('Shopping audit — parser unification, atomicity, search & pagination', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('parser: multi-word item names stay ONE item (AR + EN)', async () => {
+    const { splitShoppingItems } = await import('../../packages/voice-engine/src/family.ts');
+    assert.deepEqual(splitShoppingItems('صابون إيدين، حليب خالي الدسم'), ['صابون إيدين', 'حليب خالي الدسم']);
+    assert.deepEqual(splitShoppingItems('dish soap, olive oil\npaper towels'), ['dish soap', 'olive oil', 'paper towels']);
+    assert.deepEqual(splitShoppingItems('ورق عنب'), ['ورق عنب'], 'a leading و is part of the name, never stripped');
+  });
+
+  it('parser: separators are newline + commas only — never spaces, never و', async () => {
+    const { splitShoppingItems } = await import('../../packages/voice-engine/src/family.ts');
+    assert.deepEqual(splitShoppingItems('تفاح وخيار'), ['تفاح وخيار'], 'و does not split');
+    assert.deepEqual(splitShoppingItems('تفاح خيار بندورة'), ['تفاح خيار بندورة'], 'spaces do not split');
+    assert.deepEqual(
+      splitShoppingItems('حليب، خبز, بيض؛ جبن; زيت\nسكر'),
+      ['حليب', 'خبز', 'بيض', 'جبن', 'زيت', 'سكر'],
+      'all comma forms + newline split',
+    );
+  });
+
+  it('parser: whitespace collapsed, bullets stripped, empties dropped, duplicates removed', async () => {
+    const { splitShoppingItems, cleanShoppingItemTitles } = await import('../../packages/voice-engine/src/family.ts');
+    assert.deepEqual(splitShoppingItems('  حليب   خالي  الدسم  ،\n- خبز\n• حليب خالي الدسم'), ['حليب خالي الدسم', 'خبز']);
+    assert.deepEqual(splitShoppingItems('Milk, milk, MILK'), ['Milk'], 'case-insensitive de-dupe, first wins');
+    assert.deepEqual(splitShoppingItems('،, \n '), []);
+    assert.deepEqual(cleanShoppingItemTitles([' a  b ', '', 'A B', 'c']), ['a b', 'c']);
+  });
+
+  it('parser: caps — at most 100 items, titles capped at 120 chars', async () => {
+    const { splitShoppingItems, MAX_SHOPPING_ITEMS, MAX_SHOPPING_ITEM_CHARS } = await import('../../packages/voice-engine/src/family.ts');
+    const many = Array.from({ length: 130 }, (_, i) => `عنصر ${i}`).join('،');
+    assert.equal(splitShoppingItems(many).length, MAX_SHOPPING_ITEMS);
+    const long = splitShoppingItems('x'.repeat(200));
+    assert.equal(long.length, 1);
+    assert.equal([...long[0]].length, MAX_SHOPPING_ITEM_CHARS);
+  });
+
+  it('cursor filter: strict (created_at, id) keyset in desc order', async () => {
+    const { shoppingListCursorFilter, isMissingFunctionError } = await import('../../packages/voice-engine/src/family.ts');
+    assert.equal(
+      shoppingListCursorFilter({ createdAt: '2026-10-01T10:00:00.000Z', id: 'abc' }),
+      'created_at.lt.2026-10-01T10:00:00.000Z,and(created_at.eq.2026-10-01T10:00:00.000Z,id.lt.abc)',
+    );
+    assert.equal(isMissingFunctionError({ code: 'PGRST202' }), true);
+    assert.equal(isMissingFunctionError({ code: '42883' }), true);
+    assert.equal(isMissingFunctionError({ message: 'Could not find the function public.x in the schema cache' }), true);
+    assert.equal(isMissingFunctionError({ code: '42501', message: 'not authorized' }), false, 'permission errors never trigger a fallback');
+    assert.equal(isMissingFunctionError(null), false);
+  });
+
+  it('migration 0051: three atomic RPCs, definer-hardened, access-checked', () => {
+    const mig = read('../../supabase/migrations/0051_shopping_atomic_ops.sql');
+    for (const fn of ['create_shopping_list', 'set_shop_item_status', 'restore_shopping_list']) {
+      assert.ok(mig.includes(`function public.${fn}`), `${fn} defined`);
+    }
+    assert.equal((mig.match(/security definer/g) ?? []).length, 3, 'all three are SECURITY DEFINER');
+    assert.equal((mig.match(/can_access_space/g) ?? []).length >= 3, true, 'every RPC re-checks space access');
+    assert.ok(mig.includes("to authenticated"), 'authenticated grant');
+    assert.ok(mig.includes('from anon'), 'anon revoked');
+    assert.ok(mig.includes('from public.shopping_lists l') && mig.includes('for update;'), 'status updates serialize on the parent list row');
+    assert.ok(mig.includes('from public.shopping_lists l where l.id = p_list_id for update'), 'restore uses the same parent-first lock order');
+    // regression (caught by the Scratch proof): jsonb_array_elements_text
+    // yields text — a #>> extraction on it is a runtime 42883.
+    assert.ok(!mig.includes("elem #>>"), 'text elements are used directly, never #>>-extracted');
+  });
+
+  it('engine: RPC-first with compensated fallbacks; trash aborts on failed reads', () => {
+    const client = read('../../packages/voice-engine/src/client.ts');
+    assert.ok(client.includes("rpc('create_shopping_list'"), 'atomic create preferred');
+    assert.ok(client.includes("rpc('set_shop_item_status'"), 'atomic status preferred');
+    assert.ok(client.includes("rpc('restore_shopping_list'"), 'atomic restore preferred');
+    assert.ok(client.includes('isMissingFunctionError(rpcErr)'), 'fallback only when the function is absent');
+    assert.ok(client.includes('deleteCreatedShoppingList(listId)'), 'legacy create compensates on items failure');
+    const trash = client.slice(client.indexOf('async trashShoppingList'), client.indexOf('async undelete'));
+    assert.ok(trash.includes('if (listErr) throw listErr'), 'a failed list read aborts the delete');
+    assert.ok(trash.includes('if (pageErr) throw pageErr'), 'a failed items page aborts the delete');
+    assert.ok(!trash.includes('items ?? []'), 'no silent empty snapshot');
+    const un = client.slice(client.indexOf('async undelete'), client.indexOf('async trashChat'));
+    assert.ok(un.indexOf("from(table).insert(row)") < un.indexOf("from('trash_bin').delete()"), 'undelete inserts before dropping the trash copy');
+  });
+
+  it('engine: server search, loose filter, bounded history, cursor paging', () => {
+    const client = read('../../packages/voice-engine/src/client.ts');
+    assert.ok(client.includes('async searchShoppingLists'), 'whole-space list search exists');
+    assert.ok(client.includes(".is('list_id', null)"), 'loose items filtered server-side');
+    assert.ok(client.includes('async listBoughtItems') && client.includes(".gte('bought_at', since)"), 'purchase history is windowed');
+    assert.ok(client.includes('shoppingListCursorFilter(opts.before)'), 'list paging honors the cursor');
+  });
+
+  it('buy history: the smart-shopping layer consumes the bounded query', () => {
+    // (source-level: smartShopping imports the app i18n extensionlessly,
+    // which the node test loader cannot resolve — same reason several
+    // app-lib behaviors are guard-tested in this suite)
+    const smart = read('../../apps/mobile/src/lib/smartShopping.ts');
+    assert.ok(smart.includes('listBoughtItems(spaceId, { sinceDays: 180, limit: 500 })'), 'one bounded engine call with the documented window');
+    assert.ok(!smart.includes('listShoppingLists('), 'the unbounded all-lists fetch is gone');
+    assert.ok(smart.includes('out.reverse()'), 'newest-first engine rows are returned oldest → newest for rhythm analysis');
+  });
+
+  it('hook: server search, busy-guarded create with kept inputs, visible failures', () => {
+    const hook = read('../../apps/mobile/src/screens/home/hooks/useShopping.ts');
+    assert.ok(hook.includes('engine.searchShoppingLists'), 'tab search hits the server');
+    assert.ok(hook.includes('createBusyRef'), 'double-submit guard');
+    assert.ok(hook.includes("setCreateError(t('shopCreateFailed'))"), 'create failure is inline + retryable');
+    assert.ok(hook.includes("showToast(t('shopDeleteFailed'))"), 'delete failure is shown and the list restored');
+    assert.ok(hook.includes("showToast(t('shopStatusFailed'))"), 'status failure is shown');
+    assert.ok(hook.includes("showToast(t('shopRestoreFailed'))"), 'restore failure is shown');
+    assert.ok(hook.includes('if (ok) adoptedRef.current = sid'), 'adoption marked only after full success');
+    assert.ok(hook.includes('AbortError'), 'share-sheet cancel is not treated as failure');
+  });
+
+  it('app: cursor load-more, loading gate, modal busy state, delete a11y roles', () => {
+    const idx = read('../../apps/mobile/src/app/index.tsx');
+    assert.ok(idx.includes('before: { createdAt: last.created_at, id: last.id }'), 'load-more pages by cursor');
+    assert.ok(idx.includes('engine.listLooseShoppingItems'), 'loose fetch is server-filtered');
+    assert.ok(idx.includes('shopListsLoading'), 'first-load state exists');
+    assert.ok(idx.includes('!shopListsLoading'), 'empty state is gated on loading');
+    assert.ok(idx.includes('createError') && idx.includes("t('shopSaving')"), 'modal shows the error + saving state');
+    const delRoles = idx.match(/onPress=\{\(\) => deleteShopList\(l\.id\)\}\s+hitSlop=\{10\}\s+accessibilityRole="button"/g) ?? [];
+    assert.equal(delRoles.length, 2, 'both list delete buttons carry a button role');
+  });
+
+  it('server paths: extract + chat tool compensate a failed items insert; prompt keeps multi-word names', () => {
+    const extract = read('../../supabase/functions/extract/index.ts');
+    assert.ok(extract.includes("from('shopping_lists').delete().eq('id', list.id)"), 'extract removes the orphan list on failure');
+    assert.ok(extract.includes('must stay whole'), 'extract prompt protects multi-word product names');
+    const chat = read('../../supabase/functions/chat/index.ts');
+    assert.ok(chat.includes('compensation (shopping audit P13)'), 'chat shopping tool compensates too');
+  });
+
+  it('shopping concurrency proof is wired into CI after the migration database is built', () => {
+    const ci = read('../../.github/workflows/ci.yml');
+    assert.ok(ci.includes('node supabase/tests/shopping-concurrency-check.mjs'), 'CI runs the real-Postgres concurrency proof');
+    assert.ok(ci.indexOf('name: Build scratch database (migrate-check)') < ci.indexOf('name: Shopping status concurrency proof'), 'migration harness precedes the test');
+  });
+
+  it('i18n: the new shopping error strings exist in BOTH dictionaries', () => {
+    const i18n = read('../../apps/mobile/src/lib/i18n.ts');
+    for (const k of ['shopCreateFailed', 'shopDeleteFailed', 'shopStatusFailed', 'shopRestoreFailed', 'shopSaving']) {
+      assert.equal((i18n.match(new RegExp(`${k}:`, 'g')) ?? []).length, 2, `${k} in AR + EN`);
+    }
   });
 });

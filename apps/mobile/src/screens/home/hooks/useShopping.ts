@@ -19,6 +19,7 @@ export interface UseShoppingArgs {
   displayName: string | null;
   userEmail: string | null;
   showUndo: (msg: string, run: () => void) => void;
+  showToast: (msg: string) => void;
 }
 
 export function useShopping({
@@ -29,19 +30,33 @@ export function useShopping({
   displayName,
   userEmail,
   showUndo,
+  showToast,
 }: UseShoppingArgs) {
   const [shopping, setShopping] = useState<Item[]>([]);
   const [shopLists, setShopLists] = useState<ShoppingList[]>([]); // directed lists ("يا جون جيب…")
 
+  // Server-side search (audit P8): the old client-side filter only saw
+  // the lists already loaded on screen (10), so older lists were
+  // unfindable. The engine searches the whole space; if that call fails
+  // we fall back to filtering what is loaded rather than showing
+  // a false "no results".
   const shopSearch = useTabSearch<ShoppingList>({
-    items: shopLists,
-    filter: (ls, q) =>
-      ls.filter(
-        (l) =>
-          l.title.toLowerCase().includes(q) ||
-          (l.assigned_name ?? '').toLowerCase().includes(q) ||
-          l.items.some((i) => i.title.toLowerCase().includes(q)),
-      ),
+    search: async (q) => {
+      const sid = viewSpace?.id;
+      if (!sid) return [];
+      try {
+        return await engine.searchShoppingLists(sid, q);
+      } catch (e) {
+        console.warn('shop server search failed — local fallback', e);
+        const needle = q.toLowerCase();
+        return shopLists.filter(
+          (l) =>
+            l.title.toLowerCase().includes(needle) ||
+            (l.assigned_name ?? '').toLowerCase().includes(needle) ||
+            l.items.some((i) => i.title.toLowerCase().includes(needle)),
+        );
+      }
+    },
   });
 
   const [activeListId, setActiveListId] = useState<string | null>(null); // shopping-mode modal
@@ -51,6 +66,9 @@ export function useShopping({
   const [newListTitle, setNewListTitle] = useState('');
   const [newListItems, setNewListItems] = useState('');
   const [newListAssignee, setNewListAssignee] = useState<string | null>(null);
+  const [createBusy, setCreateBusy] = useState(false); // save in flight — button disabled, modal stays open
+  const [createError, setCreateError] = useState<string | null>(null); // inline, retryable
+  const createBusyRef = useRef(false); // double-submit guard (state alone races on fast double-taps)
   const [archOpenId, setArchOpenId] = useState<string | null>(null); // expanded archived list
   const [assignFor, setAssignFor] = useState<string | null>(null);
   const [assignName, setAssignName] = useState('');
@@ -83,26 +101,44 @@ export function useShopping({
         ),
       );
       try {
-        await engine.setItemStatus(item.id, status);
-        await engine.setShoppingListStatus(listId, listStatus, completedAt);
+        // ONE engine operation (audit P4): the RPC recomputes the list's
+        // archive state in the same transaction; sync the list fields
+        // from its authoritative result — a concurrent toggle by another
+        // member may have landed first and changed the outcome.
+        const res = await engine.setShopItemStatus(item.id, status);
+        if (res.listId === listId && res.listStatus) {
+          setShopLists((prev) =>
+            prev.map((l) =>
+              l.id === listId
+                ? { ...l, status: res.listStatus as 'open' | 'done', completed_at: res.completedAt }
+                : l,
+            ),
+          );
+        }
       } catch (e) {
         console.warn('setShopItemStatus failed', e);
-        // roll back the optimistic update (e.g. migration 0015 not run yet)
+        // full rollback — items, status AND completed_at — plus a
+        // visible error; the old code restored neither completed_at nor
+        // told the user anything.
         setShopLists((prev) =>
           prev.map((l) =>
-            l.id === listId ? { ...l, items: list.items, status: list.status } : l,
+            l.id === listId
+              ? { ...l, items: list.items, status: list.status, completed_at: list.completed_at }
+              : l,
           ),
         );
+        showToast(t('shopStatusFailed'));
       }
     },
-    [shopLists],
+    [shopLists, showToast],
   );
 
   /** Delete a shopping list → trash (Plus) or permanent (free). Single tap: trash is the safety net. */
   const deleteShopList = useCallback(
     async (listId: string) => {
       if (!userId) return;
-      const snap = shopLists.find((l) => l.id === listId);
+      const idx = shopLists.findIndex((l) => l.id === listId);
+      const snap = idx >= 0 ? shopLists[idx] : undefined;
       setShopLists((prev) => prev.filter((l) => l.id !== listId));
       if (activeListId === listId) setActiveListId(null);
       try {
@@ -118,14 +154,31 @@ export function useShopping({
                 snap as unknown as Record<string, unknown>,
                 (snap.items ?? []) as unknown as Record<string, unknown>[],
               )
-              .catch((e) => console.warn('undelete failed', e));
+              .catch((e) => {
+                console.warn('undelete failed', e);
+                // the restore did not land — take the row back off the
+                // screen and say so, instead of showing a ghost list.
+                setShopLists((prev) => prev.filter((l) => l.id !== snap.id));
+                showToast(t('shopRestoreFailed'));
+              });
           });
         }
       } catch (e) {
         console.warn('trashShoppingList failed', e);
+        // the delete did NOT happen (engine aborts when the snapshot
+        // reads fail) — put the list back where it was and tell the
+        // user; the old code left it vanished from the screen only.
+        if (snap) {
+          setShopLists((prev) =>
+            prev.some((l) => l.id === snap.id)
+              ? prev
+              : [...prev.slice(0, idx), snap, ...prev.slice(idx)],
+          );
+        }
+        showToast(t('shopDeleteFailed'));
       }
     },
-    [userId, trashRetention, activeListId, shopLists, showUndo],
+    [userId, trashRetention, activeListId, shopLists, showUndo, showToast],
   );
 
   /** share a shopping list as text: native share sheet on web (iOS share
@@ -139,13 +192,21 @@ export function useShopping({
     );
     const text = `${t('shareListHead')}: ${list.title}\n${lines.join('\n')}`;
     const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { share?: (d: { text: string }) => Promise<void> }) : undefined;
+    const waFallback = () =>
+      void Linking.openURL(`https://wa.me/?text=${encodeURIComponent(text)}`).catch(() =>
+        console.warn('share failed'),
+      );
     if (nav?.share) {
-      nav.share({ text }).catch(() => console.warn('share failed'));
+      nav.share({ text }).catch((e) => {
+        // user cancelling the share sheet is not a failure; anything
+        // else falls back to WhatsApp instead of dying silently.
+        if ((e as { name?: string } | null)?.name === 'AbortError') return;
+        console.warn('share failed — wa.me fallback', e);
+        waFallback();
+      });
       return;
     }
-    void Linking.openURL(`https://wa.me/?text=${encodeURIComponent(text)}`).catch(() =>
-      console.warn('share failed'),
-    );
+    waFallback();
   }, []);
 
   /** Restore an archived list to live: not_found items reopen, bought stay bought. */
@@ -166,18 +227,28 @@ export function useShopping({
         await engine.restoreShoppingList(listId);
       } catch (e) {
         console.warn('restoreShoppingList failed', e);
-        // roll back the optimistic update
+        // roll back the optimistic update and tell the user
         setShopLists((prev) =>
           prev.map((l) => (l.id === listId ? { ...list, status: 'done' as const } : l)),
         );
+        showToast(t('shopRestoreFailed'));
       }
     },
-    [shopLists, archOpenId],
+    [shopLists, archOpenId, showToast],
   );
 
   const [shopRefreshing, setShopRefreshing] = useState(false);
 
+  /**
+   * Create from the manual modal (audit P3). The modal now stays OPEN
+   * while saving: inputs are cleared only after the save succeeds, a
+   * failure keeps everything typed and shows a retryable inline error,
+   * and a busy guard blocks double-submits. The assignee notification
+   * still fires only after the list exists, and its failure stays
+   * isolated from the creation result.
+   */
   const createManualList = useCallback(async () => {
+    if (createBusyRef.current) return;
     const items = splitShoppingItems(newListItems);
     const sid = viewSpace?.id;
     if (items.length === 0 || !sid || !userId) return;
@@ -186,10 +257,9 @@ export function useShopping({
     const title =
       newListTitle.trim() ||
       (assigneeName ? tx('shopListTitle', { name: assigneeName }) : t('shopListGenericTitle'));
-    setNewListOpen(false);
-    setNewListTitle('');
-    setNewListItems('');
-    setNewListAssignee(null);
+    createBusyRef.current = true;
+    setCreateBusy(true);
+    setCreateError(null);
     try {
       const list = await engine.createShoppingList({
         spaceId: sid,
@@ -200,6 +270,10 @@ export function useShopping({
         userId,
       });
       setShopLists((prev) => [list, ...prev]);
+      setNewListOpen(false);
+      setNewListTitle('');
+      setNewListItems('');
+      setNewListAssignee(null);
       if (member?.user_id) {
         const speaker = displayName ?? userEmail ?? '';
         engine
@@ -212,17 +286,33 @@ export function useShopping({
       }
     } catch (e) {
       console.warn('createManualList failed', e);
+      setCreateError(t('shopCreateFailed'));
+    } finally {
+      createBusyRef.current = false;
+      setCreateBusy(false);
     }
   }, [newListItems, newListTitle, newListAssignee, viewSpace, userId, familyMembers, displayName, userEmail]);
+
+  /** Open the creator with a clean error slate. */
+  const openNewList = useCallback(() => {
+    setCreateError(null);
+    setNewListOpen(true);
+  }, []);
 
   /**
    * Transition helper: sweep any loose shopping items (created before the
    * list-only change, or by the old extract fn before its redeploy) into one
-   * unassigned list so nothing stays invisible.
+   * unassigned list so nothing stays invisible. Failure-safe (audit P12):
+   * if attaching fails, the just-created empty list is removed again and
+   * the sweep stays retryable — the old code left the orphan behind and
+   * marked the space as adopted, so it never retried.
+   * Returns true only when the sweep fully landed.
    */
+  const adoptBusyRef = useRef(false);
   const adoptLooseShopping = useCallback(
-    async (spaceId: string, loose: Item[]) => {
-      if (loose.length === 0 || !userId) return;
+    async (spaceId: string, loose: Item[]): Promise<boolean> => {
+      if (loose.length === 0 || !userId) return false;
+      let createdId: string | null = null;
       try {
         const list = await engine.createShoppingList({
           spaceId,
@@ -232,30 +322,42 @@ export function useShopping({
           items: [],
           userId,
         });
+        createdId = list.id;
         await engine.attachItemsToList(
           loose.map((i) => i.id),
           list.id,
         );
         setShopping([]);
-        const withItems = await engine.listShoppingLists(spaceId);
+        // first page only — same page size as the tab's loader
+        // (SHOP_LISTS_PAGE in index.tsx), so pagination state stays sane.
+        const withItems = await engine.listShoppingLists(spaceId, { offset: 0, limit: 10 });
         setShopLists(withItems);
+        return true;
       } catch (e) {
         console.warn('adoptLooseShopping failed', e);
+        if (createdId) {
+          await engine.deleteShoppingList(createdId).catch(() => {});
+        }
+        return false;
       }
     },
     [userId],
   );
 
   // list-only shopping: sweep stray loose items into one unassigned list
-  // (once per space — covers items made before this change)
+  // (once per space — covers items made before this change; a failed
+  // sweep does NOT mark the space, so a later load retries it)
   useEffect(() => {
     adoptedRef.current = null;
   }, [viewSpace?.id]);
   useEffect(() => {
     const sid = viewSpace?.id;
-    if (!sid || shopping.length === 0 || adoptedRef.current) return;
-    adoptedRef.current = sid;
-    void adoptLooseShopping(sid, shopping);
+    if (!sid || shopping.length === 0 || adoptedRef.current === sid || adoptBusyRef.current) return;
+    adoptBusyRef.current = true;
+    void adoptLooseShopping(sid, shopping).then((ok) => {
+      adoptBusyRef.current = false;
+      if (ok) adoptedRef.current = sid;
+    });
   }, [viewSpace?.id, shopping, adoptLooseShopping]);
 
   return {
@@ -274,6 +376,9 @@ export function useShopping({
     setNewListItems,
     newListAssignee,
     setNewListAssignee,
+    createBusy,
+    createError,
+    openNewList,
     archOpenId,
     setArchOpenId,
     assignFor,

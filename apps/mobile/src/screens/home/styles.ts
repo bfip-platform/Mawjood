@@ -1222,6 +1222,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
   modalBtnGhostText: { color: P.ink, fontSize: 15, fontWeight: '600' },
   modalBtnDisabled: { opacity: 0.4 },
   modalLabel: { fontSize: 13, fontWeight: '700', color: P.text3, marginTop: 12, marginBottom: 6 },
+  modalError: { fontSize: 13, fontWeight: '600', color: P.danger, marginTop: 10, lineHeight: 19 },
   modalInputMulti: { minHeight: 90, maxHeight: 180, width: '100%', alignSelf: 'stretch', textAlignVertical: 'top' },
   modalBtns: { flexDirection: 'row', gap: 10, marginTop: 16 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

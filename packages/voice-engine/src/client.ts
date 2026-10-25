@@ -6,6 +6,11 @@ import { OfflineSync, isQueueableError, listCacheKey, type KVStore } from './off
 import { rankByRelevance } from './rank';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { assertNameLength, NAME_LIMITS } from './nameLimits';
+import {
+  cleanShoppingItemTitles,
+  isMissingFunctionError,
+  shoppingListCursorFilter,
+} from './family';
 
 /**
  * Shrink a photo before upload: max 1280px wide, JPEG q70. A 4MB phone photo
@@ -49,7 +54,18 @@ export interface PageOpts {
   offset?: number;
   /** status filter — honored by listTasks only (Daily Utility wave) */
   status?: 'open' | 'done';
+  /**
+   * Stable keyset cursor — honored by listShoppingLists. Points at the
+   * last row of the previous page in (created_at desc, id desc) order;
+   * unlike offset, rows created or deleted mid-browsing cannot shift it.
+   */
+  before?: { createdAt: string; id: string };
 }
+
+/** PostgREST or-filter implementing the PageOpts.before cursor.
+ *  (Implemented in family.ts — the import-free pure module — and
+ *  re-exported here; see shoppingListCursorFilter there.) */
+export { isMissingFunctionError, shoppingListCursorFilter } from './family';
 
 /** Apply limit/offset to a Supabase query builder (offset>0 uses range()). */
 function applyPage<Q>(q: Q, opts: PageOpts | undefined, defLimit: number): Q {
@@ -365,6 +381,17 @@ export class VoiceEngine {
   private async hardDeleteShoppingList(listId: string): Promise<void> {
     const { error } = await this.supabase.rpc('hard_delete_shopping_list', { p_id: listId });
     if (error) throw error;
+  }
+
+  /**
+   * Compensation delete for a list THIS client just created/restored in a
+   * multi-step flow whose later step failed. Routes through the 0046 RPC
+   * like every other list deletion — F-LAUNCH-01's invariant (no direct
+   * client deletes on shopping_lists, guard-tested) is absolute, so
+   * there is deliberately no direct-delete fallback here.
+   */
+  private async deleteCreatedShoppingList(listId: string): Promise<void> {
+    await this.hardDeleteShoppingList(listId);
   }
 
   /** Permanent-delete every item extracted from the given note(s). */
@@ -1011,9 +1038,68 @@ export class VoiceEngine {
     return data as Item[];
   }
 
+  /**
+   * Loose shopping items only (list_id IS NULL), filtered SERVER-side.
+   * The shopping tab's adoption sweep used to take the newest 100
+   * shopping items — listed ones included — and filter client-side, so
+   * in a busy space genuinely loose items could fall out of the window
+   * and stay invisible forever (audit P11).
+   */
+  async listLooseShoppingItems(spaceId: string, opts?: PageOpts): Promise<Item[]> {
+    const { data, error } = await applyPage(
+      this.supabase
+        .from('items')
+        .select('*')
+        .eq('space_id', spaceId)
+        .eq('kind', 'shopping')
+        .is('list_id', null)
+        .order('status', { ascending: false }) // 'open' > 'done' → open first
+        .order('created_at', { ascending: false }),
+      opts,
+      100,
+    );
+    if (error) throw error;
+    return data as Item[];
+  }
+
+  /**
+   * Bounded purchase history for rhythm/suggestion analysis (audit P10):
+   * bought shopping items inside a time window, newest first. Replaces
+   * the old pattern of fetching EVERY list with ALL its items just to
+   * filter for status='done' + bought_at on the client.
+   */
+  async listBoughtItems(
+    spaceId: string,
+    opts?: { sinceDays?: number; limit?: number },
+  ): Promise<Item[]> {
+    const days = Math.min(Math.max(opts?.sinceDays ?? 180, 1), 3650);
+    const limit = Math.min(Math.max(opts?.limit ?? 500, 1), 1000);
+    const since = new Date(Date.now() - days * 86400_000).toISOString();
+    const { data, error } = await this.supabase
+      .from('items')
+      .select('*')
+      .eq('space_id', spaceId)
+      .eq('kind', 'shopping')
+      .eq('status', 'done')
+      .not('bought_at', 'is', null)
+      .gte('bought_at', since)
+      .order('bought_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data as Item[];
+  }
+
   // ── directed shopping lists ("يا جون جيب تفاح…") ──
 
-  /** Create a list + its items in one go. */
+  /**
+   * Create a list + its items in one go (audit P2). Preferred path is
+   * the atomic create_shopping_list RPC (migration 0051): one
+   * transaction, server-side access check and title normalization. On
+   * environments where 0051 is not applied yet, the legacy two-insert
+   * path runs WITH COMPENSATION — if the items insert fails, the
+   * just-created list is deleted again, so a partial failure can never
+   * leave an orphan empty/partial list behind.
+   */
   async createShoppingList(input: {
     spaceId: string;
     title: string;
@@ -1023,6 +1109,29 @@ export class VoiceEngine {
     userId?: string;
   }): Promise<ShoppingList> {
     const cleanTitle = assertNameLength(input.title, NAME_LIMITS.shoppingList, 'Shopping list name');
+    const cleanItems = cleanShoppingItemTitles(input.items);
+    const { data: rpcList, error: rpcErr } = await this.supabase
+      .rpc('create_shopping_list', {
+        p_space_id: input.spaceId,
+        p_title: cleanTitle,
+        p_assigned_to: input.assignedTo,
+        p_assigned_name: input.assignedName,
+        p_items: cleanItems,
+      })
+      .single();
+    if (!rpcErr && rpcList) {
+      const list = rpcList as Omit<ShoppingList, 'items'>;
+      const { data: items, error: iErr } = await this.supabase
+        .from('items')
+        .select('*')
+        .eq('list_id', list.id)
+        .order('created_at', { ascending: true });
+      if (iErr) throw iErr;
+      return { ...list, items: (items ?? []) as Item[] };
+    }
+    if (rpcErr && !isMissingFunctionError(rpcErr)) throw rpcErr;
+
+    // Legacy fallback (0051 not applied on this environment yet).
     const { data: list, error: lErr } = await this.supabase
       .from('shopping_lists')
       .insert({
@@ -1035,11 +1144,15 @@ export class VoiceEngine {
       .select()
       .single();
     if (lErr) throw lErr;
-    const rows = input.items.map((title) => ({
+    const listId = (list as { id: string }).id;
+    if (cleanItems.length === 0) {
+      return { ...(list as Omit<ShoppingList, 'items'>), items: [] };
+    }
+    const rows = cleanItems.map((title) => ({
       space_id: input.spaceId,
       kind: 'shopping',
       title,
-      list_id: (list as { id: string }).id,
+      list_id: listId,
       assigned_to: input.assignedName,
       created_by: input.userId ?? null,
     }));
@@ -1047,7 +1160,15 @@ export class VoiceEngine {
       .from('items')
       .insert(rows)
       .select();
-    if (iErr) throw iErr;
+    if (iErr) {
+      // compensation: never leave a partial list behind
+      await this.deleteCreatedShoppingList(listId).catch((cleanupErr) => {
+        throw new Error(
+          `createShoppingList: items insert failed (${(iErr as { message?: string }).message ?? 'unknown'}) and cleanup of list ${listId} also failed (${(cleanupErr as { message?: string }).message ?? 'unknown'})`,
+        );
+      });
+      throw iErr;
+    }
     return { ...(list as Omit<ShoppingList, 'items'>), items: (items ?? []) as Item[] };
   }
 
@@ -1068,14 +1189,151 @@ export class VoiceEngine {
       .order('id', { ascending: false });
     if (opts) {
       const limit = Math.min(Math.max(opts.limit ?? 10, 1), 200);
-      const offset = Math.max(opts.offset ?? 0, 0);
-      q = offset > 0 ? q.range(offset, offset + limit - 1) : q.limit(limit);
+      if (opts.before) {
+        // keyset cursor (audit P9): stable under creates/deletes between
+        // page loads — offset pages shift and silently skip lists.
+        q = q.or(shoppingListCursorFilter(opts.before)).limit(limit);
+      } else {
+        const offset = Math.max(opts.offset ?? 0, 0);
+        q = offset > 0 ? q.range(offset, offset + limit - 1) : q.limit(limit);
+      }
     }
     const { data, error } = await q;
     if (error) throw error;
     return ((data ?? []) as (Omit<ShoppingList, 'items'> & { items: Item[] | null })[]).map(
       (l) => ({ ...l, items: (l.items ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at)) }),
     );
+  }
+
+  /**
+   * Server-side shopping-list search across the WHOLE space (audit P8) —
+   * the tab used to filter only the lists already loaded on screen, so
+   * older lists were unfindable. Matches the list title, the assignee
+   * name, or any item title inside the list. Returns at most 50 lists
+   * with their items, newest first.
+   */
+  async searchShoppingLists(spaceId: string, query: string): Promise<ShoppingList[]> {
+    const q = this.sanitizeQuery(query);
+    if (!q) return [];
+    const pattern = `%${q}%`;
+    const byHead = this.supabase
+      .from('shopping_lists')
+      .select('*, items(*)')
+      .eq('space_id', spaceId)
+      .or(`title.ilike.${pattern},assigned_name.ilike.${pattern}`)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(50);
+    const byItem = this.supabase
+      .from('items')
+      .select('list_id')
+      .eq('space_id', spaceId)
+      .eq('kind', 'shopping')
+      .not('list_id', 'is', null)
+      .ilike('title', pattern)
+      .limit(100);
+    const [headRes, itemRes] = await Promise.all([byHead, byItem]);
+    if (headRes.error) throw headRes.error;
+    if (itemRes.error) throw itemRes.error;
+    type RawList = Omit<ShoppingList, 'items'> & { items: Item[] | null };
+    const found = new Map<string, RawList>();
+    for (const l of (headRes.data ?? []) as RawList[]) found.set(l.id, l);
+    const extraIds = [
+      ...new Set(
+        ((itemRes.data ?? []) as { list_id: string }[])
+          .map((r) => r.list_id)
+          .filter((id) => !found.has(id)),
+      ),
+    ].slice(0, 50);
+    if (extraIds.length > 0) {
+      const { data, error } = await this.supabase
+        .from('shopping_lists')
+        .select('*, items(*)')
+        .eq('space_id', spaceId)
+        .in('id', extraIds);
+      if (error) throw error;
+      for (const l of (data ?? []) as RawList[]) found.set(l.id, l);
+    }
+    return [...found.values()]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
+      .slice(0, 50)
+      .map((l) => ({
+        ...l,
+        items: (l.items ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      }));
+  }
+
+  /**
+   * Set one list item's status AND its list's archive state as ONE
+   * operation (audit P4). Preferred path: the set_shop_item_status RPC
+   * (migration 0051), which recomputes the list status inside the same
+   * transaction — concurrent toggles by two family members can no
+   * longer race on client-computed state. The RPC returns the list's
+   * authoritative status/completed_at for the caller to sync from.
+   * Legacy fallback (0051 not applied): the old two-call sequence, but
+   * if the list update fails the item change is reverted, so the DB
+   * never keeps a half-applied toggle.
+   */
+  async setShopItemStatus(
+    itemId: string,
+    status: 'open' | 'done' | 'not_found',
+  ): Promise<{ listId: string | null; listStatus: 'open' | 'done' | null; completedAt: string | null }> {
+    const { data, error } = await this.supabase.rpc('set_shop_item_status', {
+      p_item_id: itemId,
+      p_status: status,
+    });
+    if (!error) {
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | { list_id: string | null; list_status: 'open' | 'done' | null; list_completed_at: string | null }
+        | undefined;
+      if (row) {
+        return { listId: row.list_id, listStatus: row.list_status, completedAt: row.list_completed_at };
+      }
+      throw new Error('set_shop_item_status returned no row');
+    }
+    if (!isMissingFunctionError(error)) throw error;
+
+    // Legacy fallback with compensation.
+    const { data: orig, error: oErr } = await this.supabase
+      .from('items')
+      .select('status, bought_at, list_id')
+      .eq('id', itemId)
+      .single();
+    if (oErr) throw oErr;
+    const original = orig as { status: Item['status']; bought_at: string | null; list_id: string | null };
+    await this.setItemStatus(itemId, status);
+    if (!original.list_id) return { listId: null, listStatus: null, completedAt: null };
+    try {
+      const { data: siblings, error: sErr } = await this.supabase
+        .from('items')
+        .select('status')
+        .eq('list_id', original.list_id);
+      if (sErr) throw sErr;
+      const allResolved =
+        (siblings ?? []).length > 0 &&
+        (siblings as { status: string }[]).every((s) => s.status !== 'open');
+      const { data: listRow, error: lErr } = await this.supabase
+        .from('shopping_lists')
+        .select('completed_at')
+        .eq('id', original.list_id)
+        .single();
+      if (lErr) throw lErr;
+      const completedAt = allResolved
+        ? ((listRow as { completed_at: string | null }).completed_at ?? new Date().toISOString())
+        : null;
+      const listStatus = allResolved ? ('done' as const) : ('open' as const);
+      await this.setShoppingListStatus(original.list_id, listStatus, completedAt);
+      return { listId: original.list_id, listStatus, completedAt };
+    } catch (e) {
+      // revert the item so DB and UI stay in agreement
+      await Promise.resolve(
+        this.supabase
+          .from('items')
+          .update({ status: original.status, bought_at: original.bought_at })
+          .eq('id', itemId),
+      ).catch(() => {});
+      throw e;
+    }
   }
 
   /** Attach existing loose items to a list (list-only shopping adoption). */
@@ -1135,8 +1393,23 @@ export class VoiceEngine {
    * Restore an archived list back to live: list → open with completed_at
    * cleared; not_found items flip back to open so they can be bought next
    * time. Done items stay done (purchase history is preserved).
+   * Preferred path is the atomic restore_shopping_list RPC (migration
+   * 0051); the legacy fallback reverts the list update if the items
+   * update fails, so a partial restore never sticks (audit P7).
    */
   async restoreShoppingList(listId: string): Promise<void> {
+    const { error } = await this.supabase.rpc('restore_shopping_list', { p_list_id: listId });
+    if (!error) return;
+    if (!isMissingFunctionError(error)) throw error;
+
+    // Legacy fallback with compensation.
+    const { data: orig, error: oErr } = await this.supabase
+      .from('shopping_lists')
+      .select('status, completed_at')
+      .eq('id', listId)
+      .single();
+    if (oErr) throw oErr;
+    const original = orig as { status: 'open' | 'done'; completed_at: string | null };
     const { error: lErr } = await this.supabase
       .from('shopping_lists')
       .update({ status: 'open', completed_at: null })
@@ -1147,7 +1420,15 @@ export class VoiceEngine {
       .update({ status: 'open' })
       .eq('list_id', listId)
       .eq('status', 'not_found');
-    if (iErr) throw iErr;
+    if (iErr) {
+      await Promise.resolve(
+        this.supabase
+          .from('shopping_lists')
+          .update({ status: original.status, completed_at: original.completed_at })
+          .eq('id', listId),
+      ).catch(() => {});
+      throw iErr;
+    }
   }
 
   // ── custom tabs ──────────────────────────────────────────────
@@ -1425,34 +1706,64 @@ export class VoiceEngine {
     await this.hardDeleteItems([itemId]);
   }
 
-  /** Move a shopping list (+ its items) into the trash. retentionDays <= 0 → permanent. */
+  /**
+   * Move a shopping list (+ its items) into the trash. retentionDays <= 0
+   * → permanent. AUDIT P5 (data loss): the snapshot reads MUST succeed
+   * before anything is deleted. The old code ignored fetch errors — a
+   * failed items read produced a snapshot with zero items, after which
+   * the list delete CASCADE-wiped the real items permanently and Undo
+   * restored an empty list. Now any failed read aborts the delete with
+   * the data untouched, and the permanent delete itself is the single
+   * list RPC (its cascade removes the items atomically with the list).
+   */
   async trashShoppingList(listId: string, userId: string, retentionDays: number): Promise<void> {
-    const { data: list } = await this.supabase.from('shopping_lists').select('*').eq('id', listId).single();
-    if (!list) return;
+    const { data: list, error: listErr } = await this.supabase
+      .from('shopping_lists')
+      .select('*')
+      .eq('id', listId)
+      .single();
+    if (listErr) throw listErr;
+    if (!list) throw new Error('shopping list not found');
     if (retentionDays <= 0) {
       await this.deleteShoppingList(listId);
       return;
     }
-    const { data: items } = await this.supabase.from('items').select('*').eq('list_id', listId);
+    // Read ALL items in pages — an incomplete snapshot is as dangerous
+    // as a failed one, so any page error aborts the whole delete.
+    const items: Record<string, unknown>[] = [];
+    const PAGE = 500;
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error: pageErr } = await this.supabase
+        .from('items')
+        .select('*')
+        .eq('list_id', listId)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (pageErr) throw pageErr;
+      items.push(...((page ?? []) as Record<string, unknown>[]));
+      if (!page || page.length < PAGE) break;
+    }
     const { error } = await this.supabase.from('trash_bin').insert({
       user_id: userId,
       kind: 'shopping_list',
       ref_id: listId,
       space_id: (list as any).space_id,
       title: ((list as any).title ?? '').slice(0, 80),
-      preview: `${(items ?? []).length} عناصر`,
-      payload: { list, items: items ?? [] },
+      preview: `${items.length} عناصر`,
+      payload: { list, items },
       expires_at: this.trashExpiry(retentionDays),
     });
     if (error) throw error;
-    await this.hardDeleteItems(((items ?? []) as { id: string }[]).map((i) => i.id));
     await this.hardDeleteShoppingList(listId);
   }
 
   /**
-   * Undo a delete: drop any trash_bin row for this ref, then re-insert the
-   * snapshot row(s) with their original ids. Works for trash (Plus) and
-   * permanent (free) deletes alike.
+   * Undo a delete: re-insert the snapshot row(s) with their original ids,
+   * and only THEN drop the trash_bin row (audit P17 — the old order
+   * deleted the safety copy first, so a failed child insert lost it).
+   * If the child insert fails, the just-inserted parent is removed again
+   * and the trash row stays, so the restore can be retried. Works for
+   * trash (Plus) and permanent (free) deletes alike.
    */
   async undelete(
     refId: string,
@@ -1460,13 +1771,22 @@ export class VoiceEngine {
     row: Record<string, any>,
     childItems?: Record<string, any>[],
   ): Promise<void> {
-    await this.supabase.from('trash_bin').delete().eq('ref_id', refId);
     const { error } = await this.supabase.from(table).insert(row);
     if (error) throw error;
     if (childItems && childItems.length > 0) {
       const { error: cErr } = await this.supabase.from('items').insert(childItems);
-      if (cErr) throw cErr;
+      if (cErr) {
+        // compensation: remove the parent again (a list's own cascade
+        // clears any partially-linked rows); the trash row is kept.
+        if (table === 'shopping_lists') {
+          await this.deleteCreatedShoppingList(refId).catch(() => {});
+        } else {
+          await Promise.resolve(this.supabase.from(table).delete().eq('id', refId)).catch(() => {});
+        }
+        throw cErr;
+      }
     }
+    await this.supabase.from('trash_bin').delete().eq('ref_id', refId);
   }
 
   /** Move a chat session into the trash. retentionDays <= 0 → permanent. */
@@ -1574,7 +1894,13 @@ export class VoiceEngine {
       const items = ((p.items ?? []) as any[]).map((i: any) => ({ ...i }));
       if (items.length > 0) {
         const { error: iErr } = await this.supabase.from('items').insert(items);
-        if (iErr) throw iErr;
+        if (iErr) {
+          // compensation (audit P7): remove the just-restored list so the
+          // trash row — deleted only at the end of this function — can be
+          // retried cleanly instead of wedging on a duplicate key.
+          await this.deleteCreatedShoppingList((p.list as any).id).catch(() => {});
+          throw iErr;
+        }
       }
     } else if (row.kind === 'chat') {
       const session = {
