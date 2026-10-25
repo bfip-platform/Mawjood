@@ -719,7 +719,7 @@ export const makeStyles = (P: Palette) => StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
   },
-  shopDoneBtn: { marginTop: 12, alignSelf: 'center', minWidth: 160 },
+  shopDoneBtn: { marginTop: 12, alignSelf: 'center', minWidth: 160, backgroundColor: P.success },
   assigneeChip: {
     paddingVertical: 4,
     paddingHorizontal: 10,
