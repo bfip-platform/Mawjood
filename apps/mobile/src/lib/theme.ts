@@ -54,11 +54,19 @@ export const TOUCH = 48;
  * final brand commitment, and no screen restyle rides on them yet.
  */
 export const BRAND = {
-  accentBlue: '#3B82C4', // soft blue — primary accent, sparing
+  accentBlue: '#3574B8', // deep calm blue — primary accent, sparing
   accentSage: '#5E7E63', // muted sage — secondary accent, sparing
   fontLatin: 'Inter',
   fontArabic: 'IBM Plex Sans Arabic',
 } as const;
+
+// Palette refresh (owner decision, Oct 26, 2026): the general palette
+// below was re-tuned in place — same token names, no screen changes —
+// taking colour/feel direction from live reference products studied for
+// this purpose (achromatic, low-noise admin surfaces in the Zenith /
+// Linear direction; the calm restraint of Bear for reading surfaces).
+// Inspiration only: every value here is our own, implemented in our own
+// tokens. Per-screen application follows as its own step.
 
 /** Flatten a type token into a RN text style. */
 export function typeStyle(t: TypeToken): { fontSize: number; lineHeight: number; fontWeight: TextStyle['fontWeight'] } {
@@ -98,67 +106,67 @@ export interface Palette {
 }
 
 const light: Palette = {
-  ink: '#111318',
-  ink2: '#22262C',
-  text2: '#505A66',
-  text3: '#616C78',
-  muted: '#65707C',
-  faint: '#727D89',
-  faint2: '#7C8792',
-  faint3: '#87919B',
-  paper: '#FFFFFF',
+  ink: '#0E1116',
+  ink2: '#1F242C',
+  text2: '#4F5865',
+  text3: '#626B77',
+  muted: '#66707B',
+  faint: '#75808B',
+  faint2: '#828C97',
+  faint3: '#8E97A1',
+  paper: '#F9FAFA',
   surface: '#FFFFFF',
-  surface2: '#F1F3F5',
-  input: '#F5F6F8',
-  bubbleApp: '#F0F3F6',
-  tint: '#EEF3F8',
-  accent: '#111318',
-  accentDeep: '#22262C',
-  info: '#346B9C',
-  infoSoft: '#EAF2FA',
-  success: '#426D55',
-  successSoft: '#EAF3ED',
-  danger: '#B34040',
-  dangerSoft: '#FBECEC',
-  dangerDeep: '#9D3030',
-  warn: '#785B21',
-  border: '#E3E7EB',
-  borderWarn: '#E8D9B9',
-  borderSuccess: '#C9E0D1',
-  overlay: 'rgba(17,19,24,0.45)',
-  gray: '#68727D',
+  surface2: '#EFF2F4',
+  input: '#F2F4F6',
+  bubbleApp: '#EDF1F4',
+  tint: '#EAF1F7',
+  accent: '#0E1116',
+  accentDeep: '#1F242C',
+  info: '#2F6596',
+  infoSoft: '#E9F1F8',
+  success: '#3E6B52',
+  successSoft: '#E9F2EC',
+  danger: '#B23A3A',
+  dangerSoft: '#FAEBEB',
+  dangerDeep: '#993030',
+  warn: '#7A5C1E',
+  border: '#E2E6EA',
+  borderWarn: '#E7D8B4',
+  borderSuccess: '#C6DFCF',
+  overlay: 'rgba(14,17,22,0.45)',
+  gray: '#66707B',
 };
 
 const dark: Palette = {
-  ink: '#F7F8FA',
-  ink2: '#E6E9ED',
-  text2: '#C4CBD4',
-  text3: '#B0BAC5',
-  muted: '#A9B4C0',
-  faint: '#9AA6B3',
-  faint2: '#929EAB',
-  faint3: '#8996A3',
-  paper: '#0D0F12',
-  surface: '#191C21',
-  surface2: '#242931',
-  input: '#242931',
-  bubbleApp: '#242B34',
-  tint: '#202D3B',
-  accent: '#F7F8FA',
-  accentDeep: '#DDE3EA',
-  info: '#91BCE5',
-  infoSoft: '#1B2C3E',
-  success: '#98C6A6',
-  successSoft: '#1C3328',
-  danger: '#F09A9A',
-  dangerSoft: '#3A2228',
-  dangerDeep: '#F2ACAC',
-  warn: '#E2C58A',
-  border: '#353B44',
-  borderWarn: '#55452D',
-  borderSuccess: '#365344',
-  overlay: 'rgba(0,0,0,0.65)',
-  gray: '#A1AAB5',
+  ink: '#F5F7F9',
+  ink2: '#E4E8EC',
+  text2: '#BEC6CF',
+  text3: '#AAB4BF',
+  muted: '#A2ADB9',
+  faint: '#939FAA',
+  faint2: '#8A95A1',
+  faint3: '#808B97',
+  paper: '#0A0C0F',
+  surface: '#14171C',
+  surface2: '#1F232A',
+  input: '#1F232A',
+  bubbleApp: '#20262E',
+  tint: '#1C2836',
+  accent: '#F5F7F9',
+  accentDeep: '#D9DFE7',
+  info: '#8FB9E3',
+  infoSoft: '#182A3E',
+  success: '#93C2A2',
+  successSoft: '#1A3026',
+  danger: '#EE9A9A',
+  dangerSoft: '#372024',
+  dangerDeep: '#F0AAAA',
+  warn: '#DFC384',
+  border: '#272D35',
+  borderWarn: '#4F422A',
+  borderSuccess: '#33503F',
+  overlay: 'rgba(0,0,0,0.66)',
+  gray: '#9AA4AF',
 };
 
 const KEY = 'mawjood.theme-mode';
